@@ -1,0 +1,44 @@
+[importlinter]
+root_package = moc
+
+[importlinter:contract:provider-sdk-isolation]
+name = Provider SDKs only inside their adapters
+type = forbidden
+source_modules =
+    moc.api
+    moc.agent
+    moc.retrieval
+    moc.arabic
+    moc.tenancy
+    moc.verticals
+    moc.workers
+    moc.evals
+forbidden_modules =
+    anthropic
+    openai
+    twilio
+
+[importlinter:contract:vector-store-isolation]
+name = Qdrant and Meilisearch only inside the retrieval adapters
+type = forbidden
+source_modules =
+    moc.api
+    moc.agent
+    moc.arabic
+    moc.tenancy
+    moc.verticals
+    moc.workers
+    moc.evals
+forbidden_modules =
+    qdrant_client
+    meilisearch
+
+[importlinter:contract:layers]
+name = Layered architecture
+type = layers
+layers =
+    moc.api
+    moc.agent
+    moc.retrieval
+    moc.llm
+    moc.tenancy
