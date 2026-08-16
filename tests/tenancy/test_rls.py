@@ -1,5 +1,7 @@
 import pytest
+from asyncpg.exceptions import InsufficientPrivilegeError
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 from moc.tenancy.context import tenant_session
 
@@ -22,9 +24,10 @@ async def test_tenant_cannot_read_other_tenants_rows(app_engine, two_tenants):
 
 
 async def test_insert_with_wrong_tenant_id_is_rejected(app_engine, two_tenants):
+    """The policy's WITH CHECK rejects the row: Postgres 42501, not a constraint error."""
     a, b = two_tenants
     async with tenant_session(app_engine, a.id) as s:
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(ProgrammingError) as exc:
             await s.execute(
                 text(
                     "INSERT INTO conversations (id, tenant_id, state) "
@@ -33,6 +36,7 @@ async def test_insert_with_wrong_tenant_id_is_rejected(app_engine, two_tenants):
                 {"t": b.id},
             )
             await s.commit()
+    assert isinstance(exc.value.orig.__cause__, InsufficientPrivilegeError)
 
 
 async def test_query_without_tenant_context_returns_nothing(app_engine, two_tenants):

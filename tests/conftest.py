@@ -86,6 +86,7 @@ async def two_tenants(engine):
     from moc.tenancy.models import Tenant
 
     async with AsyncSession(engine, expire_on_commit=False) as s:
+        await s.execute(text("DELETE FROM usage_ledger"))
         await s.execute(text("DELETE FROM conversations"))
         await s.execute(text("DELETE FROM tenants"))
         a = Tenant(slug="tenant-a", name="A", vertical="education")
