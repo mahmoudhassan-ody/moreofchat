@@ -199,15 +199,15 @@ Every tenant-scoped table carries `tenant_id uuid not null` with row-level secur
 ```python
 class InboundMessage(BaseModel):
     tenant_id: UUID
-    channel: Literal["whatsapp","instagram","messenger","telegram","email"]
+    channel: Literal["whatsapp", "instagram", "messenger", "telegram", "email"]
     channel_account_id: UUID
     provider_message_id: str
-    sender_ref: str            # phone, IG id, chat id, email address
-    thread_ref: str | None     # email Message-ID / References chain
+    sender_ref: str  # phone, IG id, chat id, email address
+    thread_ref: str | None  # email Message-ID / References chain
     text: str | None
     media: list[MediaRef]
     received_at: datetime
-    raw: dict                  # stored, never parsed downstream
+    raw: dict  # stored, never parsed downstream
 ```
 
 ### 6.2 Per-channel notes
