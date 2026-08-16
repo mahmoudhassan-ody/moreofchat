@@ -1,5 +1,6 @@
 [importlinter]
 root_package = moc
+include_external_packages = True
 
 [importlinter:contract:provider-sdk-isolation]
 name = Provider SDKs only inside their adapters
