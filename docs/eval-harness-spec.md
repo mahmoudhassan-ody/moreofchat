@@ -1,0 +1,324 @@
+# Arabic Evaluation Harness — Specification
+
+**Product:** More Of Chat
+**Part of:** platform design doc §8.3
+**Status:** P0 deliverable — built before channel code
+**Date:** 2026-08-16
+
+**Purpose:** Make Egyptian-Arabic answer quality measurable, so that every prompt, script, chunking or retrieval change is evidence-tested rather than eyeballed. This is the P0 acceptance gate. Nothing else in the platform can be trusted until it exists.
+
+---
+
+## 1. What this harness must catch
+
+In priority order. The first two are commercial incidents for a tenant; the rest are quality issues.
+
+| # | Failure | Why it matters |
+|---|---|---|
+| F1 | A fee, price or payment figure stated that is not in the knowledge base | A university quoting wrong tuition, or a broker quoting a wrong unit price, is a liability event |
+| F2 | Confident answer where the correct behaviour was handoff or clarification | Destroys tenant trust faster than an obvious failure |
+| F3 | Franco-Arab or misspelled Arabic failing to retrieve | Silent — looks like "the bot doesn't know" |
+| F4 | Wrong register (Masri used for official regulations, or stiff MSA in small talk) | Reads as unprofessional or as a foreign product |
+| F5 | Losing slots across turns | Forces the customer to repeat themselves; drives abandonment |
+| F6 | Language mirroring failure (replying in the wrong language) | Common with code-switched input |
+
+---
+
+## 2. Metrics and gates
+
+Run at the lowest available temperature. Every metric is computed per vertical and per provider.
+
+### 2.1 Hard gates — block merge
+
+| Metric | Threshold |
+|---|---|
+| `hallucinated_figure_rate` | **0** — any numeric claim not traceable to a retrieved chunk or script constant fails |
+| `expected_action_accuracy` | ≥ 0.95 — answer vs clarify vs handoff vs refuse |
+| `forbidden_claim_violations` | **0** |
+| `overall_accuracy` regression vs baseline | ≤ 2 percentage points |
+| `retrieval_recall_at_5` (from P1) | ≥ 0.85 |
+| `arithmetic_in_model_rate` (inventory grounding) | **0** — every numeric result must trace to a calculator tool output |
+| `sold_unit_offered_rate` (inventory grounding) | **0** |
+| `asof_disclosure_rate` (inventory grounding) | ≥ 0.98 |
+
+### 2.2 Soft gates — warn, review before release
+
+| Metric | Target |
+|---|---|
+| `register_accuracy` | ≥ 0.90 |
+| `language_mirror_accuracy` | ≥ 0.95 |
+| `slot_retention_accuracy` (multi-turn) | ≥ 0.90 |
+| `containment_rate` | tracked, not gated — a low rate may be correct behaviour |
+| `p95_latency_ms` | ≤ 4000 |
+| `cost_per_turn` | tracked per provider |
+
+**Note on containment:** never gate on it. Gating containment creates pressure to answer rather than hand off, which is exactly the F2 failure. Track it as a business KPI, not a quality gate.
+
+---
+
+## 3. Case schema
+
+One YAML file per vertical under `evals/cases/`. Cases are **append-only** — editing an existing case breaks trend comparability. To change a case, deprecate it and add a new id.
+
+```yaml
+- id: edu-0041                      # stable, never reused
+  vertical: education
+  source: real_conversation         # real_conversation | synthetic
+  category: factual_retrieval       # see §4
+  tenant_fixture: sinai_demo        # which KB fixture to load
+  channel: whatsapp
+  input_lang: franco                # masri | msa | english | mixed | franco
+
+  turns:
+    - user: "3ayez a3raf masareef kolleyet el handasa"
+      expected_action: answer       # answer | clarify | handoff | refuse
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "engineering credit hour fee"
+          required: true
+          source_chunk: chunk_eng_fees_2026
+        - id: f2
+          claim: "total credit hours for the programme"
+          required: false
+      forbidden_claims:
+        - "any fee figure for a faculty other than engineering"
+        - "any discount or scholarship not present in the KB"
+      expected_slots: {faculty: engineering}
+
+  gold_chunks: [chunk_eng_fees_2026, chunk_eng_program_2026]
+  notes: "Most common franco phrasing in the Sinai corpus."
+```
+
+### 3.1 Schema rules
+
+- **Never store a golden answer string.** Grade facts and behaviour, not wording. A golden string turns the suite into a paraphrase detector and blocks legitimate improvements.
+- `expected_facts` are atomic. One claim per entry, so partial credit is meaningful.
+- `forbidden_claims` are written as *categories*, not exact strings — the judge evaluates whether the reply asserts anything in that category.
+- `gold_chunks` are required for any case that measures retrieval. Cases without them are excluded from recall metrics rather than counted as failures.
+- `source: synthetic` cases must stay below 30% of the suite. Synthetic questions test the phrasings you imagined, not the ones customers use.
+
+### 3.2 Additional fields for structured-inventory grounding
+
+Real estate does not ground against document chunks. It grounds against a live inventory table, which introduces three failure modes education does not have: quoting a sold unit as available, quoting a price without saying when it was current, and doing payment-plan arithmetic in the model instead of in code.
+
+```yaml
+- id: re-0007
+  vertical: realestate
+  grounding_mode: inventory           # documents | inventory | hybrid
+  inventory_fixture: broker_demo_2026_08_01   # frozen snapshot, fixed as_of
+  turns:
+    - user: "الشقة اللي في التجمع لسه متاحة؟"
+      expected_action: answer
+      expected_asof_disclosure: true  # reply MUST state when data was current
+      expected_tool_calls:            # deterministic, asserted by code
+        - name: inventory_lookup
+          args_contain: {area: "new cairo"}
+      forbidden_claims:
+        - "availability of any unit whose status is sold or reserved"
+      expected_computation: null
+```
+
+For payment-plan cases:
+
+```yaml
+      expected_computation:
+        tool: payment_plan_calculator
+        inputs: {unit_id: u_1042, down_payment_pct: 10, years: 8}
+        must_match_fixture: true       # figures must equal the tool's output
+```
+
+**Rule: the model never does arithmetic.** Any numeric result in a payment-plan reply must be traceable to a `payment_plan_calculator` tool output, not derived in the reply text. A plausible-looking instalment figure computed by the LLM is F1 with extra steps, and it will be wrong at the fourth decimal in a way a customer screenshots.
+
+**Rule: staleness is disclosed, not assumed.** Any price or availability claim must carry the `as_of` from the inventory snapshot. Education fee chunks carry an academic year; inventory carries a timestamp. Same principle, different granularity.
+
+---
+
+## 4. Case distribution
+
+### 4.1 Education — 150 cases
+
+| Category | Count | What it tests |
+|---|---|---|
+| `factual_retrieval` | 40 | Core path: fees, requirements, deadlines, availability, prices |
+| `franco_or_misspelled` | 20 | Normalizer + lexical arm (F3) |
+| `multi_turn_slots` | 20 | Slot retention across 2–4 turns (F5) |
+| `adversarial_figures` | 20 | Pressure to estimate, guess, or "just give me approximately" (F1) |
+| `out_of_scope` | 15 | Must handoff or politely decline, not improvise |
+| `ambiguous` | 15 | Must clarify, not guess which of several meanings applies |
+| `code_switching` | 10 | Mixed Arabic/English input (F6) |
+| `register_sensitive` | 10 | Official statements must render in MSA (F4) |
+| **Total** | **150** | |
+
+### 4.2 Real estate — 80 cases at launch, growing to 150
+
+Real estate has no conversation corpus yet, so a full 150 would breach the 30% synthetic cap. Launch with 80 and grow from real pilot conversations — a rule, not an aspiration: every week of pilot traffic, mine the top new phrasings and append.
+
+| Category | Count | Notes |
+|---|---|---|
+| `inventory_lookup` | 20 | Availability and price by area, budget, bedrooms |
+| `payment_plan_math` | 15 | **Arithmetic must come from the calculator tool, never the model** |
+| `staleness` | 8 | Reply must disclose the inventory `as_of` |
+| `sold_or_reserved` | 8 | Must never present unavailable inventory as available |
+| `adversarial_figures` | 10 | "What's the lowest you'd take", "give me a rough price", discount pressure |
+| `franco_or_misspelled` | 8 | Area names especially — Tagamo3, Zayed, Sheikh Zayed, El Shrouk |
+| `multi_turn_slots` | 5 | Budget → area → bedrooms accumulated across turns |
+| `out_of_scope` | 6 | Mortgage advice, legal advice, valuation — all handoff |
+| **Total** | **80** | |
+
+The `adversarial_figures` block is the one most teams under-build and the one that catches the failure that actually costs money. In real estate it is worse than in education: customers actively negotiate with the bot, and a bot that concedes a discount has created a commercial expectation the broker must then honour or deny. Include prompt-injection attempts here too.
+
+---
+
+## 5. Grading
+
+Two stages. Run deterministic checks first — they are free, fast and non-flaky, and they cover the two hard gates.
+
+### 5.1 Stage 1 — deterministic (no LLM)
+
+- **Numeric extraction:** pull every number from the reply (both Arabic-Indic and Latin digits, normalized). Every figure must appear in a retrieved chunk or a script constant for that tenant fixture. Any orphan number → `hallucinated_figure` → hard fail.
+- **Action match:** did the orchestrator emit `answer` / `clarify` / `handoff` / `refuse` as expected?
+- **Retrieval recall@5:** were the `gold_chunks` in the fused top-5?
+- **Language detection:** reply script matches `expected_lang`.
+- **Slot state:** compare the conversation's slot dict against `expected_slots`.
+- **Tool-call assertion (inventory grounding):** did the turn call `inventory_lookup` / `payment_plan_calculator` with the expected arguments? Every figure in a payment-plan reply must equal a value in the calculator's output — string-match it, don't judge it.
+- **Availability status:** cross-check every unit mentioned against the fixture's status column. Any unit with status `sold` or `reserved` presented as available → hard fail.
+- **`as_of` disclosure:** does the reply contain the fixture's snapshot date or an equivalent temporal qualifier?
+
+### 5.2 Stage 2 — LLM judge
+
+Only for the paraphrase-tolerant dimensions: fact coverage, forbidden-claim detection, register, tone.
+
+**Judge independence rule:** do not grade a provider's output with the same provider. Self-preference bias in LLM judges is well documented, and your dual-provider setup gives you this for free — grade Claude-generated replies with OpenAI's flagship model and vice versa. On any case where the two disagree, escalate to the human queue rather than picking one.
+
+**Judge prompt structure:**
+
+```
+ROLE: Grader for an Arabic customer-support assistant. You do not answer
+      the question. You assess a reply against evidence.
+
+INPUTS
+  question:            <verbatim user text>
+  reply:               <assistant reply>
+  retrieved_passages:  <the exact chunks the assistant saw>
+  expected_facts:      <list, with required flags>
+  forbidden_claims:    <list of categories>
+  expected_register:   masri | msa | english
+
+OUTPUT: JSON only, no prose.
+{
+  "fact_coverage":      {"f1": "present|missing|contradicted", ...},
+  "forbidden_violated": ["<category>", ...],
+  "grounding":          0|1|2|3,
+  "register":           0|1|2|3,
+  "helpfulness":        0|1|2|3,
+  "reasoning":          "<one sentence, max 30 words>"
+}
+```
+
+### 5.3 Rubric
+
+**Grounding** — is every claim traceable to the passages provided?
+
+| Score | Definition |
+|---|---|
+| 3 | Every claim traceable. Where information was absent, the reply says so or hands off. |
+| 2 | All claims traceable, but the reply over-generalizes or omits an important qualifier (e.g. states a fee without the academic year it applies to). |
+| 1 | Contains an unsupported claim that is not a figure — e.g. asserts a deadline or an eligibility rule absent from the passages. |
+| 0 | Contains an unsupported **figure**, or contradicts a passage. Hard fail regardless of other scores. |
+
+**Register** — does the language variety match the node's policy?
+
+| Score | Definition |
+|---|---|
+| 3 | Natural Egyptian Arabic for conversational content; correct MSA for official statements; no MSA/Masri bleed within a sentence. |
+| 2 | Correct variety but stiff or slightly translated-sounding. |
+| 1 | Wrong variety for the node, or noticeable Gulf/Levantine vocabulary intruding. |
+| 0 | Machine-translated feel, or reply in the wrong language entirely. |
+
+**Helpfulness** — does the reply move the customer forward?
+
+| Score | Definition |
+|---|---|
+| 3 | Answers the actual question, adds the one next step the customer needs. |
+| 2 | Answers, but leaves an obvious follow-up unaddressed. |
+| 1 | Technically responsive but the customer would have to ask again. |
+| 0 | Non-answer, or a generic deflection where an answer was available. |
+
+**Pass definition for a case:** grounding ≥ 2 AND register ≥ 2 AND helpfulness ≥ 2 AND all `required` facts present AND zero forbidden violations AND expected_action matched.
+
+### 5.4 Human review
+
+- 20 randomly sampled cases reviewed weekly by a native Egyptian Arabic speaker.
+- 100% of judge disagreements reviewed.
+- Reviewer disagreement with the judge above 10% means the rubric or judge prompt needs revision — treat the judge as a component under test, not an oracle.
+
+---
+
+## 6. Runner
+
+```
+evals/
+  cases/
+    education.yaml
+    realestate.yaml
+  fixtures/
+    sinai_demo/          # frozen KB snapshot + chunk ids
+    broker_demo/
+  runner/
+    load.py              # parse + schema-validate cases
+    deterministic.py     # stage 1 checks
+    judge.py             # stage 2, provider-crossed
+    report.py            # markdown + JSON output
+  baselines/
+    <git-sha>.json
+```
+
+- Invoked as `pytest -m eval` locally, and as a CI job.
+- Results persist to `eval_runs` and `eval_case_results` in Postgres, keyed by git SHA, provider, and prompt version — so any regression is attributable to a specific change.
+- Use the providers' **batch endpoints** for full runs. A 150-case suite × 2 providers × judge calls is meaningful cost at interactive pricing.
+
+### 6.1 CI policy
+
+| Trigger | Scope |
+|---|---|
+| Every push | Smoke subset: 30 cases, deterministic checks only |
+| PR to main | Full suite, single primary provider |
+| PR touching `agent/prompts/`, `retrieval/`, `arabic/` | Full suite, **both** providers |
+| Nightly on main | Full suite, both providers, trend report |
+
+### 6.2 Flakiness
+
+Any case that fails is re-run twice. Consistent failure → real failure. Inconsistent → tagged `flaky`, reported separately, and excluded from the gate. Investigate flaky cases weekly; a growing flaky set usually means the confidence threshold is sitting right at a boundary.
+
+---
+
+## 7. Seeding the suite from the Sinai corpus
+
+1. Export conversations. **Redact first** — names, phone numbers, national IDs, student IDs — before anything leaves the source system.
+2. Cluster by intent: embed the customer's first message per conversation, cluster, and rank clusters by volume.
+3. Take the top intents by volume and pull **verbatim** phrasings from each — including the franco-Arab and misspelled ones. Do not clean them up. The typos are the test.
+4. For each case, a human writes `expected_facts` **from the KB**, and records the `source_chunk`.
+5. Have a second person write `forbidden_claims`. Whoever authored the KB content has a blind spot for what it fails to say.
+6. Tag every case `real_conversation` and record the cluster it came from, so distribution drift is visible later.
+
+Do not generate cases with the model under test. It produces cases the model already handles, and the suite passes while production fails.
+
+---
+
+## 8. Build order (P0, week 1)
+
+1. Case schema + loader + validator, with 10 hand-written cases per vertical
+2. Deterministic checks — numeric grounding first, it's the highest-value check in the whole system; then the inventory checks (tool-call assertion, availability status, `as_of`)
+3. Report writer + Postgres persistence + baseline comparison
+4. Judge with the cross-provider rule
+5. CI wiring and the smoke subset
+6. Seed to 150 education cases from the Sinai corpus, and 80 real-estate cases — the latter mostly synthetic at first, so **get a pilot broker connected early**; that traffic is what converts the real-estate suite from guesswork into evidence
+
+### 8.1 Fixtures — freeze before writing cases
+
+Both verticals need frozen fixtures before case authoring begins, or expected facts drift as the source data changes underneath them.
+
+- `sinai_demo` — KB snapshot with **deliberate gaps**: at least one programme whose fee chunk is missing, so the `adversarial_figures` cases have something real to fail against.
+- `broker_demo_2026_08_01` — inventory snapshot with a fixed `as_of`, including units in `available`, `reserved` and `sold` states, and at least one unit with a payment plan whose arithmetic is non-obvious.

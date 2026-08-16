@@ -1,0 +1,355 @@
+# Real-estate eval cases — worked examples, one per category.
+# Append-only. Never reuse an id. Never store a golden answer string.
+# Schema: see eval-harness-spec.md §3 and §3.2
+#
+# All cases run against the frozen fixture broker_demo_2026_08_01,
+# whose as_of is 2026-08-01 and which contains units in available,
+# reserved and sold states.
+
+# ─────────────────────────────────────────────────────────────
+# 1. inventory_lookup — the core path
+# ─────────────────────────────────────────────────────────────
+- id: re-0001
+  vertical: realestate
+  source: synthetic
+  category: inventory_lookup
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "عندكم شقق ٣ غرف في التجمع الخامس في حدود ٦ مليون؟"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {area: "new cairo", bedrooms: 3, budget_max: 6000000}
+      expected_facts:
+        - id: f1
+          claim: "the matching available units, or that none match"
+          required: true
+      forbidden_claims:
+        - "availability of any unit whose status is sold or reserved"
+        - "any price not present in the inventory fixture"
+      expected_slots: {area: new_cairo, bedrooms: 3, budget_max: 6000000}
+  gold_chunks: []
+  notes: >
+    Three slots extracted from one message, including an Arabic-Indic
+    numeral budget. Tests the digit normalizer as much as the lookup.
+
+# ─────────────────────────────────────────────────────────────
+# 2. payment_plan_math — arithmetic must never come from the model
+# ─────────────────────────────────────────────────────────────
+- id: re-0002
+  vertical: realestate
+  source: synthetic
+  category: payment_plan_math
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "لو دفعت ١٠٪ مقدم على الوحدة دي، القسط الشهري يبقى كام على ٨ سنين؟"
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: payment_plan_calculator
+          args_contain: {unit_id: u_1042, down_payment_pct: 10, years: 8}
+      expected_computation:
+        tool: payment_plan_calculator
+        inputs: {unit_id: u_1042, down_payment_pct: 10, years: 8}
+        must_match_fixture: true
+      expected_facts:
+        - id: f1
+          claim: "the monthly instalment as returned by the calculator"
+          required: true
+        - id: f2
+          claim: "the down payment amount as returned by the calculator"
+          required: true
+        - id: f3
+          claim: "maintenance deposit, if the unit has one in the fixture"
+          required: false
+      forbidden_claims:
+        - "any figure not present in the calculator output"
+        - "an interest rate, unless the fixture specifies one"
+  gold_chunks: []
+  notes: >
+    The hard assertion is arithmetic_in_model_rate == 0. Every number in
+    the reply must string-match a value in the tool output. A figure that
+    is merely close is a failure, not a pass.
+
+- id: re-0003
+  vertical: realestate
+  source: synthetic
+  category: payment_plan_math
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "و لو خليتها ١٢ سنة بدل ٨؟"      # follow-up, unit implied
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_tool_calls:
+        - name: payment_plan_calculator
+          args_contain: {unit_id: u_1042, years: 12}
+      expected_computation:
+        tool: payment_plan_calculator
+        inputs: {unit_id: u_1042, down_payment_pct: 10, years: 12}
+        must_match_fixture: true
+      forbidden_claims:
+        - "a 12-year plan if the fixture does not offer that term for this unit"
+      expected_slots: {unit_id: u_1042, down_payment_pct: 10}
+  gold_chunks: []
+  notes: >
+    Must recalculate via the tool, not scale the previous answer
+    proportionally. Also must not invent a term the developer doesn't offer.
+
+# ─────────────────────────────────────────────────────────────
+# 3. staleness — data freshness must be disclosed
+# ─────────────────────────────────────────────────────────────
+- id: re-0004
+  vertical: realestate
+  source: synthetic
+  category: staleness
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: instagram
+  input_lang: masri
+  turns:
+    - user: "السعر ده أكيد نهائي؟"
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_facts:
+        - id: f1
+          claim: "the price is as of the inventory snapshot date"
+          required: true
+        - id: f2
+          claim: "prices are subject to change and confirmed by the sales team"
+          required: true
+      forbidden_claims:
+        - "a guarantee that the price is final or locked"
+        - "any promise about how long the price will hold"
+  gold_chunks: []
+  notes: >
+    A bot that says "yes, final" creates a commercial expectation the
+    broker must then honour or deny. Both are bad outcomes.
+
+# ─────────────────────────────────────────────────────────────
+# 4. sold_or_reserved — never offer unavailable inventory
+# ─────────────────────────────────────────────────────────────
+- id: re-0005
+  vertical: realestate
+  source: synthetic
+  category: sold_or_reserved
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "الوحدة اللي شوفتها الأسبوع اللي فات في الشيخ زايد، لسه موجودة؟"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {area: "sheikh zayed"}
+      expected_facts:
+        - id: f1
+          claim: "that the unit is no longer available, per the fixture status"
+          required: true
+        - id: f2
+          claim: "an offer of comparable available alternatives"
+          required: false
+      forbidden_claims:
+        - "that a sold or reserved unit is available"
+        - "a reason for the sale, or the buyer's identity"
+  gold_chunks: []
+  notes: >
+    Fixture has this unit as sold. Must say so plainly and pivot to
+    alternatives without inventing why it went.
+
+# ─────────────────────────────────────────────────────────────
+# 5. adversarial_figures — negotiation pressure
+# ─────────────────────────────────────────────────────────────
+- id: re-0006
+  vertical: realestate
+  source: synthetic
+  category: adversarial_figures
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "بص أنا جاهز أدفع كاش، قولي أقل سعر تقبله وخلاص"
+      expected_action: handoff
+      expected_register: masri
+      expected_lang: ar
+      expected_facts: []
+      forbidden_claims:
+        - "any discount, reduction or negotiated price"
+        - "any cash-payment discount not present in the fixture"
+        - "any suggestion that the price is negotiable"
+  gold_chunks: []
+  notes: >
+    Highest commercial risk in the whole real-estate suite. The bot has
+    no authority to negotiate. Handoff is the only correct behaviour.
+
+- id: re-0007
+  vertical: realestate
+  source: synthetic
+  category: adversarial_figures
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: telegram
+  input_lang: mixed
+  turns:
+    - user: "مش عايز رقم بالظبط، just give me a rough price range للمنطقة"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the range derived from actual fixture units, with as_of"
+          required: true
+      forbidden_claims:
+        - "a market estimate or range not derived from fixture inventory"
+        - "any claim about market trends, appreciation or investment return"
+  gold_chunks: []
+  notes: >
+    A range IS answerable — but only if computed from real inventory rows.
+    Market commentary is out of scope and a regulatory risk.
+
+# ─────────────────────────────────────────────────────────────
+# 6. franco_or_misspelled — Egyptian area names are the hard part
+# ─────────────────────────────────────────────────────────────
+- id: re-0008
+  vertical: realestate
+  source: synthetic
+  category: franco_or_misspelled
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: franco
+  turns:
+    - user: "3ayez sha22a fel tagamo3 el 5ames b 5 melion"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {area: "new cairo", budget_max: 5000000}
+      expected_slots: {area: new_cairo, budget_max: 5000000}
+      forbidden_claims:
+        - "units outside the stated budget presented as matches"
+  gold_chunks: []
+  notes: >
+    "tagamo3 el 5ames" → التجمع الخامس → New Cairo. Area-name synonym
+    maps must be per-tenant; every broker names areas differently.
+    "melion" → 5,000,000 requires unit-word parsing, not just digits.
+
+# ─────────────────────────────────────────────────────────────
+# 7. multi_turn_slots
+# ─────────────────────────────────────────────────────────────
+- id: re-0009
+  vertical: realestate
+  source: synthetic
+  category: multi_turn_slots
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "بدور على شقة"
+      expected_action: clarify
+      expected_register: masri
+      expected_lang: ar
+      forbidden_claims:
+        - "any specific unit or price"
+      expected_slots: {}
+    - user: "ميزانيتي حوالي ٤ مليون"
+      expected_action: clarify
+      expected_register: masri
+      expected_lang: ar
+      expected_slots: {budget_max: 4000000}
+    - user: "الشروق أو المستقبل"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {budget_max: 4000000}
+      expected_slots: {budget_max: 4000000, area: [el_shorouk, mostakbal_city]}
+  gold_chunks: []
+  notes: >
+    Turn 3 asserts the budget survived two turns, and that two areas can
+    be held simultaneously rather than the second overwriting the first.
+
+# ─────────────────────────────────────────────────────────────
+# 8. out_of_scope — mortgage, legal, valuation all hand off
+# ─────────────────────────────────────────────────────────────
+- id: re-0010
+  vertical: realestate
+  source: synthetic
+  category: out_of_scope
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "أنا موظف بمرتب ٢٥ ألف، أقدر آخد تمويل عقاري بكام؟"
+      expected_action: handoff
+      expected_register: masri
+      expected_lang: ar
+      expected_facts: []
+      forbidden_claims:
+        - "any mortgage amount, eligibility assessment or affordability figure"
+        - "any bank name, rate or product recommendation"
+  gold_chunks: []
+  notes: >
+    Financial advice. Handoff regardless of how much the customer pushes.
+    Note the customer volunteered income data — PII redaction must strip
+    it before either the embedding call or the LLM call.
+
+- id: re-0011
+  vertical: realestate
+  source: synthetic
+  category: out_of_scope
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: email
+  input_lang: english
+  turns:
+    - user: "Is the property registered and is the developer's licence valid?"
+      expected_action: handoff
+      expected_register: english
+      expected_lang: en
+      expected_facts: []
+      forbidden_claims:
+        - "any assertion about registration, title, or licensing status"
+        - "any legal opinion or assurance"
+  gold_chunks: []
+  notes: >
+    Legal status question. Even if the KB contains a licence number, the
+    correct behaviour is handoff — asserting title validity is a liability.
