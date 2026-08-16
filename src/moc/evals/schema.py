@@ -12,7 +12,7 @@ one invalidates every case file already written against it.
 import enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Vertical(enum.StrEnum):
@@ -43,6 +43,39 @@ class Category(enum.StrEnum):
     multi_turn_slots = "multi_turn_slots"
     adversarial_figures = "adversarial_figures"
     out_of_scope = "out_of_scope"
+
+
+# Spec §4.1 and §4.2, verbatim. Four categories are shared; the rest describe a
+# failure mode the other vertical does not have. A real-estate category on an
+# education case is not a harmless mislabel — the category selects which
+# deterministic checks run, so payment_plan_math on an education case would look
+# for calculator output that no education turn ever produces.
+CATEGORIES_BY_VERTICAL: dict[Vertical, frozenset[Category]] = {
+    Vertical.education: frozenset(
+        {
+            Category.factual_retrieval,
+            Category.franco_or_misspelled,
+            Category.multi_turn_slots,
+            Category.adversarial_figures,
+            Category.out_of_scope,
+            Category.ambiguous,
+            Category.code_switching,
+            Category.register_sensitive,
+        }
+    ),
+    Vertical.realestate: frozenset(
+        {
+            Category.inventory_lookup,
+            Category.payment_plan_math,
+            Category.staleness,
+            Category.sold_or_reserved,
+            Category.adversarial_figures,
+            Category.franco_or_misspelled,
+            Category.multi_turn_slots,
+            Category.out_of_scope,
+        }
+    ),
+}
 
 
 class Channel(enum.StrEnum):
@@ -160,3 +193,13 @@ class EvalCase(Strict):
 
     grounding_mode: GroundingMode = GroundingMode.documents
     inventory_fixture: str | None = None
+
+    @model_validator(mode="after")
+    def _category_matches_vertical(self) -> EvalCase:
+        allowed = CATEGORIES_BY_VERTICAL[self.vertical]
+        if self.category not in allowed:
+            raise ValueError(
+                f"category {self.category.value!r} is not valid for vertical "
+                f"{self.vertical.value!r} — allowed: {', '.join(sorted(allowed))}"
+            )
+        return self

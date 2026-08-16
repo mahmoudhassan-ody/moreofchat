@@ -4,6 +4,7 @@ import pytest
 
 from moc.evals.load import load_cases
 from moc.evals.schema import (
+    CATEGORIES_BY_VERTICAL,
     Action,
     Category,
     GroundingMode,
@@ -167,6 +168,59 @@ def test_error_names_the_offending_case(tmp_path):
     ))
     with pytest.raises(ValueError, match="x-bad"):
         load_cases(p)
+
+
+def test_rejects_realestate_category_on_an_education_case(tmp_path):
+    """Categories are per-vertical (§4.1, §4.2). Education has no payment plans."""
+    p = tmp_path / "wrongcat.yaml"
+    p.write_text(
+        MINIMAL.format(id="x-6").replace("category: ambiguous", "category: payment_plan_math")
+    )
+    with pytest.raises(ValueError, match="payment_plan_math"):
+        load_cases(p)
+
+
+def test_rejects_education_category_on_a_realestate_case(tmp_path):
+    p = tmp_path / "wrongcat2.yaml"
+    p.write_text(MINIMAL.format(id="x-7").replace("vertical: education", "vertical: realestate"))
+    with pytest.raises(ValueError, match="ambiguous"):
+        load_cases(p)
+
+
+def test_error_names_the_vertical_and_the_allowed_categories(tmp_path):
+    p = tmp_path / "wrongcat3.yaml"
+    p.write_text(MINIMAL.format(id="x-8").replace("category: ambiguous", "category: staleness"))
+    with pytest.raises(ValueError) as exc:
+        load_cases(p)
+    assert "education" in str(exc.value)
+    assert "factual_retrieval" in str(exc.value), "message must list what IS allowed"
+
+
+@pytest.mark.parametrize("vertical", ["education", "realestate"])
+@pytest.mark.parametrize(
+    "category",
+    ["adversarial_figures", "franco_or_misspelled", "multi_turn_slots", "out_of_scope"],
+)
+def test_shared_categories_are_allowed_in_both_verticals(tmp_path, vertical, category):
+    p = tmp_path / f"{vertical}_{category}.yaml"
+    p.write_text(
+        MINIMAL.format(id="x-9")
+        .replace("vertical: education", f"vertical: {vertical}")
+        .replace("category: ambiguous", f"category: {category}")
+    )
+    assert len(load_cases(p)) == 1
+
+
+def test_every_category_belongs_to_some_vertical():
+    """A new Category member must be assigned, not left silently unreachable."""
+    assigned = set().union(*CATEGORIES_BY_VERTICAL.values())
+    assert assigned == set(Category)
+    assert set(CATEGORIES_BY_VERTICAL) == set(Vertical)
+
+
+def test_shipped_case_files_respect_the_mapping():
+    for case in load_cases(EDUCATION) + load_cases(REALESTATE):
+        assert case.category in CATEGORIES_BY_VERTICAL[case.vertical], case.id
 
 
 def test_ids_are_unique_across_the_whole_suite():
