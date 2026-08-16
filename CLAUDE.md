@@ -13,7 +13,14 @@ Instagram, Messenger, Telegram, Email. Verticals: universities, real estate.
   Facts come from retrieval or a calculator tool.
 - No provider SDK (anthropic, openai, twilio, qdrant_client, meilisearch)
   imported outside its adapter package. Enforced by import-linter.
-- Every tenant-scoped table gets RLS with FORCE ROW LEVEL SECURITY.
+- Every tenant-scoped table gets RLS with FORCE ROW LEVEL SECURITY, and
+  this exact policy predicate (nullif guards against the empty string
+  current_setting returns when unset — without it an unset tenant raises
+  instead of filtering):
+    USING      (tenant_id = nullif(current_setting('moc.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = nullif(current_setting('moc.tenant_id', true), '')::uuid)
+  Tests must use the moc_app role, never the table owner — owners bypass RLS.
+- Migrations: one statement per op.execute(). asyncpg rejects multi-command strings.
 - All Qdrant access goes through the single tenant-filtered repository.
 - Redact PII before the embedding call, not just before the LLM call.
 - Compose ports bind to 127.0.0.1 only. This is a public VPS.
