@@ -19,7 +19,13 @@ REALESTATE = REPO_ROOT / "evals" / "cases" / "realestate.yaml"
 
 MINIMAL = (
     "- {{id: {id}, vertical: education, source: synthetic, category: ambiguous,\n"
-    "   tenant_fixture: f, channel: whatsapp, input_lang: masri, turns: []}}\n"
+    "   tenant_fixture: f, channel: whatsapp, input_lang: masri,\n"
+    '   turns: [{{user: "hi", expected_action: clarify}}]}}\n'
+)
+
+NO_TURNS = (
+    "- {id: x-5, vertical: education, source: synthetic, category: ambiguous,\n"
+    "  tenant_fixture: f, channel: whatsapp, input_lang: masri, turns: []}\n"
 )
 
 
@@ -116,6 +122,25 @@ def test_rejects_golden_answer_strings(tmp_path):
         '   turns: [{user: "hi", expected_action: answer, expected_reply: "مرحبا"}]}\n'
     )
     with pytest.raises(ValueError, match="expected_reply"):
+        load_cases(p)
+
+
+def test_rejects_case_with_no_turns(tmp_path):
+    """A turn-less case is unrunnable but would load clean.
+
+    It then counts toward the 150/80 targets in spec §4, so the suite reads as
+    further along than it is — the one error a progress metric must not make.
+    """
+    p = tmp_path / "noturns.yaml"
+    p.write_text(NO_TURNS)
+    with pytest.raises(ValueError, match="turns"):
+        load_cases(p)
+
+
+def test_rejects_case_with_turns_omitted(tmp_path):
+    p = tmp_path / "missing.yaml"
+    p.write_text(NO_TURNS.replace(", turns: []", ""))
+    with pytest.raises(ValueError, match="turns"):
         load_cases(p)
 
 

@@ -148,7 +148,10 @@ class EvalCase(Strict):
     tenant_fixture: str
     channel: Channel
     input_lang: InputLang
-    turns: list[Turn] = Field(default_factory=list)
+    # Required and non-empty. A turn-less case is unrunnable, but it would load
+    # clean and then count toward the 150/80 targets in §4 — inflating progress
+    # is the one error a suite-size metric must not make.
+    turns: list[Turn] = Field(min_length=1)
 
     # §3.1: cases without gold_chunks are excluded from recall metrics rather
     # than counted as failures, so an empty list is meaningful, not a stub.
