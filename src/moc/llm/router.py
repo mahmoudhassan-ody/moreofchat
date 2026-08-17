@@ -127,6 +127,7 @@ class Router:
         messages: Sequence[Message],
         system: str | None = None,
         cache_blocks: Sequence[str] = (),
+        exclude_provider: str | None = None,
     ) -> Completion:
         """Run `task` against its primary, falling back to its failover.
 
@@ -134,11 +135,26 @@ class Router:
         breaker-open. Any error that is not a `ProviderUnavailable` propagates
         untouched — a malformed request is our bug, and failing over would hide
         it while doubling the cost of every broken call.
+
+        `exclude_provider` removes a provider from consideration entirely, for
+        the eval judge (§5.2): a provider must never grade its own output, and
+        expressing that as "prefer the other one" would let failover launder a
+        violation into a verdict that looks exactly like a valid one. Excluding
+        it means there is no ordering of candidates that reaches it. When every
+        remaining candidate is down the judge gets an exception, which is the
+        correct outcome — a grade from the answering provider is worse than no
+        grade, because a missing grade is visible.
         """
         spec = self._task_spec(task)
         candidates = [spec["primary"]]
         if spec.get("failover"):
             candidates.append(spec["failover"])
+        if exclude_provider is not None:
+            candidates = [c for c in candidates if c["provider"] != exclude_provider]
+            if not candidates:
+                raise AllProvidersUnavailable(
+                    f"{task} has no candidate outside provider {exclude_provider!r}"
+                )
 
         max_tokens = spec["max_tokens"]
         last_error: Exception | None = None
@@ -170,8 +186,12 @@ class Router:
                 continue
 
             breaker.record_success()
-            # degraded means "not the primary" — §2.6 logs the turn so a quality
-            # regression is attributable to the fallback path.
+            # degraded means "not the first candidate we were willing to use" —
+            # §2.6 logs the turn so a quality regression is attributable to the
+            # fallback path. Measured after exclusion on purpose: a judge that
+            # deliberately routed around the answering provider made a routing
+            # decision, not an incident, and flagging it degraded would fill the
+            # ledger with outages that never happened.
             result = (
                 completion if index == 0 else _mark_degraded(completion)
             )

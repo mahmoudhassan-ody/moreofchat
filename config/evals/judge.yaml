@@ -1,0 +1,85 @@
+# Judge configuration — eval-harness-spec §5.2 and §5.3.
+#
+# The rubric text lives here rather than in the prompt file, and that split is
+# deliberate. `prompt_version` pins the *instructions*; moving a threshold or
+# sharpening a rubric row is a change to the standard being applied, which
+# `config_hash` already tracks (§2.3). If the rubric sat in the prompt file,
+# every wording tweak would move prompt_version and invalidate every baseline
+# — so nobody would tweak it, and the rubric would rot.
+#
+# **What this file must never contain:** anything that could be read as the
+# expected answer. The judge grades a reply against evidence and against
+# atomic expected facts. Give it a model answer and it becomes a paraphrase
+# detector, which contradicts §3.1 — many different sentences are correct as
+# long as every figure traces to a source.
+
+version: 1
+
+# Resolved to src/moc/evals/prompts/<prompt>.md. The recorded prompt_version
+# is this name plus a digest of the file, because config_hash covers config/
+# and not a prompt living under src/ — without the digest, editing the prompt
+# would change every score while every run still claimed comparability.
+prompt: judge_v1
+
+# §5.2: one sentence. An uncapped judge writes an essay per case, and 230
+# cases of essays is a bill nobody approved for a field nobody reads.
+max_reasoning_words: 30
+
+scale:
+  min: 0
+  max: 3
+
+# §5.3's pass definition. A case must clear every floor.
+pass_thresholds:
+  grounding: 2
+  register: 2
+  helpfulness: 2
+
+# Dimensions where a zero fails the case outright, whatever else scored.
+# Grounding 0 means an unsupported figure or a contradicted passage — F1, the
+# failure that costs a tenant money. No combination of register and
+# helpfulness compensates for it.
+hard_zero:
+  - grounding
+
+disagreement:
+  # Rubric points. One point apart is two graders reading the same reply;
+  # beyond that they are describing different replies, and §5.2 says escalate
+  # rather than pick. Never average: a 1.5 matches no row in the rubric.
+  max_score_gap: 1
+
+# §5.3, verbatim. Rendered into the prompt so the judge grades against the same
+# words the report cites when a score is challenged.
+rubric:
+  grounding:
+    "3": "Every claim traceable to the passages. Where information was absent, the reply says so or hands off."
+    "2": "All claims traceable, but the reply over-generalizes or omits an important qualifier — a fee without the academic year it applies to."
+    "1": "Contains an unsupported claim that is not a figure: a deadline or an eligibility rule absent from the passages."
+    "0": "Contains an unsupported figure, or contradicts a passage. Hard fail regardless of other scores."
+  register:
+    "3": "Natural Egyptian Arabic for conversational content, correct MSA for official statements, no MSA/Masri bleed within a sentence."
+    "2": "Correct variety but stiff or slightly translated-sounding."
+    "1": "Wrong variety for the node, or noticeable Gulf/Levantine vocabulary intruding."
+    "0": "Machine-translated feel, or the reply is in the wrong language entirely."
+  helpfulness:
+    "3": "Answers the actual question and adds the one next step the customer needs."
+    "2": "Answers, but leaves an obvious follow-up unaddressed."
+    "1": "Technically responsive, but the customer would have to ask again."
+    "0": "A non-answer, or a generic deflection where an answer was available."
+
+# System prompts per provider family (§2.6). The two vendors differ in how much
+# a system block steers versus the first user turn, so the same text is not the
+# same instruction — sharing one would silently advantage whichever family it
+# happened to be written for, in a comparison whose entire purpose is fairness.
+system_prompts:
+  anthropic: |
+    You are a grader for an Arabic customer-support assistant. You never answer
+    the customer's question and never write a reply of your own. You assess one
+    reply against the evidence it was given.
+    Return a single JSON object and nothing else: no preamble, no code fence,
+    no commentary after it.
+  openai: |
+    Role: grader for an Arabic customer-support assistant. Do not answer the
+    customer's question. Do not write an improved reply. Assess the reply you
+    are given against the evidence you are given.
+    Respond with one JSON object only. No prose before or after it.

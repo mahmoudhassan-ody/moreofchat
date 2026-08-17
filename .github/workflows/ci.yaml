@@ -182,11 +182,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        provider: ${{ needs.changes.outputs.sensitive == 'true' && fromJSON('["bedrock","openai"]') || fromJSON('["bedrock"]') }}
+        # `anthropic`, not `bedrock`: Task 13 settled on the direct APIs, and
+        # these names index the router's provider map. A matrix naming a
+        # provider the router has never heard of fails at construction, in a
+        # job nobody has run yet.
+        provider: ${{ needs.changes.outputs.sensitive == 'true' && fromJSON('["anthropic","openai"]') || fromJSON('["anthropic"]') }}
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - name: LLM judge (${{ matrix.provider }})
         run: |
-          echo "::error::eval-judge is enabled but has no steps yet — see week 2."
+          # The judge itself is built and tested (Task 15) — what is missing is
+          # the case runner that produces the replies for it to grade, which is
+          # the same gap eval-full names above. Enabling this variable before
+          # that lands gets an error rather than a job that greens on nothing.
+          echo "::error::eval-judge is enabled but the case runner does not exist yet."
           exit 1
