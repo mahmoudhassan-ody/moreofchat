@@ -4,6 +4,7 @@ Callers never open YAML. The P3 move to a database table has to be a change to
 config_store and nothing else, which only holds if nothing else reads the files.
 """
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -98,13 +99,32 @@ def test_only_config_store_parses_platform_config():
     assert offenders == [], f"these parse YAML outside config_store: {offenders}"
 
 
+def _docstrings(tree: ast.AST) -> set[int]:
+    """id() of every docstring node, so prose naming a config path is not a read."""
+    holders = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, holders) and (doc := ast.get_docstring(node, clean=False)) is not None:
+            body = node.body[0]
+            if isinstance(body, ast.Expr) and isinstance(body.value, ast.Constant):
+                found.add(id(body.value))
+            del doc
+    return found
+
+
 def test_config_store_is_the_only_reader_of_the_config_directory():
+    """Documenting a config path is fine; building one in executable code is not."""
     offenders = []
     for path in (REPO_ROOT / "src" / "moc").rglob("*.py"):
         if path.name == "config_store.py":
             continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            code = line.split("#", maxsplit=1)[0]
-            if "config/" in code or 'Path("config' in code:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {line.strip()}")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docs = _docstrings(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in docs:
+                continue
+            if "config/" in node.value or node.value == "config":
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {node.value!r}")
     assert offenders == [], f"these reach into config/ directly: {offenders}"

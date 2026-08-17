@@ -1,0 +1,78 @@
+# Eval gates — platform tier (design doc §19.1), mirroring harness spec §2.1-2.2.
+#
+# Thresholds are values, not code. Tightening expected_action_accuracy must be a
+# config edit and an audit-log entry, not a patch — and it must change
+# config_hash, so the run that moved the bar is not comparable to the baseline
+# that was set under the old one (§2.3).
+#
+# `direction` says which way a metric is good:
+#   min — a proportion of checks that passed; fails below `threshold`
+#   max — a proportion of checks that failed; fails above `threshold`
+#
+# What is deliberately absent: containment_rate and cost_per_turn are tracked in
+# §2.2 but never gated. Gating containment creates pressure to answer rather
+# than hand off, which is the F2 failure the suite exists to catch.
+
+version: 1
+
+baseline:
+  # §2.1: an overall_accuracy regression over this many percentage points
+  # blocks the merge.
+  max_accuracy_regression_pp: 2.0
+
+hard_gates:
+  hallucinated_figure_rate:
+    direction: max
+    threshold: 0.0
+    description: a figure with no retrieved chunk or script constant behind it
+  hedged_figure_rate:
+    direction: max
+    threshold: 0.0
+    description: a grounded figure stated with an approximation marker
+  expected_action_accuracy:
+    direction: min
+    threshold: 0.95
+    description: answer vs clarify vs handoff vs refuse
+  forbidden_claim_violations:
+    direction: max
+    threshold: 0.0
+    description: reply asserts something in a forbidden category
+  retrieval_recall_at_5:
+    direction: min
+    threshold: 0.85
+    description: gold chunks present in the fused top 5 (from P1)
+  arithmetic_in_model_rate:
+    direction: max
+    threshold: 0.0
+    description: a payment-plan figure not traceable to calculator output
+  sold_unit_offered_rate:
+    direction: max
+    threshold: 0.0
+    description: a sold or reserved unit presented as available
+  asof_disclosure_rate:
+    direction: min
+    threshold: 0.98
+    description: reply states when inventory data was current
+
+soft_gates:
+  register_accuracy:
+    direction: min
+    threshold: 0.90
+    description: masri for conversation, MSA for official statements
+  language_mirror_accuracy:
+    direction: min
+    threshold: 0.95
+    description: reply script matches expected_lang
+  slot_retention_accuracy:
+    direction: min
+    threshold: 0.90
+    description: slot state matches expected_slots across turns
+  p95_latency_ms:
+    direction: max
+    threshold: 4000
+    description: reported in milliseconds, not a proportion
+
+# Reported on every run, never gated.
+tracked:
+  - containment_rate
+  - cost_per_turn

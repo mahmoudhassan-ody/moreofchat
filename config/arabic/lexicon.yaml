@@ -196,6 +196,37 @@ year:
     - year
 
 # ─────────────────────────────────────────────────────────────
+# Script detection, for the expected_lang check (harness spec §5.1). Ranges are
+# inclusive hex codepoint bounds. A reply is attributed to the language holding
+# the majority of its letters, so an Arabic reply keeping English technical
+# terms — natural Egyptian usage — still reads as Arabic.
+# ─────────────────────────────────────────────────────────────
+scripts:
+  ar:
+    ranges:
+      - [0x0600, 0x06FF]   # Arabic
+      - [0x0750, 0x077F]   # Arabic Supplement
+      - [0xFB50, 0xFDFF]   # Presentation Forms-A
+      - [0xFE70, 0xFEFF]   # Presentation Forms-B
+  en:
+    ranges:
+      - [0x0041, 0x005A]   # A-Z
+      - [0x0061, 0x007A]   # a-z
+
+# Phrases that qualify a figure in time, for the as_of disclosure check (§3.2).
+# A reply carrying one of these discloses staleness even without a literal date.
+temporal_qualifiers:
+  - "حتى تاريخ"
+  - "حتى تاريخه"
+  - "آخر تحديث"
+  - "اخر تحديث"
+  - "بتاريخ"
+  - "الأسعار سارية حتى"
+  - as of
+  - last updated
+  - current as of
+
+# ─────────────────────────────────────────────────────────────
 # Franco-arab transliteration (§8.1). The keys matter twice over here: a digit
 # glued to Latin letters is a consonant, not a number — "el 5ames" is الخامس,
 # while "5 melion" is five million.

@@ -58,6 +58,16 @@ class RunMetadata:
             "tasks": [t.to_dict() for t in self.tasks],
         }
 
+    @classmethod
+    def from_dict(cls, record: dict[str, Any]) -> RunMetadata:
+        """Rebuild from a persisted artifact, so a baseline can be compared against."""
+        return cls(
+            git_sha=record["git_sha"],
+            config_hash=record["config_hash"],
+            lexicon_version=record["lexicon_version"],
+            tasks=tuple(TaskBinding(**task) for task in record["tasks"]),
+        )
+
     def is_comparable_to(self, baseline: RunMetadata) -> bool:
         """A baseline is comparable only under an identical config hash (§2.3)."""
         return self.config_hash == baseline.config_hash

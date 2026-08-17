@@ -1,0 +1,17 @@
+# Inventory status vocabulary — platform tier (design doc §19.1).
+#
+# Every broker CRM names these differently ("available" / "vacant" / "free",
+# "reserved" / "on hold"), so the words are data. What is not configurable is
+# that a unit which is not available may never be presented as available —
+# design doc §19.3 lists that among the four fixed product guarantees.
+
+version: 1
+
+available_status: available
+
+# Listed for reporting and for the fixture builder in P1. Any status that is
+# not `available_status` fails the check, including one absent from this list —
+# an unrecognised status is not a reason to offer a unit.
+unavailable_statuses:
+  - sold
+  - reserved
