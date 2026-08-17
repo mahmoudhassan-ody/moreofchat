@@ -54,7 +54,7 @@ Hedging is a hard gate rather than a soft one because its consequence is commerc
 | `language_mirror_accuracy` | ≥ 0.95 |
 | `slot_retention_accuracy` (multi-turn) | ≥ 0.90 |
 | `containment_rate` | tracked, not gated — a low rate may be correct behaviour |
-| `p95_latency_ms` | ≤ 4000 |
+| `p95_latency_ms` | ≤ 7000 (design §2.5, measured 2026-08-17 — was an unmeasured 4000) |
 | `cost_per_turn` | tracked per provider |
 
 **Note on containment:** never gate on it. Gating containment creates pressure to answer rather than hand off, which is exactly the F2 failure. Track it as a business KPI, not a quality gate.

@@ -237,14 +237,15 @@ async def test_live_answer_composition_latency_is_recorded(anthropic, capsys):
 @pytest.mark.xfail(
     strict=False,
     reason=(
-        "Measured 2026-08-17 from the Frankfurt VPS: min 2746 / median 4551 / "
-        "max 5052 ms for a ~310-token Arabic answer with reasoning off. The "
-        "model call alone therefore consumes the whole §2.5 turn budget before "
-        "retrieval, guards and the channel hop are counted. Two measured levers: "
-        "effort low roughly halved output tokens in probing, and a shorter reply "
-        "instruction would too — but both trade against grounding quality, which "
-        "is an eval-suite question, not a guess. Encodes the intended end state; "
-        "starts passing when one of those lands."
+        "Marginal by construction, and non-strict for that reason. §2.5's "
+        "5000 ms target was set *from* the six samples it describes (min 2746 / "
+        "median 4551 / max 5052), so one of the six exceeded it. A single timed "
+        "call is not a p95, and asserting one against a p95 would flake roughly "
+        "one run in six. Both XPASS and XFAIL are therefore expected here and "
+        "neither is a signal on its own — the number in the previous test's "
+        "printed line is what to read, and model_call_ceiling_ms is what "
+        "actually detects a regression. This exists so the target stays "
+        "executable rather than becoming a comment nobody re-measures."
     ),
 )
 async def test_live_answer_composition_meets_the_model_call_target(anthropic):

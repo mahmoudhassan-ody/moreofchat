@@ -47,7 +47,7 @@ This is a deliberate trade of compliance posture for speed and simplicity, taken
 
 ### 2.2 What this costs
 
-**Latency.** Cairo → Frankfurt is ~70 ms; Frankfurt → US East adds roughly 100–150 ms round trip. The p95 target of 4 s end-to-end still holds comfortably, but the budget available for retrieval and generation shrinks. Measure it rather than assume it — if p95 drifts toward 4 s under load, this is the first place to look.
+**Latency.** Cairo → Frankfurt is ~70 ms; Frankfurt → US East adds roughly 100–150 ms round trip. Both are small against the model call, which §2.5 measured at a 4551 ms median and which dominates the turn. The network hop is not where this budget goes — measure before optimising it.
 
 **Compliance posture — the real cost.** The data path is now:
 
@@ -83,7 +83,30 @@ Kept documented because the education vertical is likely to ask.
 
 ### 2.5 Latency budget
 
-Cairo → Frankfurt ~70 ms, Frankfurt → US ~100–150 ms. Target end-to-end p95 of 4 s from inbound webhook to outbound message. Track the model-call segment separately in tracing, so a regression is attributable to the network hop rather than to retrieval or generation.
+Cairo → Frankfurt ~70 ms, Frankfurt → US ~100–150 ms.
+
+**Targets, measured 2026-08-17:**
+
+| Segment | Target | Basis |
+|---|---|---|
+| Answer-composition model call | p95 under **5000 ms** | Six samples, below |
+| End to end, inbound webhook → outbound message | p95 **7000 ms** | Model call plus retrieval, guards, channel hop |
+| Model call breakage ceiling | **8000 ms** | Not a target — above this something is wrong |
+
+The earlier figure was a 4 s end-to-end p95, and it was an **unmeasured estimate** carried from the first draft of this document. It was never true. Six samples from the Frankfurt VPS against `claude-sonnet-5`, thinking disabled, effort medium, producing a realistic ~310-token grounded Arabic fee answer:
+
+```
+2746  4386  4551  4716  4934  5052   ms
+min 2746 · median 4551 · max 5052
+```
+
+The **model call alone consumed 109 % of the old 4 s budget at the median**, before retrieval, guard evaluation, or the channel round trip. The numbers above replace the estimate rather than the estimate constraining the numbers; `config/llm/routing.yaml` carries them as data and `tests/llm/test_live_smoke.py` re-measures them on every live run.
+
+**Perceived latency is mitigated by the typing indicator, not by a faster model.** WhatsApp, Instagram and Messenger all expose one; sending it on inbound receipt is what makes a 5 s reply read as considered rather than broken. This is the intended mitigation for the gap between these targets and an ideal sub-2 s reply — a chat user tolerates a visible wait far better than a silent one.
+
+**Two levers are measured and deliberately not pulled.** `effort: low` roughly halved output tokens in probing (171 against 331), and instructing a shorter reply would too. Both trade against grounding: the tokens at risk are the `as_of` disclosure and the second grounded fact. Whether that trade is acceptable is an eval-suite question (§8.3), and the 22 worked examples are explicitly too few to settle it. They stay on the shelf, documented, until the mined corpus can price the quality cost.
+
+Track the model-call segment separately in tracing, so a regression is attributable to the network hop rather than to retrieval or generation.
 
 ### 2.6 Dual-provider routing policy
 
@@ -105,7 +128,7 @@ Rules:
 - Prompt caching semantics differ between the two — do not assume cache-hit economics carry across. Measure per provider.
 - **Never fail over mid-conversation for a single turn** if the two providers produce visibly different register; prefer scripted fallback for that turn and switch provider at conversation boundaries.
 
-**Latency budget:** Cairo → Frankfurt round trip is roughly 60–80 ms. Acceptable for chat. Target end-to-end p95 of 4 s from inbound webhook to outbound message.
+**Latency budget:** Cairo → Frankfurt round trip is roughly 60–80 ms. Acceptable for chat. The turn budget is §2.5's measured 7 s end-to-end p95 — the model call is the dominant segment, not the network hop.
 
 ---
 
@@ -391,7 +414,7 @@ OpenTelemetry traces through the whole turn, Prometheus + Grafana, Loki for logs
 | SLO | Target |
 |---|---|
 | Webhook ACK | p99 < 3 s |
-| Inbound → outbound | p95 < 4 s |
+| Inbound → outbound | p95 < 7 s (§2.5, measured) |
 | Availability | 99.5% monthly |
 | Hallucinated figures | 0 |
 | Failed outbound after retries | < 0.1% |

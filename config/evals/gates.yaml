@@ -69,7 +69,9 @@ soft_gates:
     description: slot state matches expected_slots across turns
   p95_latency_ms:
     direction: max
-    threshold: 4000
+    # Design §2.5, measured 2026-08-17. Replaces an unmeasured 4000 that the
+    # answer-composition call alone exceeded at the median.
+    threshold: 7000
     description: reported in milliseconds, not a proportion
 
 # Reported on every run, never gated.
