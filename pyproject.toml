@@ -35,4 +35,9 @@ packages = ["src/moc"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-markers = ["eval: Arabic evaluation suite (slow)"]
+markers = ["eval: Arabic evaluation suite — runs against the shipped case corpus"]
+# --strict-markers: an unregistered @pytest.mark.typo is an error rather than a
+# marker nothing will ever select. The companion guarantee is separate — pytest
+# exits 5 when `-m eval` matches no tests, so the CI eval jobs cannot pass by
+# collecting nothing.
+addopts = "--strict-markers"

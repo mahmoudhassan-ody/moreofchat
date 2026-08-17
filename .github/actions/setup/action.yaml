@@ -1,0 +1,23 @@
+# Python + uv, installed the same way the VPS does it (plan Task 0 step 2).
+# A composite action rather than a marketplace one: the toolchain install is
+# identical on the runner and on the box, so a "works in CI" result means
+# something about the box.
+
+name: Set up Python and uv
+description: Install uv, resolve the pinned Python, and sync the dev dependencies.
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Sync dependencies
+      shell: bash
+      # --frozen: fail if uv.lock is stale rather than silently resolving
+      # something the developer never ran.
+      run: uv sync --frozen

@@ -30,18 +30,21 @@ NO_TURNS = (
 )
 
 
+@pytest.mark.eval
 def test_loads_education_worked_examples():
     cases = load_cases(EDUCATION)
     assert len(cases) == 11
     assert cases[0].id == "edu-0001"
 
 
+@pytest.mark.eval
 def test_loads_realestate_worked_examples():
     cases = load_cases(REALESTATE)
     assert len(cases) == 11
     assert cases[0].id == "re-0001"
 
 
+@pytest.mark.eval
 def test_parses_education_case_fully():
     case = load_cases(EDUCATION)[0]
     assert case.vertical is Vertical.education
@@ -61,11 +64,13 @@ def test_parses_education_case_fully():
     assert turn.expected_slots == {"faculty": "engineering"}
 
 
+@pytest.mark.eval
 def test_documents_is_the_default_grounding_mode():
     """Education grounds against chunks and never states grounding_mode."""
     assert load_cases(EDUCATION)[0].grounding_mode is GroundingMode.documents
 
 
+@pytest.mark.eval
 def test_parses_structured_inventory_fields():
     """Spec §3.2: the three real-estate-only failure modes."""
     case = next(c for c in load_cases(REALESTATE) if c.id == "re-0002")
@@ -91,6 +96,7 @@ def test_asof_disclosure_defaults_to_false():
     assert load_cases(EDUCATION)[0].turns[0].expected_asof_disclosure is False
 
 
+@pytest.mark.eval
 def test_multi_turn_case_keeps_turn_order():
     case = next(c for c in load_cases(EDUCATION) if c.id == "edu-0004")
     assert [t.expected_action for t in case.turns] == [
@@ -101,6 +107,7 @@ def test_multi_turn_case_keeps_turn_order():
     assert case.turns[2].expected_slots == {"faculty": "pharmacy"}
 
 
+@pytest.mark.eval
 def test_slot_value_may_be_a_list():
     """re-0009 holds two areas at once; a scalar-only type would silently coerce."""
     case = next(c for c in load_cases(REALESTATE) if c.id == "re-0009")
@@ -218,11 +225,13 @@ def test_every_category_belongs_to_some_vertical():
     assert set(CATEGORIES_BY_VERTICAL) == set(Vertical)
 
 
+@pytest.mark.eval
 def test_shipped_case_files_respect_the_mapping():
     for case in load_cases(EDUCATION) + load_cases(REALESTATE):
         assert case.category in CATEGORIES_BY_VERTICAL[case.vertical], case.id
 
 
+@pytest.mark.eval
 def test_ids_are_unique_across_the_whole_suite():
     """Ids are append-only and never reused — including between verticals."""
     ids = [c.id for c in load_cases(EDUCATION) + load_cases(REALESTATE)]

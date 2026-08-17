@@ -1,0 +1,47 @@
+# Bring up the same stack the VPS runs, from the same compose.yaml.
+#
+# Deliberately not a GitHub `services:` block. Two reasons:
+#
+#   1. A services block restates postgres:18, valkey:9, qdrant and meilisearch,
+#      and drifts from compose.yaml the first time either is edited alone. The
+#      spec asks CI to mirror compose; running compose is the only mirror that
+#      cannot fall out of date.
+#   2. Service containers cannot pass a command, and valkey needs
+#      `--requirepass`. A CI valkey without auth is not the valkey under test.
+#
+# The 127.0.0.1 bindings in compose.yaml apply here too, but they prove nothing
+# on an ephemeral runner with no public address. The test that enforces them
+# (test_service_not_exposed_externally) is VPS-only; the unit job reports that
+# gap explicitly rather than letting the skip pass unnoticed.
+
+name: Start infrastructure
+description: Run compose.yaml and wait for every service to become healthy.
+
+runs:
+  using: composite
+  steps:
+    - name: Write .env
+      shell: bash
+      # Throwaway credentials, generated per run. Never reuse a fixed password
+      # here: a workflow file is public, and the same string tends to reappear
+      # in a .env somebody copies onto a real host.
+      run: |
+        set -euo pipefail
+        {
+          echo "MOC_PG_PASSWORD=$(openssl rand -hex 16)"
+          echo "MOC_VALKEY_PASSWORD=$(openssl rand -hex 16)"
+          echo "MOC_QDRANT_KEY=$(openssl rand -hex 16)"
+          echo "MOC_MEILI_KEY=$(openssl rand -hex 16)"
+          echo "MOC_APP_PASSWORD=$(openssl rand -hex 16)"
+          # Left unset on purpose — see the note above.
+          echo "MOC_PUBLIC_IP="
+        } > .env
+
+    - name: docker compose up
+      shell: bash
+      run: docker compose up -d --wait
+
+    - name: Show service state
+      shell: bash
+      if: always()
+      run: docker compose ps

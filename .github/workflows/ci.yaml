@@ -1,0 +1,192 @@
+# CI — job matrix from eval-harness-spec §6.1.
+#
+#   every push                      ruff, lint-imports, unit tests, eval smoke
+#   PR to main                      + full deterministic eval suite + baseline
+#   PR touching prompts/retrieval/  + both providers (judge, week 2)
+#     arabic/config
+#   nightly on main                 full suite, trend report
+#
+# Infrastructure comes from compose.yaml, not from a `services:` block. The
+# spec says CI must mirror compose; running compose itself is the only mirror
+# that cannot drift. It also gets us valkey's --requirepass, which GitHub
+# service containers cannot express.
+#
+# The LLM judge is a separate gated job. Week 2 turns it on by setting one
+# variable and adding steps inside that job — no restructure of anything here.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly trend report on main (§6.1). Meaningful once the judge lands.
+    - cron: "0 3 * * *"
+
+env:
+  # Task 8 kept subprocess out of the measurement path: RunMetadata takes the
+  # sha as a value, and CI is the thing that knows it.
+  MOC_GIT_SHA: ${{ github.sha }}
+
+jobs:
+  # ── Which paths changed, for the §6.1 both-providers rule ──────────────
+  # Computed with git rather than a marketplace action: one less third-party
+  # dependency in the path that decides how much of the suite runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      sensitive: ${{ steps.detect.outputs.sensitive }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        name: Detect changes to prompts, retrieval, arabic or config
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "sensitive=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base" HEAD)
+          echo "changed files:"; echo "$changed"
+          # A lexicon edit can regress retrieval as badly as a prompt edit (§6.1).
+          if echo "$changed" | grep -Eq '^(src/moc/agent/prompts/|src/moc/retrieval/|src/moc/arabic/|config/)'; then
+            echo "sensitive=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sensitive=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Every push ────────────────────────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: ruff
+        run: uv run ruff check .
+      - name: import contracts
+        run: uv run lint-imports
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/infra
+      - name: Unit tests
+        # -rs prints skip reasons. Without it the external-exposure skips below
+        # are invisible in the log.
+        run: uv run pytest -rs -q
+
+      - name: Report the security surface CI cannot cover
+        if: always()
+        run: |
+          set -euo pipefail
+          # MOC_PUBLIC_IP is deliberately unset here: a GitHub runner has no
+          # stable public address to probe, so test_service_not_exposed_externally
+          # cannot run. That test is the guard on compose.yaml's 127.0.0.1
+          # bindings, and it is a VPS-only check.
+          #
+          # Assert it still exists and is skipping for the known reason. If it is
+          # deleted, pytest collects nothing and exits 5, failing this step —
+          # which is the point. A security test that vanishes must not look like
+          # a security test that passed.
+          output=$(uv run pytest tests/test_infra.py::test_service_not_exposed_externally -rs -q)
+          echo "$output"
+          echo "$output" | grep -q "MOC_PUBLIC_IP not set"
+          {
+            echo "### Not covered by CI"
+            echo ""
+            echo "\`test_service_not_exposed_externally\` skipped: \`MOC_PUBLIC_IP\` is unset."
+            echo "Compose binds every port to 127.0.0.1; that this holds is verified"
+            echo "**on the VPS**, not here. Run \`uv run pytest tests/test_infra.py\` there"
+            echo "with \`MOC_PUBLIC_IP\` set after any change to \`compose.yaml\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Task 6's finding: a generated migration must not drop the ledger ──
+  migration-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/infra
+      - name: Migrate to head
+        run: uv run alembic upgrade head
+      - name: Autogenerate must produce an empty migration
+        run: |
+          set -euo pipefail
+          before=$(ls migrations/versions/*.py)
+          uv run alembic revision --autogenerate -m "ci drift check"
+          generated=$(ls migrations/versions/*.py | grep -vxF "$before" | head -1)
+          echo "generated: $generated"
+          uv run python scripts/check_migration_drift.py "$generated"
+          rm -f "$generated"
+
+  # ── Every push: deterministic eval smoke subset ───────────────────────
+  eval-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Deterministic eval smoke subset
+        # -m eval selects the corpus-backed checks. pytest exits 5 if the
+        # marker selects nothing, so this job cannot pass by running zero tests.
+        run: uv run pytest -m eval -rs -q
+
+  # ── PR to main: full deterministic suite + baseline comparison ────────
+  eval-full:
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
+    needs: [changes]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Full deterministic eval suite
+        run: uv run pytest tests/evals tests/arabic -rs -q
+      - name: Baseline comparison
+        run: |
+          set -euo pipefail
+          # report.build_report() does the comparison, and refuses it outright
+          # when config_hash differs from the baseline's (§2.3).
+          #
+          # NOT YET WIRED: producing CaseResults needs the case runner, which
+          # needs a model, which is week 2. There is no evals/baselines/*.json
+          # to compare against until then. This step states that rather than
+          # exiting 0 and looking like a passing comparison.
+          if ! compgen -G "evals/baselines/*.json" > /dev/null; then
+            echo "::notice::No baseline artifact yet — the case runner lands in week 2."
+            echo "- Baseline comparison: **not yet producing artifacts** (week 2)" \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A baseline exists but nothing can produce a run to compare against
+          # it. Fail loudly: a stale baseline sitting in the repo while the
+          # comparison silently no-ops is how a regression gate becomes fiction.
+          echo "::error::evals/baselines/ has artifacts but the case runner does not exist yet."
+          exit 1
+
+  # ── Week 2: LLM judge, provider-crossed (§5.2) ────────────────────────
+  # Gated on a repository variable rather than commented out, so enabling it is
+  # a settings change plus steps in this job. Nothing else references it: no
+  # job `needs` eval-judge, so it can never block the existing matrix.
+  #
+  # §6.1 runs both providers when a PR touches prompts, retrieval, arabic or
+  # config; `changes.outputs.sensitive` already computes that, and is consumed
+  # here so the rule is wired now and only the steps are missing.
+  eval-judge:
+    if: vars.MOC_ENABLE_JUDGE == 'true'
+    needs: [changes, eval-full]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        provider: ${{ needs.changes.outputs.sensitive == 'true' && fromJSON('["bedrock","openai"]') || fromJSON('["bedrock"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: LLM judge (${{ matrix.provider }})
+        run: |
+          echo "::error::eval-judge is enabled but has no steps yet — see week 2."
+          exit 1
