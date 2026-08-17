@@ -177,7 +177,10 @@ jobs:
   # config; `changes.outputs.sensitive` already computes that, and is consumed
   # here so the rule is wired now and only the steps are missing.
   eval-judge:
-    if: vars.MOC_ENABLE_JUDGE == 'true'
+    # THROWAWAY BRANCH ONLY — never merge. Forces the job to run so the
+    # fromJSON matrix expression actually evaluates. Real gate is
+    # `vars.MOC_ENABLE_JUDGE == 'true'`, which needs admin API to set.
+    if: github.event_name == 'pull_request'
     needs: [changes, eval-full]
     runs-on: ubuntu-latest
     strategy:
@@ -188,5 +191,7 @@ jobs:
       - uses: ./.github/actions/setup
       - name: LLM judge (${{ matrix.provider }})
         run: |
-          echo "::error::eval-judge is enabled but has no steps yet — see week 2."
-          exit 1
+          # THROWAWAY: report what the matrix expanded to instead of exiting 1,
+          # so the expansion is readable from the logs.
+          echo "matrix.provider resolved to: ${{ matrix.provider }}"
+          echo "changes.outputs.sensitive was: ${{ needs.changes.outputs.sensitive }}"
