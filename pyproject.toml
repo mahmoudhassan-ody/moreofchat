@@ -12,6 +12,7 @@ dependencies = [
   "pydantic-settings",
   "redis",
   "pyyaml",
+  "httpx>=0.28.1",
 ]
 
 [dependency-groups]
@@ -35,9 +36,16 @@ packages = ["src/moc"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-markers = ["eval: Arabic evaluation suite — runs against the shipped case corpus"]
+markers = [
+  "eval: Arabic evaluation suite — runs against the shipped case corpus",
+  "live: hits real provider APIs; costs money. Opt-in via -m live, excluded from CI",
+]
 # --strict-markers: an unregistered @pytest.mark.typo is an error rather than a
 # marker nothing will ever select. The companion guarantee is separate — pytest
 # exits 5 when `-m eval` matches no tests, so the CI eval jobs cannot pass by
 # collecting nothing.
-addopts = "--strict-markers"
+#
+# `-m "not live"`: live tests hit real providers and cost money, so they are off
+# by default everywhere including CI. A command-line `-m live` comes after this
+# and wins, which is the only way to run them.
+addopts = "--strict-markers -m 'not live'"

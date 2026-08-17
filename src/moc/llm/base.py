@@ -121,6 +121,16 @@ class AllProvidersUnavailable(ProviderUnavailable):
     """
 
 
+class ProviderRequestError(LLMError):
+    """The provider rejected the request: 4xx that is not a rate limit.
+
+    Deliberately *not* a `ProviderUnavailable`, so it never triggers failover
+    and never gets retried. A 400 is our bug; sending the same malformed body
+    to a second provider hides it behind a fallback and doubles the cost of
+    every broken call. A 401 is a missing key, which failover cannot fix either.
+    """
+
+
 class NoFailoverConfigured(LLMError):
     """A failover was demanded for a task that must not have one.
 

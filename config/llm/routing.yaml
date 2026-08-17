@@ -8,15 +8,30 @@
 # config_hash, which correctly invalidates comparison against a baseline
 # measured on the old model (harness spec §2.3).
 #
-# ── UNVERIFIED, confirm before Task 13 ───────────────────────────────────────
-# The Anthropic model ids below are current. The OpenAI chat ids are NOT
-# verified against a live model list — nothing calls them in Task 11, which has
-# no network, but Task 13 is the first task that does. Confirm both against the
-# provider's models endpoint before that task, and treat a 404 from either as a
-# config error rather than a reason to fail over.
-# ─────────────────────────────────────────────────────────────────────────────
+# Every model id below was resolved from the provider's /v1/models on
+# 2026-08-17 and confirmed with a real billed completion, not just a 200 from
+# the models endpoint. Re-check when repinning; ids drift faster than this file.
+#
+# Open question for whoever repins next: OpenAI publishes gpt-5.6-luna,
+# gpt-5.6-sol and gpt-5.6-terra (all 2026-06-23, newer than gpt-5.5). The API
+# exposes no tier metadata, so which is the flagship chat model — and whether
+# any is a small/mini — is not discoverable from /v1/models. Left unpinned
+# rather than guessed. §2.6 says answer composition is repinned on the Arabic
+# eval suite anyway, not on recency.
 
 version: 1
+
+http:
+  # A hung provider must not hold a worker. Connect separately from read,
+  # because a DNS or TLS stall and a slow generation are different faults.
+  connect_timeout_seconds: 5
+  read_timeout_seconds: 60
+  # Retries are for transient faults only, and sit *below* the breaker in
+  # router.py — a provider that is genuinely down should trip the circuit
+  # rather than absorb three retries per call forever.
+  max_retries: 2
+  backoff_base_seconds: 0.5
+  backoff_jitter_seconds: 0.25
 
 breaker:
   # Consecutive failures against one provider before its circuit opens. Per
@@ -32,23 +47,23 @@ tasks:
   # waits for the mined corpus.
   answer_composition:
     primary: {provider: anthropic, model: claude-sonnet-5}
-    failover: {provider: openai, model: gpt-5}
+    failover: {provider: openai, model: gpt-5.5}
     max_tokens: 1024
 
   slot_extraction:
     primary: {provider: anthropic, model: claude-haiku-4-5-20251001}
-    failover: {provider: openai, model: gpt-5-mini}
+    failover: {provider: openai, model: gpt-5.4-mini}
     max_tokens: 512
 
   query_rewriting:
     primary: {provider: anthropic, model: claude-haiku-4-5-20251001}
-    failover: {provider: openai, model: gpt-5-mini}
+    failover: {provider: openai, model: gpt-5.4-mini}
     max_tokens: 256
 
   # Offline, so latency does not matter and quality does.
   eval_grading:
     primary: {provider: anthropic, model: claude-opus-5}
-    failover: {provider: openai, model: gpt-5}
+    failover: {provider: openai, model: gpt-5.5}
     max_tokens: 2048
 
   # failover: null is a rule, not an omission (§7.3). Vectors are comparable
