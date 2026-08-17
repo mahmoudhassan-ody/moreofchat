@@ -38,7 +38,7 @@ jobs:
     outputs:
       sensitive: ${{ steps.detect.outputs.sensitive }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: detect
@@ -63,7 +63,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - name: ruff
         run: uv run ruff check .
@@ -73,7 +73,7 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/infra
       - name: Unit tests
@@ -110,7 +110,7 @@ jobs:
   migration-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/infra
       - name: Migrate to head
@@ -129,7 +129,7 @@ jobs:
   eval-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - name: Deterministic eval smoke subset
         # -m eval selects the corpus-backed checks. pytest exits 5 if the
@@ -142,7 +142,7 @@ jobs:
     needs: [changes]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - name: Full deterministic eval suite
         run: uv run pytest tests/evals tests/arabic -rs -q
@@ -184,7 +184,7 @@ jobs:
       matrix:
         provider: ${{ needs.changes.outputs.sensitive == 'true' && fromJSON('["bedrock","openai"]') || fromJSON('["bedrock"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - name: LLM judge (${{ matrix.provider }})
         run: |
