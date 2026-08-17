@@ -57,9 +57,46 @@ def test_approximation_marker_trips_the_check_even_when_the_figure_matches():
         retrieved_passages=["1400 جنيه"],
         script_constants=[],
     )
-    assert result.passed is False
+    assert result.hedged_numbers == [1400]
     assert result.orphan_numbers == []
-    assert result.approximations != []
+    assert result.passed is False
+
+
+def test_an_orphan_hedge_counts_once_as_an_orphan():
+    """Both failures at once must not inflate both rates.
+
+    hallucinated_figure_rate and hedged_figure_rate are separate gates; a
+    figure counted in both would make a single incident look like two.
+    """
+    result = check_numeric_grounding(
+        reply="حوالي 1500 جنيه",
+        retrieved_passages=["1400 جنيه"],
+        script_constants=[],
+    )
+    assert result.orphan_numbers == [1500]
+    assert result.hedged_numbers == []
+
+
+def test_a_grounded_unhedged_reply_has_both_lists_empty():
+    result = check_numeric_grounding(
+        reply="الرسوم 1400 جنيه",
+        retrieved_passages=["1400 جنيه"],
+        script_constants=[],
+    )
+    assert result.passed is True
+    assert result.orphan_numbers == []
+    assert result.hedged_numbers == []
+
+
+def test_hedge_alone_fails_without_any_orphan():
+    """Regression guard: .passed must not be derived from orphans alone."""
+    result = check_numeric_grounding(
+        reply="تقريبا 1400 جنيه",
+        retrieved_passages=["1400 جنيه"],
+        script_constants=[],
+    )
+    assert result.orphan_numbers == []
+    assert result.passed is False
 
 
 def test_script_constant_grounds_a_figure():

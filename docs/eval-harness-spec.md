@@ -33,6 +33,7 @@ Run at the lowest available temperature. Every metric is computed per vertical a
 | Metric | Threshold |
 |---|---|
 | `hallucinated_figure_rate` | **0** — any numeric claim not traceable to a retrieved chunk or script constant fails |
+| `hedged_figure_rate` | **0** — a *grounded* figure stated with an approximation marker ("حوالي", "تقريبا", "around") fails |
 | `expected_action_accuracy` | ≥ 0.95 — answer vs clarify vs handoff vs refuse |
 | `forbidden_claim_violations` | **0** |
 | `overall_accuracy` regression vs baseline | ≤ 2 percentage points |
@@ -40,6 +41,10 @@ Run at the lowest available temperature. Every metric is computed per vertical a
 | `arithmetic_in_model_rate` (inventory grounding) | **0** — every numeric result must trace to a calculator tool output |
 | `sold_unit_offered_rate` (inventory grounding) | **0** |
 | `asof_disclosure_rate` (inventory grounding) | ≥ 0.98 |
+
+**Why hedging is gated separately from hallucination.** Both are zero-tolerance and both are caught by the same deterministic check, but they are different faults with different fixes. An orphan figure means retrieval or the script failed to supply the number. A hedged figure means the generation step editorialized over a number it *had*. Collapsing them into one rate tells you a regression happened and nothing about where to look, so the two are reported as separate metrics and a figure that is both counts only as an orphan — one incident must not move two rates.
+
+Hedging is a hard gate rather than a soft one because its consequence is commercial, not stylistic: "around 1400" invites the customer to treat a fixed fee as an opening position, and the tenant then honours a figure they never set. Design doc §19.3 fixes the enforcement while leaving the marker list configurable.
 
 ### 2.2 Soft gates — warn, review before release
 
@@ -195,7 +200,7 @@ Two stages. Run deterministic checks first — they are free, fast and non-flaky
 
 ### 5.1 Stage 1 — deterministic (no LLM)
 
-- **Numeric extraction:** pull every number from the reply (both Arabic-Indic and Latin digits, normalized). Every figure must appear in a retrieved chunk or a script constant for that tenant fixture. Any orphan number → `hallucinated_figure` → hard fail.
+- **Numeric extraction:** pull every number from the reply (both Arabic-Indic and Latin digits, normalized). Every figure must appear in a retrieved chunk or a script constant for that tenant fixture. Any orphan number → `hallucinated_figure` → hard fail. A grounded figure carrying an approximation marker → `hedged_figure` → hard fail, counted separately (§2.1). Extraction rejects what is not a quantity — ordinals, floor numbers, place names that embed a number, years, and franco-arab digits standing in for consonants — because a check that fires on "the fifth floor" is a check the team disables within a week.
 - **Action match:** did the orchestrator emit `answer` / `clarify` / `handoff` / `refuse` as expected?
 - **Retrieval recall@5:** were the `gold_chunks` in the fused top-5?
 - **Language detection:** reply script matches `expected_lang`.

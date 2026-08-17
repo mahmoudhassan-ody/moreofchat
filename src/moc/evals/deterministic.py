@@ -12,9 +12,24 @@ from moc.arabic.numerals import QuantityKind, extract_numbers, extract_quantitie
 
 @dataclass(frozen=True)
 class GroundingResult:
+    """Two independent zero-tolerance gates, never conflated.
+
+    `orphan_numbers` feeds `hallucinated_figure_rate` (§2.1) — the figure has
+    no source. `hedged_numbers` feeds `hedged_figure_rate` — the figure has a
+    source but the reply hedged it.
+
+    They are separate because the fixes are different. An orphan means
+    retrieval or the script failed to supply the figure; a hedge means the
+    generation step editorialized over a figure it had. A single number
+    combining both tells you a regression happened and nothing about where.
+
+    The lists are disjoint. A figure that is both orphan and hedged counts
+    only as an orphan, so one incident cannot move both rates.
+    """
+
     passed: bool
     orphan_numbers: list[int | float] = field(default_factory=list)
-    approximations: list[str] = field(default_factory=list)
+    hedged_numbers: list[int | float] = field(default_factory=list)
     reply_numbers: list[int | float] = field(default_factory=list)
     source_numbers: list[int | float] = field(default_factory=list)
 
@@ -26,14 +41,16 @@ def check_numeric_grounding(
 ) -> GroundingResult:
     """Every figure in `reply` must appear in a passage or a script constant.
 
-    Two ways to fail:
+    Two ways to fail, reported separately and gated separately (§2.1):
 
-    - **Orphan figure.** A number with no source. This is F1 — a fee the
-      knowledge base never stated, reaching a student on WhatsApp.
-    - **Approximation.** A hedged figure fails even when the number is correct.
-      Design doc §19.3 makes this non-negotiable: the markers are configurable,
-      the fact that an approximation trips the check is not. "Roughly 1400"
-      invites the customer to treat a fixed fee as an opening position.
+    - **Orphan figure** -> `hallucinated_figure_rate`. A number with no source.
+      This is F1 — a fee the knowledge base never stated, reaching a student on
+      WhatsApp.
+    - **Hedged figure** -> `hedged_figure_rate`. A *grounded* number the reply
+      hedged anyway. Design doc §19.3 makes this non-negotiable: the markers
+      are configurable, the fact that an approximation trips the check is not.
+      "Roughly 1400" invites the customer to treat a fixed fee as an opening
+      position, which is how a tenant ends up honouring a figure they never set.
 
     Comparison happens after digit normalization, so a reply in Arabic-Indic
     digits matches a source in Latin ones — otherwise the check would fire on
@@ -47,13 +64,16 @@ def check_numeric_grounding(
     source_numbers = _collect_sources(retrieved_passages, script_constants)
     reply_numbers = [q.value for q in quantities]
 
+    grounded = [q for q in quantities if _is_grounded(q.value, source_numbers)]
     orphans = [q.value for q in quantities if not _is_grounded(q.value, source_numbers)]
-    approximations = [q.raw for q in quantities if q.approximate]
+    # Only grounded figures can be hedged. An orphan that is also hedged is one
+    # incident, and counting it twice would move both rates for a single fault.
+    hedged = [q.value for q in grounded if q.approximate]
 
     return GroundingResult(
-        passed=not orphans and not approximations,
+        passed=not orphans and not hedged,
         orphan_numbers=orphans,
-        approximations=approximations,
+        hedged_numbers=hedged,
         reply_numbers=reply_numbers,
         source_numbers=sorted(source_numbers),
     )
