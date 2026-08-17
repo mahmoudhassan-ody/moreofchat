@@ -1,0 +1,44 @@
+# WhatsApp via Twilio — design §6.2.
+#
+# The API base lives here rather than in the adapter for the same reason the
+# LLM endpoints live in one package (§2.4): migrating to Meta's Graph API
+# directly once volume justifies it must be a new adapter file plus a config
+# edit, never a search for every place that assumed Twilio. The endpoint guard
+# in tests/llm/test_no_endpoints_outside_llm.py enforces the source half of
+# that; this file is where the value is allowed to exist.
+#
+# Header and parameter names are Twilio's wire contract, not our choice. They
+# are config because they are values, and because a vendor renaming a header
+# should not be a code change reviewed as if it were a logic change.
+
+version: 1
+
+api_base: https://api.twilio.com/2010-04-01
+
+# Twilio's signature header. Absent means unsigned, which is rejected — an
+# unsigned request is indistinguishable from a forged one.
+signature_header: X-Twilio-Signature
+
+# For JSON-bodied webhooks Twilio appends a SHA-256 of the raw body to the URL
+# as this query parameter, and signs the URL. That is the only path on which
+# the exact request bytes are covered by the signature, so it is the path where
+# re-serializing the body before verifying silently breaks everything.
+body_hash_param: bodySHA256
+
+form_content_type: application/x-www-form-urlencoded
+json_content_type: application/json
+
+# §6.2 and Meta's policy: outside 24 hours from the customer's last inbound
+# message, only approved templates may be sent. Freeform text outside the
+# window is rejected by Meta, and a queue of rejected sends looks like an
+# outage to a tenant.
+service_window_hours: 24
+
+http:
+  connect_timeout_seconds: 5
+  read_timeout_seconds: 30
+
+# Twilio addresses WhatsApp numbers with this prefix. Stripped on the way in so
+# `sender_ref` is an E.164 number, restored on the way out — downstream code
+# should never learn which vendor carried the message.
+address_prefix: "whatsapp:"

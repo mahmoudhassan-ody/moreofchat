@@ -39,6 +39,7 @@ name = Layered architecture
 type = layers
 layers =
     moc.api
+    moc.channels
     moc.agent
     moc.retrieval
     moc.llm
@@ -56,8 +57,22 @@ type = forbidden
 source_modules =
     moc.agent
     moc.arabic
+    moc.channels
     moc.llm
     moc.retrieval
     moc.tenancy
 forbidden_modules =
     moc.evals
+
+# §11: the webhook verifies, resolves, enqueues and returns. Both vendors retry
+# anything that is not a prompt 2xx, so a slow ACK is not a latency problem —
+# it is a duplicate delivery, and the customer gets answered twice. The handler
+# cannot be slow if it cannot reach anything slow.
+[importlinter:contract:webhook-does-no-slow-work]
+name = The webhook layer never reaches a model or the agent
+type = forbidden
+source_modules =
+    moc.channels
+forbidden_modules =
+    moc.agent
+    moc.llm

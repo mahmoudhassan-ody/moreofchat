@@ -68,17 +68,45 @@ def test_no_endpoint_strings_outside_the_llm_package():
     )
 
 
-def test_keyword_arguments_named_base_url_are_caught_too():
-    """A leak is as likely to be `client(base_url=...)` as a literal URL."""
+def test_no_module_hardcodes_where_a_provider_lives():
+    """A leak is as likely to be `client(base_url=...)` as a bare URL.
+
+    The rule is about *hardcoding*, not about the keyword. `moc.channels` needs
+    an HTTP client with a base URL too, and reading it from config is the thing
+    §2.4 asks for — the Twilio-to-Meta migration is exactly the case this
+    protects. So a literal is an offence and an expression is not, which keeps
+    the check precise instead of maintaining an allowlist that grows every time
+    a package legitimately talks to a vendor. A literal host smuggled inside an
+    f-string is still caught, by the marker scan above.
+    """
     offenders = []
     for path in SRC.rglob("*.py"):
         if LLM_PACKAGE in path.parents:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.keyword) and node.arg == "base_url":
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "base_url"
+                and isinstance(node.value, ast.Constant)
+            ):
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.value.lineno}")
-    assert offenders == [], f"base_url passed outside src/moc/llm/: {offenders}"
+    assert offenders == [], f"a hardcoded base_url outside src/moc/llm/: {offenders}"
+
+
+def test_a_hardcoded_base_url_is_still_an_offence(tmp_path):
+    """The relaxation above must not have turned the check off."""
+    planted = tmp_path / "leaky.py"
+    planted.write_text('c = Client(base_url="https://api.twilio.com")\n', encoding="utf-8")
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    assert [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.keyword)
+        and node.arg == "base_url"
+        and isinstance(node.value, ast.Constant)
+    ]
+    assert _endpoint_strings(planted) != [], "and the marker scan catches it twice"
 
 
 def test_the_guard_detects_a_planted_violation(tmp_path):
