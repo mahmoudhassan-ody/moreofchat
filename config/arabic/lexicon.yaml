@@ -1,0 +1,211 @@
+# Arabic lexicon — platform tier (design doc §19.1).
+#
+# Every lexical value used by src/moc/arabic/numerals.py lives here. That module
+# contains zero Arabic literals and zero magic numbers by rule (§19.2), and two
+# tests in tests/arabic/test_numerals.py fail if either creeps back in.
+#
+# Path: YAML (P0-P1) -> DB table (P3) -> admin console (P4). Read only through
+# moc.config_store, never opened directly, so P3 is a one-module change.
+#
+# Bump `version` on every edit. The eval suite pins it (§19.4) — a regression
+# measured against a different lexicon is not a measurement.
+
+version: 1
+
+# ─────────────────────────────────────────────────────────────
+# Digit maps. Each string is positional: index 0 is that script's zero.
+# ─────────────────────────────────────────────────────────────
+digits:
+  latin: "0123456789"
+  # U+0660-0669, used across Egypt.
+  arabic_indic: "٠١٢٣٤٥٦٧٨٩"
+  # U+06F0-06F9, Persian/Urdu keyboards. Visually near-identical to the above,
+  # which is exactly why a reply can mix them without anyone noticing.
+  extended_arabic_indic: "۰۱۲۳۴۵۶۷۸۹"
+
+separators:
+  # A comma is ambiguous: 1,250,000 is grouped, 2,5 is decimal. The algorithm
+  # disambiguates by group width; both spellings are listed in both places.
+  thousands:
+    - ","
+    - "٬"      # U+066C arabic thousands separator
+    - " "      # thin space grouping, seen in pasted spreadsheet values
+  decimal:
+    - "."
+    - ","
+    - "٫"      # U+066B arabic decimal separator
+  # Digits per group in a thousands-separated number: 1,250,000.
+  group_size: 3
+
+# Shaved off a token before it is matched. Separators are excluded automatically,
+# so a trailing "." here never eats a decimal point.
+punctuation:
+  trim: "،؛,.;:!؟?()[]«»\"'"
+
+# ─────────────────────────────────────────────────────────────
+# Unit multipliers. Latin entries match case-insensitively.
+# ─────────────────────────────────────────────────────────────
+unit_multipliers:
+  - multiplier: 1000
+    words:
+      - "ألف"
+      - "الف"
+      - "آلاف"
+      - "الاف"
+      - "k"
+  - multiplier: 1000000
+    words:
+      - "مليون"
+      # Same word spelled with Farsi yeh U+06CC instead of Arabic yeh U+064A.
+      # Common from non-Egyptian keyboards; a distinct string, so listed twice.
+      - "ملیون"
+      - "ملايين"
+      - "melion"
+      - "million"
+      - "m"
+      - "م"
+  - multiplier: 1000000000
+    words:
+      - "مليار"
+      - "billion"
+      - "b"
+
+# Spoken fractions: "٥ و نص مليون" is 5.5 million, not 5 million.
+fractions:
+  "نص": 0.5
+  "نصف": 0.5
+  "ربع": 0.25
+  "تلت": 0.75      # "و تلت" after a whole reads as three-quarters in this phrasing
+  half: 0.5
+
+conjunctions:
+  - "و"
+  - and
+
+# ─────────────────────────────────────────────────────────────
+# Rejection vocabulary — tokens that mean a nearby digit is not a quantity.
+# ─────────────────────────────────────────────────────────────
+
+# Ordinals never denote an amount. Egyptian and MSA spellings both appear.
+ordinal_markers:
+  - "الأول"
+  - "الاول"
+  - "الأولى"
+  - "الاولى"
+  - "التاني"
+  - "الثاني"
+  - "التانية"
+  - "الثانية"
+  - "التالت"
+  - "الثالث"
+  - "التالتة"
+  - "الثالثة"
+  - "الرابع"
+  - "الرابعة"
+  - "الخامس"
+  - "الخامسة"
+  - "السادس"
+  - "السادسة"
+  - "السابع"
+  - "السابعة"
+  - "التامن"
+  - "الثامن"
+  - "التاسع"
+  - "العاشر"
+
+# A floor is a location. "الدور الخامس" and "الدور 5" are both rejected.
+floor_markers:
+  - "الدور"
+  - "دور"
+  - "الطابق"
+  - "طابق"
+
+# Place names that embed a number. "التجمع الخامس" is New Cairo, not five.
+place_markers:
+  - "التجمع"
+  - "تجمع"
+  - "المنطقة"
+  - "الحي"
+
+# A hedged figure is a hallucination with a disclaimer. Multi-word entries are
+# matched across token boundaries.
+approximation_markers:
+  - "حوالي"
+  - "حوالى"
+  - "تقريبا"
+  - "تقريباً"
+  - "في حدود"
+  - "في حدود"
+  - "نحو"
+  - "قرابة"
+  - around
+  - approximately
+  - about
+  - roughly
+  - circa
+
+# ─────────────────────────────────────────────────────────────
+# Tagging vocabulary — what a nearby digit is *about*.
+# ─────────────────────────────────────────────────────────────
+currency_markers:
+  - "جنيه"
+  - "جنيها"
+  - "جنيهاً"
+  - "ج.م"
+  - "جم"
+  - EGP
+  - LE
+  - L.E
+
+percent_markers:
+  - "٪"
+  - "%"
+  - "بالمية"
+  - "بالمئة"
+  - "في المية"
+  - percent
+
+count_markers:
+  - "غرف"
+  - "غرفة"
+  - "غرفه"
+  - "أوضة"
+  - "اوضة"
+  - "اوض"
+  - "حجرة"
+  - bedrooms
+  - bedroom
+  - rooms
+
+# ─────────────────────────────────────────────────────────────
+# Year heuristic. A bare 4-digit number in this range is a date, not a fee —
+# unless it carries a currency marker, a unit multiplier or a percent sign.
+# ─────────────────────────────────────────────────────────────
+year:
+  min: 1900
+  max: 2100
+  digit_length: 4
+  markers:
+    - "عام"
+    - "لعام"
+    - "سنة"
+    - "سنه"
+    - "السنة"
+    - "السنه"
+    - "عام دراسي"
+    - year
+
+# ─────────────────────────────────────────────────────────────
+# Franco-arab transliteration (§8.1). The keys matter twice over here: a digit
+# glued to Latin letters is a consonant, not a number — "el 5ames" is الخامس,
+# while "5 melion" is five million.
+# ─────────────────────────────────────────────────────────────
+franco_transliteration:
+  "2": "ء"
+  "3": "ع"
+  "4": "ذ"
+  "5": "خ"
+  "6": "ط"
+  "7": "ح"
+  "8": "غ"
+  "9": "ص"
