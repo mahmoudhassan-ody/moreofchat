@@ -43,3 +43,21 @@ layers =
     moc.retrieval
     moc.llm
     moc.tenancy
+
+# The eval harness runs the agent, so the dependency points evals -> agent.
+# `check_numeric_grounding` lives in moc.agent.guards for that reason: it is a
+# runtime gate the orchestrator enforces, which the harness then measures.
+# Without this contract someone reasonably moves it back into moc.evals, the
+# import becomes a cycle, and the fix that unblocks them is a second copy —
+# at which point the eval suite can pass while production emits an orphan.
+[importlinter:contract:evals-are-downstream-of-the-agent]
+name = The agent never imports the eval harness
+type = forbidden
+source_modules =
+    moc.agent
+    moc.arabic
+    moc.llm
+    moc.retrieval
+    moc.tenancy
+forbidden_modules =
+    moc.evals

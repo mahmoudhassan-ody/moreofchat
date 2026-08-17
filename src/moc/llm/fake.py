@@ -26,6 +26,7 @@ class FakeProvider:
         text: str = "",
         fail_with: Exception | None = None,
         fail_times: int | None = None,
+        fail_kinds: tuple[str, ...] = ("complete", "embed"),
         embedding_dimensions: int = 0,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -40,6 +41,11 @@ class FakeProvider:
         #: How many calls fail before recovering. None means "until changed",
         #: which is what a breaker test needs.
         self.fail_times = fail_times
+        #: Which call kinds `fail_with` applies to. A completion outage and an
+        #: embedding outage are different incidents — §7.3 has a dead embedding
+        #: endpoint degrading search to Meilisearch rather than failing the turn
+        #: — so a test that means one must be able to say so.
+        self.fail_kinds = fail_kinds
         self.embedding_dimensions = embedding_dimensions
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
@@ -47,8 +53,8 @@ class FakeProvider:
         self.stop_reason = stop_reason
         self.calls: list[dict[str, Any]] = []
 
-    def _maybe_fail(self) -> None:
-        if self.fail_with is None:
+    def _maybe_fail(self, kind: str) -> None:
+        if self.fail_with is None or kind not in self.fail_kinds:
             return
         if self.fail_times is None:
             raise self.fail_with
@@ -81,7 +87,7 @@ class FakeProvider:
                 "effort": effort,
             }
         )
-        self._maybe_fail()
+        self._maybe_fail("complete")
         return Completion(
             text=self.text,
             provider=self.name,
@@ -98,7 +104,7 @@ class FakeProvider:
         self.calls.append(
             {"kind": "embed", "model": model, "texts": list(texts), "dimensions": dimensions}
         )
-        self._maybe_fail()
+        self._maybe_fail("embed")
         # Distinct but deterministic vectors: identical ones would let a bug
         # that returns the same embedding for every chunk pass unnoticed.
         return [[float(index)] * dimensions for index, _ in enumerate(texts)]

@@ -1,0 +1,61 @@
+# PII redaction patterns — design §7.3 and §11.2.
+#
+# These are values, not code (§19). Egypt renumbers mobile prefixes and has
+# reissued identifier formats before; when it happens again this must be a
+# config edit that whoever owns compliance can read and review, not a source
+# change buried in a regex literal.
+#
+# **Order is behaviour.** Patterns apply top to bottom and the first match
+# consumes the digits, so a national ID must be tried before the payment-card
+# pattern that would also match its 14 digits. A national ID mislabelled as a
+# card is a national ID the PDPL retention rules were never applied to.
+#
+# **Matching happens on digit-normalized text.** ٢٩٨٠١٢٣٤٥٦٧٨٩٠ is the same
+# identifier as 29801234567890, and a Latin-digit pattern does not fail loudly
+# on the Arabic-Indic form — it reports a clean message and forwards the
+# identifier to two US providers. Normalization is length-preserving, so the
+# spans found on the normalized copy still index the original.
+#
+# Everything here must be *narrow*. A pattern that eats a fee figure breaks
+# numeric grounding on every correctly-answered turn, and the fix the team
+# reaches for is disabling the guard rather than narrowing the pattern.
+
+version: 1
+
+# What replaces a match. Kept visible rather than blanked so the model can still
+# tell that the customer supplied an identifier — "I already sent you my ID"
+# stays answerable, and an empty gap reads as a dropped word.
+placeholder: "[{label}]"
+
+patterns:
+  # Egyptian national ID: exactly 14 digits, first is the century marker —
+  # 2 for 1900-1999 births, 3 for 2000+. Anchored on both sides so a longer
+  # digit run is not silently truncated into a false match.
+  - label: national_id
+    regex: '(?<!\d)[23]\d{13}(?!\d)'
+
+  # Egyptian mobile: 01 + operator digit (0 Vodafone, 1 Etisalat, 2 Orange,
+  # 5 WE) + 8 digits. Accepts the +20 and 0020 international forms, which is
+  # how a number arrives from a contact card rather than typed.
+  - label: phone
+    regex: '(?<![\d+])(?:(?:\+|00)?20)?0?1[0125]\d{8}(?!\d)'
+
+  # Payment cards: 13-19 digits, optionally grouped with spaces or dashes as
+  # people actually type them.
+  #
+  # Last of the three, because it is the broadest: the digit count alone
+  # covers a 14-digit national ID and a 0020-prefixed mobile, both of which
+  # would otherwise be redacted under the wrong label and retained under the
+  # wrong rules. Breadth pays for its place by running after the specific
+  # patterns have taken what they recognise.
+  - label: payment_card
+    regex: '(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)'
+
+  # Deliberately absent at platform tier: student_id.
+  #
+  # There is no national student-number format — each university issues its own,
+  # and several are indistinguishable from an ordinary four-digit number. A
+  # platform-wide pattern would either miss most of them or redact fee figures,
+  # and the second failure mode gets the whole guard switched off. It lands as
+  # tenant config alongside the tenant config table (§19.1, P3); the label is
+  # already reserved in guards.PLACEHOLDER_LABELS so adding it is data only.

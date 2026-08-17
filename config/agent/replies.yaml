@@ -1,0 +1,69 @@
+# Scripted replies — the turns no model composes (design §2.6, §3.1, §19.3).
+#
+# Every string here is sent when the model either could not be asked or must
+# not be trusted. That makes this file the customer-facing surface of every
+# failure mode in the system, which is why it is config a tenant's own people
+# can read and edit rather than strings buried in a Python module.
+#
+# Register is chosen by the node, not mirrored from the customer (§8.2), and
+# these carry all three so a turn does not switch language on its way to an
+# apology. `masri` is the fallback when a key has no entry for the node's
+# register: an outage message is conversation, not regulation.
+#
+# House rules for anything added here:
+#   - No figure, ever. A scripted reply is what we send *because* we could not
+#     ground one, so a number in this file is a hallucination with a version
+#     control history.
+#   - Name the next step. "Something went wrong" leaves the customer with
+#     nothing to do; "a colleague will follow up" is an outcome they can wait
+#     for.
+#   - No apology theatre. One sentence acknowledging it, one saying what
+#     happens next.
+
+version: 1
+
+replies:
+  # The script routed the turn to a human — a handoff node, an explicit
+  # request, or three failed clarifications (§9).
+  handoff:
+    masri: "لحظة واحدة من فضلك، هحوّلك لزميلي وهيرد عليك حالًا."
+    msa: "لحظة من فضلك، سيتم تحويلك إلى أحد الزملاء للرد على استفسارك."
+    english: "One moment please — I'm passing you to a colleague who'll follow up."
+
+  # The engine has no node for this message, or the customer's meaning is
+  # ambiguous. Ask, never guess (§3.1).
+  clarify:
+    masri: "ممكن توضّحلي أكتر عايز تعرف إيه بالظبط؟"
+    msa: "هل يمكنك توضيح استفسارك بشكل أدق؟"
+    english: "Could you tell me a bit more about what you need?"
+
+  # Retrieval came back below the confidence threshold (§7.5). Deliberately
+  # does not say "I don't know" — it says what would help, because the usual
+  # cause is a question missing the one detail that would find the answer.
+  low_confidence:
+    masri: "معلش، مش لاقي معلومة مؤكدة عن ده. ممكن تقوللي الكلية أو القسم عشان أوصلك للإجابة الصح؟"
+    msa: "لا تتوفر لدي معلومة مؤكدة بخصوص هذا الاستفسار. يرجى تحديد الكلية أو القسم."
+    english: "I don't have a confirmed answer for that. Which faculty or department do you mean?"
+
+  # The model composed a figure that traced to nothing, or hedged one that did
+  # (§19.3). The customer is never told this happened — they get a human, which
+  # is the correct outcome and the only honest one.
+  grounding_failed:
+    masri: "عايز أتأكد من الرقم ده قبل ما أبعتهولك. هحوّلك لزميلي يأكدلك عليه."
+    msa: "يلزم التحقق من هذه البيانات قبل إفادتك بها. سيتم تحويلك إلى أحد الزملاء لتأكيدها."
+    english: "I want to confirm that figure before I give it to you — passing you to a colleague."
+
+  # Every provider is failing or breaker-open (§2.6). Never an error, never a
+  # retry prompt: the customer did nothing wrong and cannot fix it.
+  provider_unavailable:
+    masri: "فيه مشكلة تقنية بسيطة عندنا دلوقتي. هحوّلك لزميلي عشان يساعدك."
+    msa: "نواجه عطلًا تقنيًا مؤقتًا. سيتم تحويلك إلى أحد الزملاء لمساعدتك."
+    english: "We're having a brief technical problem — passing you to a colleague."
+
+# Slot questions, keyed by the slot the script asked for. Masri by default:
+# asking which faculty is conversation, even when the answer will be regulation.
+ask_for_slot:
+  faculty:
+    masri: "حضرتك بتسأل عن أنهي كلية؟"
+    msa: "عن أي كلية تستفسر؟"
+    english: "Which faculty are you asking about?"
