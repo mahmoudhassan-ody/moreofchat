@@ -199,15 +199,15 @@ Every tenant-scoped table carries `tenant_id uuid not null` with row-level secur
 ```python
 class InboundMessage(BaseModel):
     tenant_id: UUID
-    channel: Literal["whatsapp", "instagram", "messenger", "telegram", "email"]
+    channel: Literal["whatsapp","instagram","messenger","telegram","email"]
     channel_account_id: UUID
     provider_message_id: str
-    sender_ref: str  # phone, IG id, chat id, email address
-    thread_ref: str | None  # email Message-ID / References chain
+    sender_ref: str            # phone, IG id, chat id, email address
+    thread_ref: str | None     # email Message-ID / References chain
     text: str | None
     media: list[MediaRef]
     received_at: datetime
-    raw: dict  # stored, never parsed downstream
+    raw: dict                  # stored, never parsed downstream
 ```
 
 ### 6.2 Per-channel notes
@@ -477,3 +477,74 @@ This means chat-avatar assets are a **tenant onboarding requirement**, not a bra
 | Qdrant collections | `moc_kb_education`, `moc_kb_realestate` |
 | Meilisearch indexes | `moc_{tenant_slug}_{vertical}` |
 | Env prefix | `MOC_` |
+
+---
+
+## 19. Configuration surface
+
+**Principle: nothing that varies is a literal in code.** Anything that differs between tenants, verticals, languages, or over time is data — loaded from config, and exposed through an admin UI control. Code holds algorithms; config holds values.
+
+This is a build-order commitment, not a P4 aspiration. A value embedded in a function today is a migration and a refactor when it needs a UI. The path is: **YAML file (P0–P1) → database table (P3) → admin UI control (P4)**, with the loader written so each step is a one-file change.
+
+### 19.1 Three tiers
+
+| Tier | Who edits | Where it lives | Examples |
+|---|---|---|---|
+| **Tenant** | Tenant admin, via console | DB, `tenant_id`-scoped | Script flows, register policy per node, area/faculty synonyms, business hours, handoff triggers, confidence threshold, payment-plan terms, retention period, escalation contacts, greeting and AI-disclosure copy |
+| **Platform** | Odyssey staff, via admin console | DB, global | Arabic lexicons, approximation markers, model routing table, prompt versions, rate limits, chunking parameters, fusion weights, rerank cutoff, per-plan quotas |
+| **Fixed** | Nobody — code only | Source, under test | See §19.3 |
+
+### 19.2 What must be data from day one
+
+The lexicons are the immediate case, because they change constantly and differ per tenant:
+
+```
+config/
+  arabic/
+    lexicon.yaml        # unit words, digit maps, ordinal and floor markers,
+                        # approximation markers, franco-arab transliteration
+    stopwords.yaml
+  retrieval/
+    defaults.yaml       # chunk size, overlap, fusion weights, rerank cutoff
+  llm/
+    routing.yaml        # task -> provider/model, failover policy
+  verticals/
+    education.yaml      # category sets, KPI definitions
+    realestate.yaml
+```
+
+`src/moc/arabic/numerals.py` contains **zero** Arabic literals. It reads `config/arabic/lexicon.yaml`. Same for every module below it: the algorithm is code, the vocabulary is data.
+
+Per-tenant overrides layer on top of platform defaults — a broker's area synonyms extend the platform Arabic lexicon rather than replacing it. Resolution order: tenant override → platform default → schema default.
+
+### 19.3 What stays fixed, and why
+
+Four rules are **not** configuration. They are the product guarantee, and a UI toggle that disables them is a toggle that lets a tenant break the protection they are paying for.
+
+| Rule | Consequence if configurable |
+|---|---|
+| The LLM never composes fees, prices or payment figures | A wrong tuition figure reaches a student on WhatsApp |
+| Payment-plan arithmetic comes from the calculator tool, never the model | A plausible-looking instalment the developer must honour or deny |
+| Every tenant-scoped table enforces the RLS predicate | Cross-tenant data leak between a university and a developer |
+| Unavailable inventory is never presented as available | A broker's sold unit offered to a second buyer |
+
+**Fixed enforcement, configurable parameters.** The distinction matters: the confidence *threshold* that triggers handoff is tenant-configurable; that a below-threshold turn cannot compose a figure is not. The approximation *markers* are platform-configurable; that an approximation trips the grounding check is not.
+
+Nothing here is hardcoded in the sense of magic numbers. These are enforced invariants, each pinned by a test that fails if the enforcement is removed.
+
+### 19.4 The cost, and how it is paid
+
+Every knob is a support surface, a way for a tenant to break their own bot, and a new dimension in the eval matrix. Three mitigations:
+
+1. **Every config key has a schema** with a validated type, range, and default. A tenant cannot set a confidence threshold of 0, or a retention period of 0 days.
+2. **Config changes are audited** — `audit_log` records who changed what, when, and the previous value. A tenant reporting "the bot got worse yesterday" needs an answer.
+3. **Config is versioned, and the eval suite pins the version** (see harness spec §2.3). A regression measured against a different lexicon is not a measurement.
+
+### 19.5 Admin UI scope (P4)
+
+Two consoles, because the audiences differ:
+
+- **Tenant console** — script editor, synonym manager, threshold sliders with recommended ranges, business hours, handoff rules, preview-and-test against their own KB before publishing.
+- **Platform console** (Odyssey only) — lexicon editor, routing table, prompt versions, plan quotas, per-tenant override inspector.
+
+Both write through the same validated config service, so a value set in the UI and a value set in YAML take the identical code path. No second implementation.

@@ -54,6 +54,24 @@ Run at the lowest available temperature. Every metric is computed per vertical a
 
 **Note on containment:** never gate on it. Gating containment creates pressure to answer rather than hand off, which is exactly the F2 failure. Track it as a business KPI, not a quality gate.
 
+### 2.3 Config version pinning
+
+Lexicons, thresholds, chunking parameters and routing are configuration, not code (design doc §19). That makes them a variable in every measurement: a regression measured against a different Arabic lexicon than the baseline is not a measurement.
+
+Every eval run therefore records, alongside the git SHA:
+
+- `config_hash` — a stable hash over every file under `config/`
+- `lexicon_version` — explicit version field in `config/arabic/lexicon.yaml`
+- `prompt_version` per task
+- `provider` and `model` per task
+
+Rules:
+
+- A baseline is only comparable to a run with the **same** `config_hash`. On mismatch, the report states that the comparison is invalid rather than showing a misleading delta.
+- Changing a lexicon requires a fresh baseline run, and that run is the new reference.
+- The eval suite loads config from a **pinned fixture directory**, not from live tenant config. Otherwise a tenant editing their synonyms changes your CI results.
+- `config/` changes trigger the full suite in CI, exactly like `agent/prompts/` changes. A lexicon edit can regress retrieval as badly as a prompt edit.
+
 ---
 
 ## 3. Case schema
@@ -285,7 +303,7 @@ evals/
 |---|---|
 | Every push | Smoke subset: 30 cases, deterministic checks only |
 | PR to main | Full suite, single primary provider |
-| PR touching `agent/prompts/`, `retrieval/`, `arabic/` | Full suite, **both** providers |
+| PR touching `agent/prompts/`, `retrieval/`, `arabic/`, or `config/` | Full suite, **both** providers |
 | Nightly on main | Full suite, both providers, trend report |
 
 ### 6.2 Flakiness
