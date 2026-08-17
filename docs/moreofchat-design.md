@@ -16,57 +16,85 @@
 |---|---|---|---|
 | D1 | Codebase | Greenfield | No inheritance from the existing contact center; patterns only |
 | D2 | Vector store | Qdrant | Two-store consistency problem → outbox pattern required |
-| D3 | LLM | Claude **and** OpenAI (dual provider) | Router selects per task; either fails over to the other; two DPAs and two EU residency paths to maintain |
-| D4 | Embeddings | OpenAI `text-embedding-3-large` | Second US vendor in the data path; reindex needed if changed |
+| D3 | LLM | Claude **and** OpenAI, both via **first-party direct APIs** | Router selects per task; either fails over to the other; two DPAs; processing occurs in the US (see §2) |
+| D4 | Embeddings | OpenAI `text-embedding-3-large`, direct API | Second US vendor in the data path; reindex needed if the model changes |
 | D5 | Lexical search | Meilisearch retained | Fusion happens in the app layer (RRF), not in Qdrant |
 | D6 | WhatsApp access | Twilio (BSP) | Per-message markup; adapter must be swappable to direct Meta later |
-| D7 | Hosting | EU (Frankfurt or Amsterdam) | See §2 — changes the Claude access path |
+| D7 | Hosting | EU (Frankfurt or Amsterdam) for the app; **US for model inference** | Two cross-border hops: Egypt → EU (app) → US (models). Both disclosed in tenant consent |
 | D8 | OS | Ubuntu 26.04 LTS | PostgreSQL 18, Python 3.14, Valkey 9, Docker 29; cgroup v1 removed |
 
 ### 1.1 Open items requiring decision during P0
 
 - Twilio channel coverage for Instagram and Messenger — verify current support. If not covered, those two go direct to Meta Graph API (one integration, two surfaces).
-- Prompt caching and Batch API availability on the chosen Bedrock EU region — verify before relying on caching as the primary cost lever.
 - Egypt on-prem edition: build as a deployment target now, or defer to an enterprise upsell tier.
-- OpenAI EU residency eligibility — must be requested from OpenAI, and the EU Project must be created before any embedding or completion traffic starts (see §2.2).
-- Dual-provider scope: failover only, or task-level routing, or per-tenant provider choice (see §2.4).
+- Whether to create the OpenAI project as an EU-region project even while calling the US endpoint — the only irreversible choice in the stack (see §2.3).
+- Dual-provider scope: failover only, or task-level routing, or per-tenant provider choice (see §2.6).
 
 ---
 
 ## 2. LLM access paths (D3 + D7)
 
-Neither provider's default endpoint satisfies D7. EU residency is not automatic for either — it depends on the exact project, endpoint and deployment type, not the vendor name.
+**v1 decision: both providers are called through their first-party direct APIs.** `api.anthropic.com` and `api.openai.com`. No AWS Bedrock, no Vertex AI, no `eu.api.openai.com`.
 
-### 2.1 Claude
+This is a deliberate trade of compliance posture for speed and simplicity, taken with the exit route documented in §2.4 and §2.5.
 
-Anthropic's direct API exposes an inference-geo setting limited to `us` and `global`; there is no customer-selectable EU-only region. The EU-residency path for Claude is **AWS Bedrock in an EU region** (eu-central-1 Frankfurt, eu-west-1 Ireland, eu-west-3 Paris, eu-north-1 Stockholm) or **Vertex AI EU regional endpoints** (which carry a ~10% premium over global endpoints).
+### 2.1 What this buys
 
-**Recommendation:** Claude via **AWS Bedrock `eu-central-1`**, using the Anthropic SDK's Bedrock client so the call sites stay identical. AWS's DPA applies rather than Anthropic's direct terms, and zero data retention is the default on that path.
+- **No approval gates.** Bedrock model access is a per-model request; OpenAI EU residency is granted by OpenAI rather than self-served. Both are lead-time items on a critical path. Direct APIs are self-serve today.
+- **Full feature surface immediately.** Prompt caching and the Batch API are first-class on the first-party APIs — and prompt caching is the primary cost lever in §10, so having it verified rather than assumed matters.
+- **Newest models first.** Frontier releases reach the first-party API before the cloud resellers.
+- **One less vendor.** No AWS account, IAM policy, or cross-account billing to administer.
 
-**Important:** EU hosting is a GDPR and latency decision. It does **not** resolve Egypt's PDPL (Law 151/2018) cross-border transfer obligations — Cairo → Frankfurt is still a cross-border transfer under Egyptian law and requires consent plus, depending on the data category, authorization. Public universities are the tenants most likely to demand in-country processing, which is why the Egypt on-prem edition stays on the roadmap.
+### 2.2 What this costs
 
-### 2.2 OpenAI
+**Latency.** Cairo → Frankfurt is ~70 ms; Frankfurt → US East adds roughly 100–150 ms round trip. The p95 target of 4 s end-to-end still holds comfortably, but the budget available for retrieval and generation shrinks. Measure it rather than assume it — if p95 drifts toward 4 s under load, this is the first place to look.
 
-Default `api.openai.com` traffic processes in the US. EU processing requires an **eligible European API Project** using the `eu.api.openai.com` endpoint, created with Europe selected as the region at creation time and running with zero data retention in-region. **Existing projects cannot be converted afterwards** — so the EU project must exist before the first embedding call, or the entire corpus gets re-embedded later.
+**Compliance posture — the real cost.** The data path is now:
 
-Eligibility is granted by OpenAI rather than self-served, so start that request in week one of P0; it is a lead-time item, not a config toggle. The fallback if eligibility is delayed is **Azure OpenAI** in an EU region (France Central, Sweden Central), which keeps processing inside the Microsoft EU Data Boundary at the cost of slower access to new model variants.
+```
+Egypt (customer)  →  EU (app, Frankfurt)  →  US (model inference)
+```
 
-This applies to embeddings as much as completions — the embedding endpoint and the vector store must be pinned to the same region, or every grounded document crosses the boundary at query time.
+Two cross-border transfers, not one. Consequences:
 
-### 2.3 Egypt PDPL
+- **Egypt PDPL (Law 151/2018)** requires consent for cross-border transfer and, depending on data category, authorization. This was already true of EU hosting; the US hop adds a second jurisdiction with no adequacy arrangement with Egypt.
+- **GDPR** obligations for European-standard tenants now rest on the vendors' standard contractual clauses rather than in-region processing.
+- **Public universities are where this surfaces.** Procurement asks where processing happens, and "the United States" is a harder answer than "Frankfurt." Private brokers will not ask. Plan for the objection on the education side specifically.
 
-Both EU paths are GDPR and latency decisions. Neither resolves Egypt's PDPL cross-border obligations — Cairo → Frankfurt is still a cross-border transfer under Egyptian law, and the on-prem Egypt edition remains the answer for tenants who cannot accept it.
+**Required now, not later:** the tenant consent copy and privacy notice must state that processing occurs outside Egypt and the EU. Retrofitting consent after 200 live conversations means re-consenting 200 people. Write it before the first tenant connects a channel.
 
-### 2.4 Dual-provider routing policy
+### 2.3 The one irreversible choice
+
+Everything in §2 is reversible except this. Embeddings are only comparable within the same model and dimension, so switching later means re-embedding every chunk for every tenant.
+
+**If OpenAI EU project eligibility is easy to obtain, create the project as an EU-region project even while calling the US endpoint.** An OpenAI project cannot be converted to an EU project after creation. Creating it EU-region now costs nothing and removes a full corpus reindex from the future migration. If eligibility is slow or unavailable, proceed with a standard project and accept the reindex as the price of a later move.
+
+### 2.4 Migration route, if a deal requires it
+
+Kept documented because the education vertical is likely to ask.
+
+| Requirement | Path | Cost |
+|---|---|---|
+| EU processing for Claude | AWS Bedrock `eu-central-1`, or Vertex AI EU regional endpoints (~10% premium) | New adapter file behind the existing `LLMProvider` port. Verify prompt caching and Batch support on the target before committing. |
+| EU processing for OpenAI | EU-region project on `eu.api.openai.com`, or Azure OpenAI in France Central / Sweden Central | New adapter, plus a full re-embed unless §2.3 was taken |
+| In-country Egyptian processing | On-prem edition with self-hosted models | A deployment target, not a config change. Enterprise tier. |
+
+**What keeps this cheap:** both providers sit behind one internal `LLMProvider` port, and no endpoint or `base_url` may appear outside `src/moc/llm/`. The import-linter contract already enforces that no other module imports the provider SDKs. A region change must remain a new adapter, never a refactor — if a `base_url` assumption leaks into the router or a call site, this table stops being true.
+
+### 2.5 Latency budget
+
+Cairo → Frankfurt ~70 ms, Frankfurt → US ~100–150 ms. Target end-to-end p95 of 4 s from inbound webhook to outbound message. Track the model-call segment separately in tracing, so a regression is attributable to the network hop rather than to retrieval or generation.
+
+### 2.6 Dual-provider routing policy
 
 Recommended shape: **task-level routing with cross-provider failover**, not per-tenant provider choice. Per-tenant choice doubles the eval matrix and every prompt becomes two prompts to maintain.
 
 | Task | Primary | Failover |
 |---|---|---|
-| Customer-facing answer composition (Masri/MSA) | Claude Sonnet | OpenAI flagship chat model |
+| Customer-facing answer composition (Masri/MSA) | Claude Sonnet (direct API) | OpenAI flagship chat model (direct API) |
 | Intent + slot extraction, language/register detection | Claude Haiku | OpenAI small/mini model |
 | Retrieval query rewriting | Claude Haiku | OpenAI small/mini model |
-| Embeddings | OpenAI `text-embedding-3-large` | none — see §7.3 |
+| Embeddings | OpenAI `text-embedding-3-large` (direct API) | none — see §7.3 |
 | Offline eval grading, script compilation | Claude Opus | OpenAI flagship |
 
 Rules:
@@ -96,7 +124,7 @@ Rules:
                                                     │                           │
                                                     └──────────┬────────────────┘
                                                                ▼
-                                                     Claude (Bedrock EU)
+                                                     Claude / OpenAI (direct)
                                                                │
                                           ┌────────────────────┼────────────────────┐
                                           ▼                    ▼                    ▼
@@ -150,8 +178,8 @@ app/
     register.py     # Masri vs MSA policy
   llm/
     base.py         # LLMProvider port: complete(), classify(), stream()
-    anthropic_bedrock.py
-    openai_eu.py
+    anthropic_direct.py   # api.anthropic.com
+    openai_direct.py      # api.openai.com
     router.py       # task → provider/model, failover policy, breaker per provider
     cache.py        # prompt cache block assembly (per-provider semantics)
   tenancy/
@@ -348,8 +376,8 @@ KPIs: qualified leads per 100 conversations, viewings booked, lead response time
 
 ## 12. Compliance
 
-- **Egypt PDPL 151/2018:** lawful basis and explicit consent captured at first contact per channel; consent events written to `audit_log`; cross-border transfer disclosed in the tenant's privacy notice; data subject access and erasure endpoints in the admin console.
-- **GDPR:** EU processing region, DPA with AWS and with OpenAI, SCCs where applicable, documented sub-processor list per tenant. Note the EU AI Act became broadly applicable on 2 August 2026 — transparency obligations apply: end users must be told they are talking to an AI system.
+- **Egypt PDPL 151/2018:** lawful basis and explicit consent captured at first contact per channel; consent events written to `audit_log`; **both** cross-border transfers (EU app, US inference) disclosed in the tenant's privacy notice; data subject access and erasure endpoints in the admin console.
+- **GDPR:** the app runs in an EU region but model inference is in the US (§2). DPAs with Anthropic and with OpenAI, SCCs where applicable, documented sub-processor list per tenant. Note the EU AI Act became broadly applicable on 2 August 2026 — transparency obligations apply: end users must be told they are talking to an AI system.
 - **AI disclosure:** the first bot message on every new conversation identifies the sender as an automated assistant, in the customer's language. Non-negotiable, and also a Meta policy requirement.
 - **PII minimization:** redact national ID numbers, full payment details and student IDs before any LLM call. Log redacted forms only.
 - **Retention:** per-tenant configurable message retention with a default of 24 months and a hard delete job.
