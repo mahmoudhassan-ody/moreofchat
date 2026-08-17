@@ -1,0 +1,23 @@
+# Agent defaults — platform tier today, tenant-overridable later (§19.1).
+#
+# These are the platform floor. Per-tenant overrides layer on top when the
+# tenant config table lands in P3; resolution order is tenant -> platform ->
+# schema default.
+#
+# §19.3 draws the line these sit on: the confidence *threshold* is tunable,
+# but that a below-threshold turn cannot reach answer composition is not. A UI
+# toggle disabling that gate would let a tenant switch off the protection they
+# are paying for, so the engine ignores any script or tenant value that tries.
+
+version: 1
+
+# §7.5: below this fused retrieval score the turn routes to the script's
+# fallback node or to handoff, never to answer composition. Deliberately not
+# tuned to a measured value yet — that needs the retrieval layer in P1 and a
+# corpus to measure against. Treat it as a placeholder that fails safe: too
+# high yields extra handoffs, too low yields a hallucinated fee.
+confidence_threshold: 0.55
+
+# Design §9 handoff trigger. Three loops means the bot has failed to
+# understand and a human should take it, not a fourth rephrasing.
+max_consecutive_clarifications: 3

@@ -1,0 +1,68 @@
+# Education fees flow — worked example (design §3.1, §5).
+#
+# The script owns the flow and the facts. The LLM extracts slots and phrases
+# the reply; it never decides what is true about a fee. Every node here states
+# an action and a register, so neither is inferred at runtime.
+#
+# **Immutable once published.** A conversation pins `version` (design §5), so
+# editing this file in place would silently change flows mid-thread. To change
+# behaviour, publish a new version; in-flight conversations finish on the one
+# they started.
+#
+# Register is node policy, never mirrored from the customer. edu-0011 is the
+# case: casual Masri input asking about transfer regulations must produce MSA,
+# because the regulation is an official statement.
+
+version: 1
+script_id: education_fees
+entry: fallback
+
+settings:
+  # Overridable per script. The confidence threshold is deliberately NOT
+  # settable here — see the note in agent/defaults.yaml and §19.3.
+  max_consecutive_clarifications: 3
+
+nodes:
+  # Core path. edu-0001, edu-0002, edu-0004.
+  fees:
+    intents: [fees, tuition, credit_hour_fee]
+    action: answer
+    register: msa          # a fee is an official statement
+    requires_slots: [faculty]
+    grounding: required
+    clarify:
+      register: masri      # asking which faculty is conversation, not regulation
+      ask_for_slot: faculty
+
+  # edu-0004 turn 3. Inherits faculty from the fees node rather than asking again.
+  instalments:
+    intents: [instalments, payment_plan]
+    action: answer
+    register: msa
+    requires_slots: [faculty]
+    grounding: required
+    clarify:
+      register: masri
+      ask_for_slot: faculty
+
+  # edu-0011. No slot needed; the regulation is the same for every faculty.
+  transfer_rules:
+    intents: [transfer_rules, faculty_transfer]
+    action: answer
+    register: msa
+    requires_slots: []
+    grounding: required
+
+  # edu-0008. Sensitive and consequential: a human answers, even though the KB
+  # has a partial accessibility page.
+  accessibility:
+    intents: [accessibility, disability_support]
+    action: handoff
+    register: msa
+
+  # edu-0009's shape: ask which of several meanings, never guess. Reached by
+  # any unrecognised intent, so an unknown message is a clarification rather
+  # than an exception on the worker.
+  fallback:
+    action: clarify
+    register: masri
