@@ -34,6 +34,7 @@ from moc.llm.base import (
     Message,
     NoFailoverConfigured,
     ProviderUnavailable,
+    Reasoning,
     Task,
     UnknownTask,
     UsageEvent,
@@ -157,6 +158,11 @@ class Router:
                     system=system,
                     cache_blocks=cache_blocks,
                     max_tokens=max_tokens,
+                    # Per candidate, not per task: the primary and the failover
+                    # are different models with different controls, and §2.6
+                    # wants the degraded turn produced the same way regardless.
+                    reasoning=candidate.get("reasoning", Reasoning.auto),
+                    effort=candidate.get("effort"),
                 )
             except ProviderUnavailable as exc:
                 breaker.record_failure(self._clock())

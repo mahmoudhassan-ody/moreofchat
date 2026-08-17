@@ -13,6 +13,7 @@ cost lever, and an unverified cost lever is an assumption on a spreadsheet.
 """
 
 import os
+import time
 
 import pytest
 
@@ -123,29 +124,129 @@ async def test_live_anthropic_prompt_caching_reports_a_cache_read(anthropic):
     assert second.cached_tokens > 0, "prompt caching is not reaching the provider"
 
 
-async def test_live_model_ids_in_routing_are_real(anthropic, openai):
-    """A 404 here means the config points at a model that does not exist.
+async def test_live_every_configured_candidate_is_callable_as_configured(anthropic, openai):
+    """Every (model, reasoning, effort) triple in routing.yaml, against the real API.
 
-    Cheaper than discovering it on a customer's turn, and the failure mode is
-    a config error rather than a reason to fail over.
+    Not just "does this model id exist" — the triple has to be valid together.
+    claude-haiku-4-5 rejects `thinking: adaptive` *and* the effort parameter,
+    each with its own 400, so a config that pairs it with either is broken in a
+    way only a live call reveals. Both of those are ProviderRequestError, which
+    means they would never fail over — the task would simply stop working.
     """
-    slots = ROUTING["tasks"]["slot_extraction"]
-    for model in {ANSWER["primary"]["model"], slots["primary"]["model"]}:
-        result = await anthropic.complete(
-            model=model,
-            messages=[Message(role="user", content="Reply with: ok")],
-            system=None,
-            cache_blocks=[],
-            max_tokens=8,
-        )
-        assert result.model
+    clients = {"anthropic": anthropic, "openai": openai}
+    for name, spec in ROUTING["tasks"].items():
+        if name == "embedding":
+            continue
+        for role in ("primary", "failover"):
+            candidate = spec.get(role)
+            if not candidate:
+                continue
+            result = await clients[candidate["provider"]].complete(
+                model=candidate["model"],
+                messages=[Message(role="user", content="Reply with: ok")],
+                system=None,
+                cache_blocks=[],
+                max_tokens=spec["max_tokens"],
+                reasoning=candidate["reasoning"],
+                effort=candidate.get("effort"),
+            )
+            assert result.model, f"{name}.{role} ({candidate['model']}) returned no model"
 
-    for model in {ANSWER["failover"]["model"], slots["failover"]["model"]}:
-        result = await openai.complete(
-            model=model,
-            messages=[Message(role="user", content="Reply with: ok")],
-            system=None,
-            cache_blocks=[],
-            max_tokens=64,
+
+# ─────────────────────────── reasoning + latency (§2.5) ───────────────────────────
+
+
+async def test_live_answer_composition_reasoning_is_actually_off(anthropic):
+    """claude-sonnet-5 thinks by default; config says otherwise for this task.
+
+    Asserted against the provider rather than the request body, because the
+    body only proves what we sent — a silently ignored parameter would still
+    burn thinking tokens and seconds on every customer turn.
+    """
+    result = await anthropic.complete(
+        model=ANSWER["primary"]["model"],
+        messages=[Message(role="user", content="رسوم الساعة 1400 جنيه لعام 2026. رد قصير.")],
+        system=None,
+        cache_blocks=[],
+        max_tokens=ANSWER["max_tokens"],
+        reasoning=ANSWER["primary"]["reasoning"],
+        effort=ANSWER["primary"].get("effort"),
+    )
+    assert result.text.strip()
+    assert result.stop_reason == "end_turn", "a truncated answer means max_tokens is too low"
+
+
+def _grounded_turn() -> tuple[str, str]:
+    """A realistic answer-composition prompt: cached preamble + retrieved passages."""
+    preamble = (
+        "أنت مساعد القبول بجامعة سيناء. أجب فقط من المقاطع المسترجعة. "
+        "لا تقدّر أي رسوم ولا تقرّبها. اذكر دائماً العام الدراسي مع أي رقم. "
+    ) * 40
+    passages = (
+        "رسوم الساعة المعتمدة لكلية الهندسة للعام الجامعي 2026 هي 1400 جنيه. "
+        "عدد الساعات المعتمدة للبرنامج 160 ساعة. الدفع على أربعة أقساط."
+    )
+    return preamble, passages
+
+
+async def _timed_answer_composition(provider) -> tuple[float, object]:
+    preamble, passages = _grounded_turn()
+    started = time.perf_counter()
+    result = await provider.complete(
+        model=ANSWER["primary"]["model"],
+        messages=[Message(role="user", content="المصاريف كام لكلية الهندسة؟")],
+        system=passages,
+        cache_blocks=[preamble],
+        max_tokens=ANSWER["max_tokens"],
+        reasoning=ANSWER["primary"]["reasoning"],
+        effort=ANSWER["primary"].get("effort"),
+    )
+    return (time.perf_counter() - started) * 1000, result
+
+
+async def test_live_answer_composition_latency_is_recorded(anthropic, capsys):
+    """§2.5: measure the model-call segment, don't assume it.
+
+    One realistic grounded turn — cached tenant preamble, retrieved passages,
+    an Arabic question — timed end to end. The assertion is the *ceiling*, not
+    the target: it catches reasoning silently switching back on or a provider
+    incident, without flaking on the normal spread. Whether we hit the target
+    is the next test's job, and the printed line is the number worth reading.
+    """
+    elapsed_ms, result = await _timed_answer_composition(anthropic)
+    budget = ROUTING["latency_budget"]
+
+    with capsys.disabled():
+        print(
+            f"\n  answer_composition: {elapsed_ms:.0f} ms"
+            f" | target {budget['model_call_p95_ms']} ms"
+            f" | turn budget {budget['end_to_end_p95_ms']} ms"
+            f" ({elapsed_ms / budget['end_to_end_p95_ms']:.0%} consumed)"
+            f" | out={result.output_tokens} in={result.input_tokens}"
+            f" cached={result.cached_tokens}"
         )
-        assert result.model
+
+    assert result.text.strip()
+    assert result.stop_reason == "end_turn", "a truncated answer means max_tokens is too low"
+    assert elapsed_ms < budget["model_call_ceiling_ms"], (
+        f"{elapsed_ms:.0f} ms is past the {budget['model_call_ceiling_ms']} ms ceiling — "
+        f"something is wrong, not merely slow"
+    )
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "Measured 2026-08-17 from the Frankfurt VPS: min 2746 / median 4551 / "
+        "max 5052 ms for a ~310-token Arabic answer with reasoning off. The "
+        "model call alone therefore consumes the whole §2.5 turn budget before "
+        "retrieval, guards and the channel hop are counted. Two measured levers: "
+        "effort low roughly halved output tokens in probing, and a shorter reply "
+        "instruction would too — but both trade against grounding quality, which "
+        "is an eval-suite question, not a guess. Encodes the intended end state; "
+        "starts passing when one of those lands."
+    ),
+)
+async def test_live_answer_composition_meets_the_model_call_target(anthropic):
+    elapsed_ms, _ = await _timed_answer_composition(anthropic)
+    assert elapsed_ms < ROUTING["latency_budget"]["model_call_p95_ms"]

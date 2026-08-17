@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from moc.llm.base import Completion, Message, Vector
+from moc.llm.base import Completion, Message, Reasoning, Vector
 from moc.llm.http import Sleep, build_client, request_with_retries
 
 # The one endpoint. Design §2.4: a region change (Bedrock eu-central-1, Vertex
@@ -66,15 +66,23 @@ class AnthropicDirect:
         system: str | None,
         cache_blocks: Sequence[str],
         max_tokens: int,
+        reasoning: str = Reasoning.auto,
+        effort: str | None = None,
     ) -> Completion:
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "messages": [{"role": str(m.role), "content": m.content} for m in messages],
+            "thinking": {"type": _thinking_type(reasoning)},
         }
         blocks = _system_blocks(system, cache_blocks)
         if blocks:
             payload["system"] = blocks
+        if effort is not None:
+            # Omitted entirely when unset: claude-haiku-4-5 answers a request
+            # carrying this key with a 400, so a default here would break every
+            # slot-extraction turn.
+            payload["output_config"] = {"effort": effort}
 
         body = await request_with_retries(
             self._client,
@@ -97,6 +105,19 @@ class AnthropicDirect:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _thinking_type(reasoning: str) -> str:
+    """Map the neutral control onto Anthropic's spelling.
+
+    claude-sonnet-5 thinks by default, so "off" has to be sent explicitly —
+    omitting the key is not the same thing as disabling it.
+    """
+    match Reasoning(reasoning):
+        case Reasoning.none:
+            return "disabled"
+        case Reasoning.auto:
+            return "adaptive"
 
 
 def _system_blocks(system: str | None, cache_blocks: Sequence[str]) -> list[dict[str, Any]]:

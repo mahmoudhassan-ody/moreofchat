@@ -12,12 +12,11 @@
 # 2026-08-17 and confirmed with a real billed completion, not just a 200 from
 # the models endpoint. Re-check when repinning; ids drift faster than this file.
 #
-# Open question for whoever repins next: OpenAI publishes gpt-5.6-luna,
-# gpt-5.6-sol and gpt-5.6-terra (all 2026-06-23, newer than gpt-5.5). The API
-# exposes no tier metadata, so which is the flagship chat model — and whether
-# any is a small/mini — is not discoverable from /v1/models. Left unpinned
-# rather than guessed. §2.6 says answer composition is repinned on the Arabic
-# eval suite anyway, not on recency.
+# OpenAI's 5.6 line names capability tiers rather than sizes: sol is the
+# flagship, terra the balanced middle, luna the small/fast tier. That maps onto
+# §2.6's "flagship" and "small/mini" rows directly, so gpt-5.5 and gpt-5.4-mini
+# are retired from this file — sol matches gpt-5.5's price at higher capability,
+# and luna undercuts gpt-5.4-mini roughly fourfold.
 
 version: 1
 
@@ -37,33 +36,103 @@ breaker:
   # Consecutive failures against one provider before its circuit opens. Per
   # provider, not global: one vendor's incident must not stop the other.
   failure_threshold: 5
-  # How long the circuit stays open before a probe is allowed through.
   reset_seconds: 60
+
+# §2.5's budget, split so a regression is attributable. The model call is one
+# segment of the turn; retrieval, guards and the channel hop share the rest.
+latency_budget:
+  end_to_end_p95_ms: 4000
+  # What one answer-composition call *should* take before it is eating the
+  # whole turn. Measured by tests/llm/test_live_smoke.py, not assumed — and as
+  # of 2026-08-17 it is missed: six samples from the Frankfurt VPS with
+  # reasoning off and effort medium gave min 2746 / median 4551 / max 5052 ms
+  # for a ~310-token Arabic answer. The live suite records the gap rather than
+  # hiding it; the levers are effort (low measured ~half the output tokens) and
+  # a shorter reply, and which to pull is an eval-suite question, not a guess.
+  model_call_p95_ms: 2500
+  # Breakage detector, not a target. Above this something is wrong — reasoning
+  # switched back on, a provider incident, the wrong model pinned — rather than
+  # merely slower than we want. Kept well clear of the measured spread so the
+  # live suite fails on regressions instead of on network jitter.
+  model_call_ceiling_ms: 8000
+
+# ─────────────────────────────────────────────────────────────
+# `reasoning` is the one control that must mean the same thing on both
+# providers, because failover must not silently change how a turn is produced:
+#
+#   none  — Anthropic `thinking: {type: disabled}`, OpenAI `reasoning_effort: none`
+#   auto  — Anthropic `thinking: {type: adaptive}`, OpenAI `reasoning_effort: <effort>`
+#
+# `effort` is passed through to the provider verbatim and is therefore
+# provider-native — set it only to a value that model accepts. Notably
+# claude-haiku-4-5 rejects the effort parameter outright with a 400, which is
+# why its entries carry none.
+# ─────────────────────────────────────────────────────────────
 
 tasks:
   # §2.6: the one task that stays pinned by default. The primary is whichever
   # wins the Arabic eval suite (§8.3) — re-run that comparison quarterly rather
-  # than assuming it. Do not repin from the 22 worked examples; that decision
-  # waits for the mined corpus.
+  # than assuming it. Do not repin from the 22 worked examples.
+  #
+  # reasoning: none. claude-sonnet-5 thinks by default, and this is the
+  # user-facing latency path (§2.5). Composition is a bounded phrasing job —
+  # §3.1 gives the LLM the words, never the facts — so there is nothing here
+  # worth spending thinking tokens or seconds on.
   answer_composition:
-    primary: {provider: anthropic, model: claude-sonnet-5}
-    failover: {provider: openai, model: gpt-5.5}
-    max_tokens: 1024
+    primary:
+      provider: anthropic
+      model: claude-sonnet-5
+      reasoning: none
+      effort: medium
+    failover:
+      provider: openai
+      model: gpt-5.6-sol
+      reasoning: none
+      effort: medium
+    # Raised from 1024: with thinking off a short grounded Arabic fee answer
+    # measured ~330 output tokens, and a reply carrying an as_of disclosure and
+    # a next step runs longer. Arabic also tokenizes less efficiently than
+    # English. This is a ceiling, not a target — the cost is on tokens
+    # generated, so headroom is free and truncation is not.
+    max_tokens: 2048
 
+  # Haiku carries no effort key: the parameter is a 400 on this model.
   slot_extraction:
-    primary: {provider: anthropic, model: claude-haiku-4-5-20251001}
-    failover: {provider: openai, model: gpt-5.4-mini}
+    primary:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      reasoning: none
+    failover:
+      provider: openai
+      model: gpt-5.6-luna
+      reasoning: none
     max_tokens: 512
 
   query_rewriting:
-    primary: {provider: anthropic, model: claude-haiku-4-5-20251001}
-    failover: {provider: openai, model: gpt-5.4-mini}
+    primary:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      reasoning: none
+    failover:
+      provider: openai
+      model: gpt-5.6-luna
+      reasoning: none
     max_tokens: 256
 
-  # Offline, so latency does not matter and quality does.
+  # Offline, so latency does not matter and quality does — the one task that
+  # keeps reasoning on. A judge that grades grounding and register without
+  # thinking is a judge whose disagreements nobody can defend.
   eval_grading:
-    primary: {provider: anthropic, model: claude-opus-5}
-    failover: {provider: openai, model: gpt-5.5}
+    primary:
+      provider: anthropic
+      model: claude-opus-5
+      reasoning: auto
+      effort: high
+    failover:
+      provider: openai
+      model: gpt-5.6-sol
+      reasoning: auto
+      effort: high
     max_tokens: 2048
 
   # failover: null is a rule, not an omission (§7.3). Vectors are comparable

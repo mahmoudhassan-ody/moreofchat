@@ -340,3 +340,85 @@ async def test_fake_fails_only_the_configured_number_of_times(anthropic):
 async def test_fake_embeddings_have_the_requested_dimension(openai):
     vectors = await openai.embed(model="m", texts=["a", "b"], dimensions=1024)
     assert [len(v) for v in vectors] == [1024, 1024]
+
+
+# ─────────────────────────── reasoning control (§2.5, §2.6) ───────────────────────────
+
+
+async def test_reasoning_and_effort_reach_the_provider(router, routing, anthropic):
+    await router.complete(task=Task.answer_composition, messages=MESSAGES)
+    spec = routing["tasks"]["answer_composition"]["primary"]
+    assert anthropic.calls[0]["reasoning"] == spec["reasoning"]
+    assert anthropic.calls[0]["effort"] == spec["effort"]
+
+
+async def test_the_failover_candidate_carries_its_own_reasoning(router, routing, anthropic, openai):
+    """Failover changes the model; it must not also change how the turn is made."""
+    anthropic.fail_with = ProviderUnavailable("down")
+    await router.complete(task=Task.answer_composition, messages=MESSAGES)
+    failover = routing["tasks"]["answer_composition"]["failover"]
+    assert openai.calls[0]["reasoning"] == failover["reasoning"]
+
+
+async def test_a_candidate_without_effort_sends_none(router, anthropic):
+    """slot_extraction runs on claude-haiku-4-5, which 400s on the effort key."""
+    await router.complete(task=Task.slot_extraction, messages=MESSAGES)
+    assert anthropic.calls[0]["effort"] is None
+
+
+def test_answer_composition_and_slot_extraction_run_without_reasoning(routing):
+    """§2.5: the user-facing path does not spend thinking tokens or seconds.
+
+    claude-sonnet-5 thinks by default, so this has to be stated, not omitted.
+    """
+    for task in ("answer_composition", "slot_extraction", "query_rewriting"):
+        for role in ("primary", "failover"):
+            assert routing["tasks"][task][role]["reasoning"] == "none", f"{task}.{role}"
+
+
+def test_eval_grading_keeps_reasoning(routing):
+    """The judge grades grounding and register — reasoning is the point there."""
+    for role in ("primary", "failover"):
+        assert routing["tasks"]["eval_grading"][role]["reasoning"] == "auto"
+
+
+def test_no_haiku_entry_carries_an_effort_key(routing):
+    """Verified live on 2026-08-17: claude-haiku-4-5 + effort is a 400.
+
+    A config edit that adds one would break every slot-extraction turn, and the
+    error is a ProviderRequestError — so it would not even fail over.
+    """
+    for name, spec in routing["tasks"].items():
+        for role in ("primary", "failover"):
+            candidate = spec.get(role) or {}
+            if "haiku" in candidate.get("model", ""):
+                assert "effort" not in candidate, f"{name}.{role} would 400"
+
+
+def test_every_completion_candidate_declares_its_reasoning(routing):
+    """No implicit default: the mode a turn runs under is always visible in config."""
+    for name, spec in routing["tasks"].items():
+        if name == "embedding":
+            continue
+        for role in ("primary", "failover"):
+            candidate = spec.get(role) or {}
+            if candidate:
+                assert candidate.get("reasoning") in {"none", "auto"}, f"{name}.{role}"
+
+
+def test_reasoning_values_survive_yaml_parsing(routing):
+    """Regression: YAML 1.1 turns a bare `off` into the boolean False.
+
+    The first version of this config used `reasoning: off` and every candidate
+    loaded as False — which the enum would have rejected on the first live
+    call, after passing the whole mocked suite. The value is `none` now for
+    exactly that reason; this guards the class of bug, not just the instance.
+    """
+    for name, spec in routing["tasks"].items():
+        for role in ("primary", "failover"):
+            candidate = spec.get(role) or {}
+            if "reasoning" in candidate:
+                assert isinstance(candidate["reasoning"], str), (
+                    f"{name}.{role} reasoning parsed as "
+                    f"{type(candidate['reasoning']).__name__} — quote it or rename it"
+                )

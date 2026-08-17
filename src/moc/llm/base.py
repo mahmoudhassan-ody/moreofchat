@@ -23,6 +23,27 @@ from typing import Protocol, runtime_checkable
 Vector = list[float]
 
 
+class Reasoning(enum.StrEnum):
+    """The one control that must mean the same thing on both providers.
+
+    Failover already changes the model; it must not also change *how* the turn
+    is produced, or a degraded turn becomes unattributable — you could no
+    longer tell a register regression caused by the fallback model from one
+    caused by it suddenly reasoning when the primary did not.
+
+    Translation is each adapter's job, and the two APIs spell it differently:
+    Anthropic takes `thinking: {type: disabled | adaptive}`, OpenAI takes
+    `reasoning_effort: none | <effort>`.
+    """
+
+    #: Deliberately "none", not "off": YAML 1.1 parses a bare `off` as the
+    #: boolean False, so a config author writing `reasoning: off` would silently
+    #: get False and the first live call would raise. "none" has no such
+    #: reinterpretation, and it matches OpenAI's own `reasoning_effort` value.
+    none = "none"
+    auto = "auto"
+
+
 class Task(enum.StrEnum):
     """Routing is per task, not per tenant (§2.6).
 
@@ -94,6 +115,11 @@ class LLMProvider(Protocol):
         system: str | None,
         cache_blocks: Sequence[str],
         max_tokens: int,
+        reasoning: str = Reasoning.auto,
+        # Provider-native and passed through verbatim: the two vendors do not
+        # share a scale, and claude-haiku-4-5 rejects the parameter outright.
+        # Config sets a value valid for that model, or leaves it unset.
+        effort: str | None = None,
     ) -> Completion: ...
 
     async def embed(

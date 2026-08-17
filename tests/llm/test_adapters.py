@@ -420,3 +420,136 @@ async def test_anthropic_has_no_embedding_api():
 # The Task 11 endpoint guard covers this file's counterpart — see
 # test_no_endpoints_outside_llm.py, which runs in the same session and now has
 # real endpoints in src/moc/llm/ to be exempt about.
+
+
+# ─────────────────────────── reasoning control ───────────────────────────
+#
+# All four behaviours below were verified against the live APIs on 2026-08-17
+# before being encoded here — see the module docstring's note on captured
+# fixtures. The mocks assert the request we send; the live smoke tests assert
+# the providers still accept it.
+
+
+async def test_anthropic_reasoning_off_sends_disabled_thinking():
+    """claude-sonnet-5 thinks by default; answer composition opts out (§2.5)."""
+    import json
+
+    captured = []
+    await anthropic(responder(ANTHROPIC_OK, capture=captured)).complete(
+        model="claude-sonnet-5",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+    )
+    assert json.loads(captured[0].content)["thinking"] == {"type": "disabled"}
+
+
+async def test_anthropic_reasoning_auto_sends_adaptive_thinking():
+    import json
+
+    captured = []
+    await anthropic(responder(ANTHROPIC_OK, capture=captured)).complete(
+        model="claude-opus-5",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="auto",
+    )
+    assert json.loads(captured[0].content)["thinking"] == {"type": "adaptive"}
+
+
+async def test_anthropic_sends_effort_only_when_configured():
+    """claude-haiku-4-5 rejects the effort parameter with a 400.
+
+    Its routing entries carry no effort, so the adapter must omit the key
+    entirely rather than send a default.
+    """
+    import json
+
+    captured = []
+    provider = anthropic(responder(ANTHROPIC_OK, capture=captured))
+    await provider.complete(
+        model="claude-haiku-4-5-20251001",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+    )
+    assert "output_config" not in json.loads(captured[0].content)
+
+    await provider.complete(
+        model="claude-sonnet-5",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+        effort="medium",
+    )
+    assert json.loads(captured[1].content)["output_config"] == {"effort": "medium"}
+
+
+async def test_openai_reasoning_off_sends_effort_none():
+    """The symmetric control: failover must not change how the turn is produced."""
+    import json
+
+    captured = []
+    await openai(responder(OPENAI_OK, capture=captured)).complete(
+        model="gpt-5.6-sol",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+        effort="medium",
+    )
+    body = json.loads(captured[0].content)
+    assert body["reasoning_effort"] == "none", "effort must not override reasoning: none"
+
+
+async def test_openai_reasoning_auto_passes_the_configured_effort():
+    import json
+
+    captured = []
+    await openai(responder(OPENAI_OK, capture=captured)).complete(
+        model="gpt-5.6-sol",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="auto",
+        effort="high",
+    )
+    assert json.loads(captured[0].content)["reasoning_effort"] == "high"
+
+
+async def test_openai_auto_without_effort_omits_the_key():
+    import json
+
+    captured = []
+    await openai(responder(OPENAI_OK, capture=captured)).complete(
+        model="gpt-5.6-luna",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="auto",
+    )
+    assert "reasoning_effort" not in json.loads(captured[0].content)
+
+
+async def test_an_unknown_reasoning_mode_is_rejected():
+    """A typo must not silently fall through to the provider's default."""
+    with pytest.raises(ValueError, match="not a valid Reasoning"):
+        await anthropic(responder(ANTHROPIC_OK)).complete(
+            model="m",
+            messages=MESSAGES,
+            system=None,
+            cache_blocks=[],
+            max_tokens=16,
+            reasoning="sometimes",
+        )

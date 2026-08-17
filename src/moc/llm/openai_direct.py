@@ -28,7 +28,7 @@ from typing import Any
 
 import httpx
 
-from moc.llm.base import Completion, Message, Vector
+from moc.llm.base import Completion, Message, Reasoning, Vector
 from moc.llm.http import Sleep, build_client, request_with_retries
 
 BASE_URL = "https://api.openai.com"
@@ -67,6 +67,8 @@ class OpenAIDirect:
         system: str | None,
         cache_blocks: Sequence[str],
         max_tokens: int,
+        reasoning: str = Reasoning.auto,
+        effort: str | None = None,
     ) -> Completion:
         wire: list[dict[str, str]] = []
         preamble = _system_message(system, cache_blocks)
@@ -74,16 +76,21 @@ class OpenAIDirect:
             wire.append({"role": "system", "content": preamble})
         wire.extend({"role": str(m.role), "content": m.content} for m in messages)
 
+        payload: dict[str, Any] = {
+            "model": model,
+            # Not max_tokens — see the module docstring.
+            "max_completion_tokens": max_tokens,
+            "messages": wire,
+        }
+        reasoning_effort = _reasoning_effort(reasoning, effort)
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
+
         body = await request_with_retries(
             self._client,
             provider=self.name,
             path=CHAT_PATH,
-            payload={
-                "model": model,
-                # Not max_tokens — see the module docstring.
-                "max_completion_tokens": max_tokens,
-                "messages": wire,
-            },
+            payload=payload,
             http=self._http,
             sleep=self._sleep,
         )
@@ -113,6 +120,24 @@ class OpenAIDirect:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _reasoning_effort(reasoning: str, effort: str | None) -> str | None:
+    """Map the neutral control onto OpenAI's spelling.
+
+    "none" is the documented off-switch and the counterpart to Anthropic's
+    `thinking: {type: disabled}` — verified against gpt-5.6-sol and gpt-5.6-luna,
+    both of which returned zero reasoning tokens under it.
+
+    `effort` is deliberately ignored when reasoning is off: the two collapse
+    into one field here, and a config that says "off" must win over one that
+    also happens to name an effort level.
+    """
+    match Reasoning(reasoning):
+        case Reasoning.none:
+            return "none"
+        case Reasoning.auto:
+            return effort
 
 
 def _system_message(system: str | None, cache_blocks: Sequence[str]) -> str:

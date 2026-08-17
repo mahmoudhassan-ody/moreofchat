@@ -13,7 +13,7 @@ arguments are recorded.
 from collections.abc import Sequence
 from typing import Any
 
-from moc.llm.base import Completion, Message, Vector
+from moc.llm.base import Completion, Message, Reasoning, Vector
 
 
 class FakeProvider:
@@ -64,6 +64,8 @@ class FakeProvider:
         system: str | None,
         cache_blocks: Sequence[str],
         max_tokens: int,
+        reasoning: str = Reasoning.auto,
+        effort: str | None = None,
     ) -> Completion:
         # Recorded before the failure check: a call that failed still happened,
         # and the breaker tests count exactly that.
@@ -75,6 +77,8 @@ class FakeProvider:
                 "system": system,
                 "cache_blocks": list(cache_blocks),
                 "max_tokens": max_tokens,
+                "reasoning": reasoning,
+                "effort": effort,
             }
         )
         self._maybe_fail()
