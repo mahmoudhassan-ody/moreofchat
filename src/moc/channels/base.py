@@ -25,7 +25,6 @@ same shape Task 14 used for retrieval.
 """
 
 import enum
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -171,5 +170,4 @@ __all__ = [
     "MessagingProvider",
     "OutboundReceipt",
     "OutsideServiceWindow",
-    "Sequence",
 ]

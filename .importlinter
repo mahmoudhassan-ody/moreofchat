@@ -38,6 +38,7 @@ forbidden_modules =
 name = Layered architecture
 type = layers
 layers =
+    moc.workers
     moc.api
     moc.channels
     moc.agent

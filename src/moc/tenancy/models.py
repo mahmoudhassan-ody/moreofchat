@@ -63,11 +63,34 @@ class Conversation(Base):
     """Mirrors migration 0002. Tenant-scoped: see the RLS policy there."""
 
     __tablename__ = "conversations"
-    __table_args__ = (Index("ix_conversations_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("ix_conversations_tenant_id", "tenant_id"),
+        # Mirrors 0005. Partial, because a conversation opened from the agent
+        # inbox has no inbound sender and several of those must coexist.
+        Index(
+            "uq_conversations_thread",
+            "tenant_id",
+            "channel",
+            "sender_ref",
+            unique=True,
+            postgresql_where=text("channel IS NOT NULL AND sender_ref IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
     state: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    channel: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sender_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    #: When the customer last wrote. The 24-hour service window (§6.2) is
+    #: measured from here, so the outbound worker can tell whether a freeform
+    #: reply is allowed without re-reading the inbound message.
+    last_inbound_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

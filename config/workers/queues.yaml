@@ -1,0 +1,57 @@
+# Queues and worker policy — design §3 and §6.2.
+#
+# Valkey Streams rather than a list: consumer groups give at-least-once
+# delivery with an explicit ack, so a worker that dies mid-turn leaves the
+# entry pending and another worker claims it. A list pop loses the message the
+# moment the process holding it stops, and the customer is left unanswered
+# with nothing to show it happened.
+#
+# At-least-once is the guarantee, which makes idempotency the webhook's job
+# rather than the queue's — see `idempotency` below.
+
+version: 1
+
+inbound:
+  stream: moc:inbound
+  group: agent
+  # Read this many entries per XREADGROUP. Small: a turn costs seconds, and a
+  # worker holding twenty entries pending is twenty customers waiting on one
+  # process's health.
+  batch_size: 4
+  block_ms: 5000
+  # Attempts before the entry is dead-lettered. Five is generous for a turn —
+  # the failures worth retrying are transient, and one that fails five times
+  # is a bug that more attempts will not fix. Retrying forever turns one
+  # poisoned message into a worker that never processes anything else.
+  max_attempts: 5
+  dead_letter_stream: moc:inbound:dead
+
+outbound:
+  stream: moc:outbound
+  group: sender
+  batch_size: 8
+  block_ms: 5000
+  max_attempts: 5
+  dead_letter_stream: moc:outbound:dead
+
+# Webhook idempotency (§6.2). Vendors retry for hours; a week of memory costs
+# almost nothing and covers a redelivery after an incident, which is precisely
+# when a duplicate is least welcome.
+idempotency:
+  key_prefix: "moc:seen:"
+  ttl_seconds: 604800
+
+# Token bucket per tenant, in Valkey so every sender process shares one
+# (design §6.2). Per-process buckets each allow the full rate, which is the
+# same as having no limit — the only reason to centralize it.
+rate_limit:
+  key_prefix: "moc:bucket:"
+  capacity: 20
+  refill_per_second: 5
+  # How long to wait when the bucket is empty before looking again. Short
+  # enough that a burst drains promptly, long enough not to spin.
+  wait_seconds: 0.2
+
+backoff:
+  base_seconds: 0.5
+  max_seconds: 30
