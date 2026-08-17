@@ -82,11 +82,12 @@ def build(
     slots: dict | None = None,
     passages: tuple[str, ...] = (PASSAGE,),
     fail_with: Exception | None = None,
+    fail_primary: Exception | None = None,
 ) -> tuple[Orchestrator, FakeProvider, FakeProvider, FakeExtractor, FakeRetriever]:
     anthropic = FakeProvider(
         "anthropic",
         text=reply,
-        fail_with=fail_with,
+        fail_with=fail_with or fail_primary,
         input_tokens=120,
         output_tokens=40,
         cached_tokens=900,
@@ -364,6 +365,55 @@ async def test_a_degraded_turn_still_meters_both_message_rows(app_engine, two_te
 
     assert "message_in" in kinds
     assert "message_out" in kinds
+
+
+async def test_a_failover_turn_is_logged_degraded_on_the_ledger(app_engine, two_tenants):
+    """Week 2's exit criterion, and what the `degraded` column exists for.
+
+    The primary is down, the failover answers, and the customer gets a real
+    reply — so nothing about the turn looks unusual from outside. The ledger
+    row is the only record that it came from the fallback path, which is what
+    makes a later register or grounding regression attributable to the switch
+    rather than blamed on a prompt change (§2.6).
+    """
+    tenant, _ = two_tenants
+    orchestrator, anthropic, openai, *_ = build(
+        fail_primary=ProviderUnavailable("primary down")
+    )
+    async with tenant_session(app_engine, tenant.id) as s:
+        result = await orchestrator.handle(
+            session=s, state=start_state(), text="كام رسوم الساعة؟", channel=CHANNEL
+        )
+        await s.commit()
+        rows = (
+            await s.execute(
+                sql("SELECT provider, degraded FROM usage_ledger WHERE kind = 'llm_call'")
+            )
+        ).all()
+
+    assert result.action is Action.answer, "the customer still gets an answer"
+    assert result.reply == GROUNDED_REPLY
+    assert result.degraded is True
+    assert rows == [("openai", True)]
+    assert composition_calls(anthropic), "the primary must have been tried first"
+    assert composition_calls(openai)
+
+
+async def test_a_primary_only_outage_still_grounds_the_answer(turn_session):
+    """The gate does not relax because the fallback model wrote the reply.
+
+    A degraded turn is the one most likely to produce an ungrounded figure —
+    different model, different prompt-following — so it is the last place to
+    trust the output more.
+    """
+    orchestrator, *_ = build(
+        reply=ORPHAN_REPLY, fail_primary=ProviderUnavailable("primary down")
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟", channel=CHANNEL
+    )
+    assert "1750" not in result.reply
+    assert result.action is Action.handoff
 
 
 async def test_turn_is_tenant_scoped_end_to_end(app_engine, two_tenants):
