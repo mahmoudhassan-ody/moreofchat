@@ -15,14 +15,50 @@ the day someone needs to check one.
 
 import csv
 import json
+import pathlib
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent / "source"
 ROWS = 51
 
 
+_BOM = b"\xef\xbb\xbf"
+_ZWNBSP = "\ufeff"
+
+
+def _header_diagnosis(path: pathlib.Path, columns: list[str]) -> str:
+    """Say whether a byte-order mark is in play.
+
+    Excel writes a UTF-8 BOM, so the first header cell parses as
+    '\ufefftitle' under plain utf-8 and every lookup on that column returns
+    nothing. pandas stripped it silently; the csv module does not. The symptom
+    surfaces as an empty *first field on row 0*, which sends the reader to the
+    data when the problem is in the header — so the header check says so out
+    loud instead.
+    """
+    notes = []
+    if path.read_bytes()[:3] == _BOM:
+        notes.append(
+            "the file starts with a UTF-8 BOM (efbbbf), which is normal for an "
+            "Excel export and is stripped by encoding='utf-8-sig'"
+        )
+    if any(_ZWNBSP in column for column in columns):
+        notes.append(
+            "a parsed column name still contains U+FEFF, so the BOM was NOT "
+            "stripped — the file is being opened as 'utf-8' rather than 'utf-8-sig'"
+        )
+    return (" (" + "; ".join(notes) + ")") if notes else ""
+
+
+REQUIRED = ("title", "content")
+
+
 def read_rows(name: str) -> list[dict[str, str]]:
-    """Read one source CSV.
+    """Read one source CSV, checking the header before the data.
+
+    `utf-8-sig`, not `utf-8`: the call centre exports from Excel and every
+    export carries a BOM. Stripping it here rather than asking for clean files
+    is the right place — the next export will have one too.
 
     `newline=""` is required, not stylistic: several KB entries contain
     embedded newlines inside quoted fields, and without it the csv module
@@ -35,8 +71,16 @@ def read_rows(name: str) -> list[dict[str, str]]:
             f"The fixture sources live beside this script so a figure in a case "
             f"traces to a row in a file that exists. See MANIFEST.md."
         )
-    with path.open(encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        columns = list(reader.fieldnames or [])
+        missing = [column for column in REQUIRED if column not in columns]
+        if missing:
+            raise SystemExit(
+                f"{name}: missing column(s) {missing}. "
+                f"Header parsed as {columns}{_header_diagnosis(path, columns)}."
+            )
+        return list(reader)
 
 
 def cell(rows: list[dict[str, str]], index: int, column: str, label: str) -> str:
@@ -49,7 +93,9 @@ def cell(rows: list[dict[str, str]], index: int, column: str, label: str) -> str
     """
     value = (rows[index].get(column) or "").strip()
     if not value:
-        raise SystemExit(f"{label} row {index} has an empty {column!r}")
+        # The column is known to exist — read_rows checked the header — so this
+        # really is a blank cell rather than a misparsed one.
+        raise SystemExit(f"{label} row {index} has an empty {column!r} cell")
     return value
 
 

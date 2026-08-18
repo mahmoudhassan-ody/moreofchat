@@ -29,6 +29,7 @@ a fixture that rebuilds *differently* rather than one that errors:
 
 import csv
 import json
+import pathlib
 import random
 from collections import Counter
 from pathlib import Path
@@ -39,7 +40,49 @@ AS_OF = "2026-08-01"
 SEED = 20260801  # fixed: the fixture must be byte-identical on every rebuild
 
 
-def read_rows(name: str) -> list[dict[str, str]]:
+_BOM = b"\xef\xbb\xbf"
+_ZWNBSP = "\ufeff"
+
+
+def _header_diagnosis(path: pathlib.Path, columns: list[str]) -> str:
+    """Say whether a byte-order mark is in play.
+
+    Excel writes a UTF-8 BOM, so the first header cell parses as
+    '\ufefftitle' under plain utf-8 and every lookup on that column returns
+    nothing. pandas stripped it silently; the csv module does not. The symptom
+    surfaces as an empty *first field on row 0*, which sends the reader to the
+    data when the problem is in the header — so the header check says so out
+    loud instead.
+    """
+    notes = []
+    if path.read_bytes()[:3] == _BOM:
+        notes.append(
+            "the file starts with a UTF-8 BOM (efbbbf), which is normal for an "
+            "Excel export and is stripped by encoding='utf-8-sig'"
+        )
+    if any(_ZWNBSP in column for column in columns):
+        notes.append(
+            "a parsed column name still contains U+FEFF, so the BOM was NOT "
+            "stripped — the file is being opened as 'utf-8' rather than 'utf-8-sig'"
+        )
+    return (" (" + "; ".join(notes) + ")") if notes else ""
+
+
+LISTING_COLUMNS = (
+    "ref", "title", "listingKind", "propertyType", "compound", "area", "city",
+    "price", "currency", "unitAreaSqm", "bedrooms", "bathrooms", "finish",
+    "furnished", "deliveryDate", "address",
+)
+PROJECT_COLUMNS = ("name", "status")
+
+
+def read_rows(name: str, required: tuple[str, ...]) -> list[dict[str, str]]:
+    """Read one source CSV, checking the header before the data.
+
+    `utf-8-sig`, not `utf-8`: the catalogue exports from Excel and every export
+    carries a BOM. Stripping it here rather than asking for clean files is the
+    right place — the next export will have one too.
+    """
     path = SOURCE / name
     if not path.is_file():
         raise SystemExit(
@@ -47,8 +90,16 @@ def read_rows(name: str) -> list[dict[str, str]]:
             f"The fixture sources live beside this script so a price in a case "
             f"traces to a row in a file that exists. See MANIFEST.md."
         )
-    with path.open(encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        columns = list(reader.fieldnames or [])
+        missing = [column for column in required if column not in columns]
+        if missing:
+            raise SystemExit(
+                f"{name}: missing column(s) {missing}. "
+                f"Header parsed as {columns}{_header_diagnosis(path, columns)}."
+            )
+        return list(reader)
 
 
 def as_int(text: str, field: str, row_number: int) -> int:
@@ -72,8 +123,8 @@ def as_bool(text: str, field: str, row_number: int) -> bool:
     raise SystemExit(f"row {row_number}: {field} is not a boolean: {text!r}")
 
 
-listings = read_rows("listings.csv")
-projects = read_rows("projects.csv")
+listings = read_rows("listings.csv", LISTING_COLUMNS)
+projects = read_rows("projects.csv", PROJECT_COLUMNS)
 
 # developers.csv is deliberately not read. The pandas version loaded it and
 # never referenced a column; carrying it forward would mean shipping a source

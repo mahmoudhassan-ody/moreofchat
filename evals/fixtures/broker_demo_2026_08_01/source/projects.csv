@@ -1,0 +1,98 @@
+﻿name,slug,developer,location,city,status,handoverDate,amenities,description,isFeatured
+Madinaty,madinaty,tmg,New Cairo / East Cairo,New Cairo,Completed,2026-01-01,,Madinaty is a mixed-use community by Talaat Moustafa Group (TMG) in New Cairo / East Cairo.,True
+Noor City,noor-city,tmg,New Capital,New Capital,Under Construction,2028-06-30,,Noor City is a integrated residential community by Talaat Moustafa Group (TMG) in New Capital.,True
+Celian,celian,tmg,New Capital,New Capital,Under Construction,2029-06-30,,Celian is a residential by Talaat Moustafa Group (TMG) in New Capital.,True
+SouthMED,southmed,tmg,North Coast,North Coast,Under Construction,2028-06-30,,SouthMED is a coastal integrated community by Talaat Moustafa Group (TMG) in North Coast.,True
+Mivida,mivida,palm-hills,New Cairo,New Cairo,Ready to Move,2025-12-31,,Mivida is a residential mixed-use by Palm Hills Developments in New Cairo.,True
+Palm Hills New Cairo,palm-hills-new-cairo,palm-hills,New Cairo,New Cairo,Under Construction,2027-06-30,,Palm Hills New Cairo is a residential by Palm Hills Developments in New Cairo.,True
+Badya,badya,palm-hills,West Cairo,West Cairo,Under Construction,2028-12-31,,Badya is a integrated community by Palm Hills Developments in West Cairo.,True
+Hacienda West,hacienda-west,palm-hills,North Coast,North Coast,Under Construction,2027-07-31,,Hacienda West is a coastal residential by Palm Hills Developments in North Coast.,True
+Marassi,marassi,emaar-misr,North Coast,North Coast,Ready to Move,2026-03-31,,Marassi is a integrated coastal community by Emaar Misr in North Coast.,True
+Mivida,mivida,emaar-misr,New Cairo,New Cairo,Completed,2025-12-31,,Mivida is a residential mixed-use by Emaar Misr in New Cairo.,True
+Uptown Cairo,uptown-cairo,emaar-misr,Mokattam,Mokattam,Ready to Move,2026-09-30,,Uptown Cairo is a residential mixed-use by Emaar Misr in Mokattam.,True
+ZED East,zed-east,ora,New Cairo,New Cairo,Under Construction,2029-06-30,,ZED East is a residential mixed-use by ORA Developers Egypt in New Cairo.,True
+ZED West,zed-west,ora,Sheikh Zayed,Sheikh Zayed,Under Construction,2027-12-31,,ZED West is a residential mixed-use by ORA Developers Egypt in Sheikh Zayed.,True
+Solana,solana,ora,West Cairo,West Cairo,Under Construction,2029-12-31,,Solana is a residential by ORA Developers Egypt in West Cairo.,True
+Mountain View iCity New Cairo,mountain-view-icity-new-cairo,mountain-view,New Cairo,New Cairo,Under Construction,2027-12-31,,Mountain View iCity New Cairo is a integrated residential community by Mountain View in New Cairo.,True
+Mountain View iCity October,mountain-view-icity-october,mountain-view,October,October,Under Construction,2028-06-30,,Mountain View iCity October is a integrated residential community by Mountain View in October.,True
+Mountain View Hyde Park,mountain-view-hyde-park,mountain-view,New Cairo,New Cairo,Ready to Move,2026-06-30,,Mountain View Hyde Park is a residential by Mountain View in New Cairo.,True
+Jirian,jirian,mountain-view,New Cairo,New Cairo,Planned,2030-06-30,,Jirian is a residential by Mountain View in New Cairo.,True
+VYE,vye,sodic,New Cairo,New Cairo,Under Construction,2027-12-31,,VYE is a residential by SODIC in New Cairo.,True
+Karmell,karmell,sodic,New Zayed,New Zayed,Under Construction,2028-06-30,,Karmell is a residential by SODIC in New Zayed.,True
+Caesar,caesar,sodic,North Coast,North Coast,Ready to Move,2026-08-31,,Caesar is a coastal residential by SODIC in North Coast.,True
+Villette,villette,sodic,New Cairo,New Cairo,Completed,2025-11-30,,Villette is a residential by SODIC in New Cairo.,True
+La Vista City,la-vista-city,la-vista,New Capital,New Capital,Under Construction,2028-12-31,,La Vista City is a integrated residential community by La Vista Developments in New Capital.,True
+La Vista Ray,la-vista-ray,la-vista,Ain Sokhna,Ain Sokhna,Ready to Move,2026-05-31,,La Vista Ray is a coastal residential by La Vista Developments in Ain Sokhna.,True
+La Vista Topaz,la-vista-topaz,la-vista,New Cairo,New Cairo,Completed,2025-10-31,,La Vista Topaz is a residential by La Vista Developments in New Cairo.,True
+D-Joya,d-joya,tatweer-misr,New Capital,New Capital,Under Construction,2028-06-30,,D-Joya is a residential by Tatweer Misr in New Capital.,True
+Bloomfields,bloomfields,tatweer-misr,Mostakbal City,Mostakbal City,Under Construction,2027-12-31,,Bloomfields is a integrated residential community by Tatweer Misr in Mostakbal City.,True
+Il Monte Galala,il-monte-galala,tatweer-misr,Ain Sokhna,Ain Sokhna,Under Construction,2027-08-31,,Il Monte Galala is a coastal community by Tatweer Misr in Ain Sokhna.,True
+Hyde Park New Cairo,hyde-park-new-cairo,hyde-park,New Cairo,New Cairo,Ready to Move,2026-12-31,,Hyde Park New Cairo is a integrated residential community by Hyde Park Developments in New Cairo.,True
+Garden Heights,garden-heights,hyde-park,New Cairo,New Cairo,Under Construction,2027-06-30,,Garden Heights is a residential by Hyde Park Developments in New Cairo.,True
+Tawny Hyde Park,tawny-hyde-park,hyde-park,West Cairo,West Cairo,Under Construction,2028-03-31,,Tawny Hyde Park is a residential by Hyde Park Developments in West Cairo.,True
+Seashore,seashore,hyde-park,North Coast,North Coast,Under Construction,2029-06-30,,Seashore is a coastal residential by Hyde Park Developments in North Coast.,True
+L'Avenir,l-avenir,al-ahly-sabbour,Mostakbal City,Mostakbal City,Ready to Move,2026-09-30,,L'Avenir is a residential by Al Ahly Sabbour Developments in Mostakbal City.,True
+Zoya,zoya,al-ahly-sabbour,North Coast,North Coast,Under Construction,2028-07-31,,Zoya is a coastal residential by Al Ahly Sabbour Developments in North Coast.,True
+Keeva,keeva,al-ahly-sabbour,West Cairo,West Cairo,Under Construction,2027-12-31,,Keeva is a residential by Al Ahly Sabbour Developments in West Cairo.,True
+Little Venice Golf Resort,little-venice-golf-resort,al-ahly-sabbour,Ain Sokhna,Ain Sokhna,Completed,2025-09-30,,Little Venice Golf Resort is a coastal residential by Al Ahly Sabbour Developments in Ain Sokhna.,True
+HAPTown,haptown,hassan-allam-properties,Mostakbal City,Mostakbal City,Under Construction,2027-12-31,,HAPTown is a integrated residential community by Hassan Allam Properties in Mostakbal City.,True
+Makadi Heights,makadi-heights,orascom-development,Red Sea,Red Sea,Ready to Move,2026-06-30,,Makadi Heights is a integrated coastal community by Orascom Development Egypt in Red Sea.,True
+O West,o-west,orascom-development,West Cairo,West Cairo,Under Construction,2028-06-30,,O West is a integrated residential community by Orascom Development Egypt in West Cairo.,True
+El Gouna,el-gouna,orascom-development,Red Sea,Red Sea,Completed,2025-12-31,,El Gouna is a integrated coastal community by Orascom Development Egypt in Red Sea.,True
+Taj City,taj-city,madinet-masr,New Cairo,New Cairo,Under Construction,2028-03-31,,Taj City is a integrated residential community by Madinet Masr in New Cairo.,True
+Kinda,kinda,madinet-masr,New Cairo,New Cairo,Ready to Move,2026-07-31,,Kinda is a residential by Madinet Masr in New Cairo.,True
+Sarai,sarai,madinet-masr,New Cairo,New Cairo,Under Construction,2029-06-30,,Sarai is a integrated residential community by Madinet Masr in New Cairo.,True
+Mazarine,mazarine,city-edge,New Alamein,New Alamein,Under Construction,2028-06-30,,Mazarine is a coastal residential by City Edge Developments in New Alamein.,True
+Al Maqsad,al-maqsad,city-edge,New Capital,New Capital,Ready to Move,2027-03-31,,Al Maqsad is a residential by City Edge Developments in New Capital.,True
+Etapa,etapa,city-edge,Sheikh Zayed,Sheikh Zayed,Completed,2025-12-31,,Etapa is a residential by City Edge Developments in Sheikh Zayed.,True
+New Giza,new-giza,g-developments,West Cairo,West Cairo,Ready to Move,2026-12-31,,New Giza is a integrated residential community by G Developments in West Cairo.,True
+Fifty Seven,fifty-seven,g-developments,New Cairo,New Cairo,Under Construction,2028-06-30,,Fifty Seven is a residential by G Developments in New Cairo.,True
+Fifth Square,fifth-square,al-marasem,New Cairo,New Cairo,Ready to Move,2026-10-31,,Fifth Square is a residential mixed-use by AlMarasem Development in New Cairo.,True
+Mar Ville,mar-ville,al-marasem,New Cairo,New Cairo,Under Construction,2028-06-30,,Mar Ville is a residential by AlMarasem Development in New Cairo.,True
+Creek Town,creek-town,il-cazar,New Cairo,New Cairo,Under Construction,2028-03-31,,Creek Town is a residential by IL Cazar Developments in New Cairo.,True
+Go Heliopolis,go-heliopolis,il-cazar,Cairo,Cairo,Ready to Move,2027-06-30,,Go Heliopolis is a residential by IL Cazar Developments in Cairo.,True
+Jefaira,jefaira,inertia,North Coast,North Coast,Under Construction,2029-06-30,,Jefaira is a integrated coastal community by Inertia in North Coast.,True
+Veranda,veranda,inertia,Ain Sokhna,Ain Sokhna,Ready to Move,2026-11-30,,Veranda is a coastal residential by Inertia in Ain Sokhna.,True
+Joulz,joulz,inertia,West Cairo,West Cairo,Under Construction,2028-06-30,,Joulz is a residential by Inertia in West Cairo.,True
+Telal,telal,roya,North Coast,North Coast,Ready to Move,2026-08-31,,Telal is a coastal community by Roya Developments in North Coast.,True
+Stone Park,stone-park,roya,New Cairo,New Cairo,Completed,2025-12-31,,Stone Park is a residential by Roya Developments in New Cairo.,True
+Cairo Festival City,cairo-festival-city,al-futtaim-real-estate,New Cairo,New Cairo,Completed,2025-06-30,,Cairo Festival City is a integrated mixed-use community by Al-Futtaim Real Estate Egypt in New Cairo.,True
+Mivida Avenue,mivida-avenue,al-futtaim-real-estate,New Cairo,New Cairo,Ready to Move,2026-12-31,,Mivida Avenue is a mixed-use by Al-Futtaim Real Estate Egypt in New Cairo.,True
+District 5,district-5,marakez,New Cairo,New Cairo,Under Construction,2027-12-31,,District 5 is a mixed-use by Marakez in New Cairo.,True
+District 2,district-2,marakez,New Cairo,New Cairo,Planned,2029-12-31,,District 2 is a mixed-use by Marakez in New Cairo.,True
+The Waterway New Cairo,the-waterway-new-cairo,the-waterway,New Cairo,New Cairo,Ready to Move,2026-06-30,,The Waterway New Cairo is a residential mixed-use by The Waterway Developments in New Cairo.,True
+The Capitalway,the-capitalway,the-waterway,New Capital,New Capital,Under Construction,2028-06-30,,The Capitalway is a mixed-use by The Waterway Developments in New Capital.,True
+Eastshire,eastshire,lmd,New Cairo,New Cairo,Under Construction,2028-12-31,,Eastshire is a residential by LMD in New Cairo.,True
+Zoya Ghazala Bay,zoya-ghazala-bay,lmd,North Coast,North Coast,Ready to Move,2027-07-31,,Zoya Ghazala Bay is a coastal residential by LMD in North Coast.,True
+Stei8ht,stei8ht,lmd,New Cairo,New Cairo,Planned,2029-12-31,,Stei8ht is a residential by LMD in New Cairo.,True
+Vinci,vinci,misr-italia,New Capital,New Capital,Under Construction,2028-06-30,,Vinci is a residential mixed-use by Misr Italia Properties in New Capital.,True
+Cairo Business Park,cairo-business-park,misr-italia,New Cairo,New Cairo,Ready to Move,2026-12-31,,Cairo Business Park is a commercial mixed-use by Misr Italia Properties in New Cairo.,True
+IL Bosco,il-bosco,misr-italia,New Capital,New Capital,Under Construction,2028-12-31,,IL Bosco is a residential by Misr Italia Properties in New Capital.,True
+Kinda,kinda,dorra,New Cairo,New Cairo,Ready to Move,2026-09-30,,Kinda is a residential by Dorra Developments in New Cairo.,True
+New Cairo Gate,new-cairo-gate,dorra,New Cairo,New Cairo,Under Construction,2028-06-30,,New Cairo Gate is a residential mixed-use by Dorra Developments in New Cairo.,True
+Rivers,rivers,cred,New Capital,New Capital,Under Construction,2029-03-31,,Rivers is a residential by Cred Developments in New Capital.,True
+Eastmark,eastmark,cred,New Cairo,New Cairo,Ready to Move,2027-06-30,,Eastmark is a residential by Cred Developments in New Cairo.,True
+Tawny,tawny,el-attal,West Cairo,West Cairo,Under Construction,2028-06-30,,Tawny is a residential by El Attal Developments in West Cairo.,True
+Park Lane,park-lane,el-attal,New Capital,New Capital,Ready to Move,2027-03-31,,Park Lane is a residential by El Attal Developments in New Capital.,True
+The Ark,the-ark,gates,New Capital,New Capital,Under Construction,2029-06-30,,The Ark is a mixed-use by Gates Developments in New Capital.,True
+Venia,venia,gates,New Capital,New Capital,Under Construction,2028-06-30,,Venia is a residential by Gates Developments in New Capital.,True
+Taawoun,taawoun,times,New Cairo,New Cairo,Planned,2029-12-31,,Taawoun is a residential by Times Developments in New Cairo.,True
+Cairo Canal,cairo-canal,times,New Cairo,New Cairo,Under Construction,2028-12-31,,Cairo Canal is a mixed-use by Times Developments in New Cairo.,True
+Trio Gardens,trio-gardens,atric,New Capital,New Capital,Under Construction,2028-06-30,,Trio Gardens is a residential by Atric Developments in New Capital.,True
+Catalan,catalan,atric,New Capital,New Capital,Ready to Move,2027-06-30,,Catalan is a residential by Atric Developments in New Capital.,True
+Cairo House,cairo-house,capital-link,New Capital,New Capital,Under Construction,2028-06-30,,Cairo House is a commercial by Capital Link Developments in New Capital.,True
+Westview,westview,upwyde,West Cairo,West Cairo,Under Construction,2029-06-30,,Westview is a residential by Upwyde Developments in West Cairo.,True
+Raihana,raihana,new-plan,New Cairo,New Cairo,Ready to Move,2027-12-31,,Raihana is a residential by New Plan Developments in New Cairo.,True
+Eleven,eleven,new-plan,New Capital,New Capital,Under Construction,2028-06-30,,Eleven is a commercial mixed-use by New Plan Developments in New Capital.,True
+Joulz,joulz,people-and-places,West Cairo,West Cairo,Under Construction,2028-12-31,,Joulz is a residential by People & Places in West Cairo.,True
+The Lane,the-lane,living-yards,New Capital,New Capital,Planned,2030-03-31,,The Lane is a residential by Living Yards Developments in New Capital.,True
+Eastville,eastville,jdar,New Cairo,New Cairo,Under Construction,2029-06-30,,Eastville is a residential by JDAR Developments in New Cairo.,True
+Nile Boulevard,nile-boulevard,nile-developments,New Capital,New Capital,Under Construction,2028-12-31,,Nile Boulevard is a commercial by Nile Developments in New Capital.,True
+Rivan,rivan,el-batal,New Capital,New Capital,Under Construction,2028-06-30,,Rivan is a residential by El Batal Developments in New Capital.,True
+Rock Capital 1,rock-capital-1,el-batal,New Capital,New Capital,Ready to Move,2027-06-30,,Rock Capital 1 is a commercial by El Batal Developments in New Capital.,True
+Avenue 90,avenue-90,nacita,New Cairo,New Cairo,Ready to Move,2026-12-31,,Avenue 90 is a residential by Nacita Developments in New Cairo.,True
+Citystars North Coast,citystars-north-coast,citystars-properties,North Coast,North Coast,Under Construction,2029-06-30,,Citystars North Coast is a coastal mixed-use by Citystars Properties in North Coast.,True
+Madaar Azha,madaar-azha,madaar,Ain Sokhna,Ain Sokhna,Ready to Move,2026-08-31,,Madaar Azha is a coastal community by Madaar Development in Ain Sokhna.,True
+Azha North,azha-north,madaar,North Coast,North Coast,Under Construction,2028-07-31,,Azha North is a coastal residential by Madaar Development in North Coast.,True
+HDP Residence,hdp-residence,hdp,New Cairo,New Cairo,Under Construction,2028-03-31,,HDP Residence is a residential by HDP in New Cairo.,True
+HDP North,hdp-north,hdp,New Cairo,New Cairo,Planned,2029-12-31,,HDP North is a residential by HDP in New Cairo.,True
