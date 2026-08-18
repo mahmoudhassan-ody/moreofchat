@@ -39,6 +39,21 @@ UNITS = (
     / "units.jsonl"
 )
 
+#: compound -> city, from the catalogue. `InventorySnapshot` carries no city
+#: field — the substitution gate does not need one — so the premise tests
+#: below derive it here rather than widening the snapshot for tests alone.
+COMPOUND_CITY = {
+    unit["compound"]: unit["city"]
+    for unit in (
+        json.loads(line) for line in UNITS.read_text(encoding="utf-8").splitlines()
+    )
+}
+
+
+def city_of(snapshot: InventorySnapshot, unit_id: str) -> str:
+    return COMPOUND_CITY[snapshot.unit_compound[unit_id]]
+
+
 SNAPSHOT = InventorySnapshot(
     fixture="test",
     as_of="2026-08-01",
@@ -226,3 +241,76 @@ def test_substitution_is_caught_on_real_units(catalogue):
     other = next(t for t in load("arabic/property_types")["canonical"] if t != unit_type)
     assert check_property_type(other, [unit_id], catalogue).passed is False
     assert check_property_type(unit_type, [unit_id], catalogue).passed
+
+
+# ─────────────────────────── the premises the cases rest on ───────────────────────────
+#
+# re-0004 rotted silently. It asserted `property_type: apartment` for an
+# استوديو query because the catalogue held no studios, and it stayed green as
+# a statement about a fixture that had changed underneath it — nothing checked
+# the premise, only the assertion.
+#
+# These pin the fixture facts the two studio cases are built on, so the next
+# time the catalogue moves, the case notes go wrong here rather than in
+# production.
+
+
+@pytest.mark.eval
+def test_new_capital_has_studios_for_re_0004(catalogue):
+    """re-0004 asks for a studio in New Capital and expects a plain answer."""
+    studios = {
+        unit_id
+        for unit_id, kind in catalogue.unit_type.items()
+        if kind == "studio" and city_of(catalogue, unit_id) == "New Capital"
+    }
+    assert len(studios) == 2, "re-0004's note names exactly two, in Vinci and Noor City"
+    assert {catalogue.unit_compound[u] for u in studios} == {"Vinci", "Noor City"}
+    assert all(catalogue.unit_status[u] == "available" for u in studios)
+
+
+@pytest.mark.eval
+def test_the_north_coast_has_no_studio_for_re_0022(catalogue):
+    """re-0022's whole premise.
+
+    If a studio ever appears on the coast the case stops testing substitution
+    and starts testing an ordinary lookup — passing either way, measuring
+    something else.
+    """
+    coastal = {
+        unit_id
+        for unit_id in catalogue.unit_type
+        if city_of(catalogue, unit_id) == "North Coast"
+    }
+    assert coastal, "no North Coast units at all — the case has nothing to ask about"
+    assert not [u for u in coastal if catalogue.unit_type[u] == "studio"]
+
+
+@pytest.mark.eval
+def test_the_north_coast_is_chalet_heavy(catalogue):
+    """Why a chalet is the forbidden answer rather than a merely imperfect one.
+
+    It is the closest match by every ranking a naive retriever applies, so it
+    is what a broken implementation actually returns.
+    """
+    coastal = [
+        catalogue.unit_type[u]
+        for u in catalogue.unit_type
+        if city_of(catalogue, u) == "North Coast"
+    ]
+    assert coastal.count("chalet") > len(coastal) / 2
+
+
+@pytest.mark.eval
+def test_a_studio_exists_elsewhere_to_offer_as_the_alternative(catalogue):
+    """re-0022 requires naming a real compound that has one.
+
+    With none available the required reply shape cannot be satisfied at all,
+    and the case would be asserting an impossible answer.
+    """
+    available = [
+        catalogue.unit_compound[u]
+        for u, kind in catalogue.unit_type.items()
+        if kind == "studio" and catalogue.unit_status[u] == "available"
+    ]
+    assert len(available) == 8
+    assert len(set(available)) == 8, "each studio sits in a distinct compound"

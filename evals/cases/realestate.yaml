@@ -158,16 +158,38 @@
       expected_asof_disclosure: true
       expected_tool_calls:
         - name: inventory_lookup
-          args_contain: {city: "New Capital", property_type: apartment}
+          args_contain: {city: "New Capital", property_type: studio}
+      expected_facts:
+        - id: f1
+          claim: "that a studio is available in New Capital"
+          required: true
+        - id: f2
+          claim: "the compound of at least one of them, named specifically"
+          required: true
+        - id: f3
+          claim: "the price of a named studio"
+          required: false
       forbidden_claims:
-        - "a studio presented as such — the catalogue has no studio type"
-        - "a multi-bedroom unit offered as a studio"
+        - "an apartment offered as a studio"
+        - "any unit with bedrooms greater than 0 presented as a studio"
+        - "a compound name not present in the catalogue"
+      expected_slots: {property_type: studio, city: "New Capital"}
   gold_chunks: []
   notes: >
-    The lossy type mapping, made into a test. استوديو resolves to `apartment`
-    because the catalogue has no finer type, so a naive filter can return a
-    3BR flat as a studio. The reply must either constrain by bedrooms/area or
-    say the distinction is not available.
+    The straightforward half of the studio pair: the type exists, the city has
+    it, and the reply is an ordinary inventory answer.
+
+    Rewritten 2026-08-18. It previously asserted `property_type: apartment` for
+    this query and forbade presenting a studio at all, because the catalogue
+    held none and استوديو collapsed into `apartment`. Both premises are now
+    false — the fixture carries 8 studios and `studio` is canonical — so the
+    old case asserted the exact behaviour the taxonomy change removed.
+
+    New Capital has exactly two, in Vinci (3,770,000) and Noor City
+    (2,930,000), both available and both `bedrooms: 0`. The bedrooms forbidden
+    claim is the residue of the old lossy mapping: a filter that still resolves
+    استوديو to `apartment` returns 3-bedroom flats here, and they must not be
+    presented as studios.
 
 # ─────────────────────────────────────────────────────────────
 # 2. payment_plan_math — arithmetic never comes from the model
@@ -701,3 +723,59 @@
 
     Handoff rather than refuse: a broker may know of off-catalogue stock, and
     a 15M villa buyer is a lead worth a human.
+
+- id: re-0022
+  vertical: realestate
+  source: synthetic
+  category: inventory_lookup
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "عايز استوديو في الساحل الشمالي"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {city: "North Coast", property_type: studio}
+      expected_facts:
+        - id: f1
+          claim: "that no studio is available on the North Coast"
+          required: true
+        - id: f2
+          claim: "a studio that does exist, naming its compound specifically"
+          required: true
+        - id: f3
+          claim: "the price of the named alternative studio"
+          required: false
+      forbidden_claims:
+        - "a chalet offered instead of the studio asked for"
+        - "a townhouse or villa offered as a studio"
+        - "an apartment offered as a studio"
+        - "a compound name not present in the catalogue"
+        - "any suggestion that a studio might become available on the coast"
+      expected_slots: {property_type: studio, city: "North Coast"}
+  gold_chunks: []
+  notes: >
+    The case the studio units were added for. Cross-type substitution was
+    untestable before 2026-08-18: with the catalogue holding one residential
+    type, no request could be answered with the wrong one. Now both types have
+    real inventory and the rule can actually fail.
+
+    The North Coast holds 33 units — 19 chalets, 11 townhouses, 3 villas — and
+    no studio. All 8 studios are inland: New Cairo, New Capital, West Cairo,
+    Sheikh Zayed, Mostakbal City. So the coast is chalet-heavy and a chalet is
+    the closest thing by every ranking a naive retriever applies, which is
+    exactly why a chalet is the forbidden answer rather than a merely
+    imperfect one. re-0002 is the same rule with a villa request; this is the
+    version where both sides of the substitution have stock.
+
+    Reply shape follows re-0002's owner decision, adapted to what the customer
+    named: they asked about a region, not a compound, so the first half names
+    the region and the second half must still name a compound —
+    "no studio on the North Coast, we have one in <compound>". A city-level
+    alternative would leave the customer with nowhere to go.
