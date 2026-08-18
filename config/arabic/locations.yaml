@@ -1,0 +1,211 @@
+# Location aliases — Arabic and Latin surface forms to canonical values.
+#
+# Source: the running MoreofChat real-estate bot (locations.ts:108-173),
+# transcribed 2026-08-17. Canonical values match the `city` and `compound`
+# columns in the catalogue, so a resolved alias can be used as a filter
+# directly — every fixture city has coverage here.
+#
+# CORRECTED ON IMPORT: the source had `العLMين` and `العLMين الجديدة` with
+# Latin `LM` spliced into Arabic. Every Arabic El Alamein query missed, and
+# it presented as the bot not covering Alamein. Now `العلمين`.
+#
+# Arabic and Latin are separate lists because they need different matching:
+# Latin is case-folded and word-boundary matched, Arabic runs after the
+# normalizer (alef/ya/ta-marbuta folding), so `القنطره` and `القنطرة` both hit.
+
+version: 1
+
+kind:
+  # Which canonical values are cities vs compounds. A city filters `city`,
+  # a compound filters `compound` — conflating them returns the wrong set.
+  'ain sokhna': city
+  'azha': compound
+  'badya': compound
+  'cairo': city
+  'celian': compound
+  'el gouna': compound
+  'hyde park': compound
+  'jefaira': compound
+  'madinaty': compound
+  'makadi heights': compound
+  'marassi': compound
+  'mivida': compound
+  'mokattam': city
+  'mostakbal city': city
+  'new alamein': city
+  'new cairo': city
+  'new capital': city
+  'new zayed': city
+  'noor city': compound
+  'north coast': city
+  'october': city
+  'red sea': city
+  'sheikh zayed': city
+  'southmed': compound
+  'the ark': compound
+  'west cairo': city
+
+aliases:
+  'ain sokhna':
+    arabic:
+      - 'العين السخنة'
+      - 'عين السخنة'
+      - 'عين سخنة'
+  'azha':
+    arabic:
+      - 'ازها'
+  'badya':
+    arabic:
+      - 'باديا'
+  'cairo':
+    arabic:
+      - 'القاهرة'
+  'celian':
+    arabic:
+      - 'سيلان'
+  'el gouna':
+    arabic:
+      - 'الجونة'
+    latin:
+      - 'el gouna'
+  'hyde park':
+    arabic:
+      - 'هايد بارك'
+    latin:
+      - 'hyde park'
+  'jefaira':
+    arabic:
+      - 'جفيرة'
+    latin:
+      - 'jefaira'
+  'madinaty':
+    arabic:
+      - 'مدينتي'
+    latin:
+      - 'madinaty'
+  'makadi heights':
+    arabic:
+      - 'مكادي هايتس'
+      - 'مكادي'
+    latin:
+      - 'makadi heights'
+  'marassi':
+    arabic:
+      - 'مراسي'
+    latin:
+      - 'marassi'
+  'mivida':
+    arabic:
+      - 'ميفيدا'
+  'mokattam':
+    arabic:
+      - 'المقطم'
+      - 'مدينة المقطم'
+  'mostakbal city':
+    arabic:
+      - 'مدينة المستقبل'
+      - 'المستقبل سيتي'
+    latin:
+      - 'mostakbal city'
+      - 'future city'
+  'new alamein':
+    arabic:
+      - 'العلمين الجديدة'
+      - 'العلمين'
+    latin:
+      - 'new alamein'
+  'new cairo':
+    arabic:
+      - 'التجمع الخامس'
+      - 'القاهرة الجديدة'
+    latin:
+      - 'fifth settlement'
+      - '5th settlement'
+      - 'new cairo fifth settlement'
+  'new capital':
+    arabic:
+      - 'العاصمة الادارية'
+      - 'العاصمة الإدارية'
+      - 'العاصمة الجديدة'
+    latin:
+      - 'new administrative capital'
+      - 'administrative capital'
+      - 'new capital city'
+  'new zayed':
+    arabic:
+      - 'نيو زايد'
+      - 'زايد الجديدة'
+    latin:
+      - 'new zayed'
+  'noor city':
+    arabic:
+      - 'نور سيتي'
+  'north coast':
+    arabic:
+      - 'الساحل الشمالي'
+    latin:
+      - 'north coast'
+  'october':
+    arabic:
+      - 'السادس من أكتوبر'
+      - 'أكتوبر'
+    latin:
+      - 'sixth of october'
+      - '6 of october'
+      - '6 october'
+  'red sea':
+    arabic:
+      - 'البحر الأحمر'
+  'sheikh zayed':
+    arabic:
+      - 'الشيخ زايد'
+    latin:
+      - 'sheikh zayed'
+  'southmed':
+    arabic:
+      - 'ساوث ميد'
+    latin:
+      - 'southmed'
+  'the ark':
+    arabic:
+      - 'ذا ارك'
+      - 'الارك'
+      - 'الآرك'
+      - 'ذا آرك'
+    latin:
+      - 'the ark'
+  'west cairo':
+    arabic:
+      - 'غرب القاهرة'
+      - 'القاهرة الغربية'
+
+anywhere_else:
+  # "somewhere else" — the customer rejecting the area just offered. Must not
+  # be parsed as a location name, or it becomes a search for a place called
+  # "مكان تاني".
+  latin:
+    - 'any other project'
+    - 'any other place'
+    - 'any other location'
+    - 'any other area'
+    - 'any other compound'
+    - 'anywhere else'
+    - 'elsewhere'
+    - 'other projects'
+    - 'different project'
+    - 'different place'
+    - 'somewhere else'
+  arabic:
+    - 'في مكان تاني'
+    - 'في مكان آخر'
+    - 'مشروع تاني'
+    - 'مشروع آخر'
+    - 'أماكن تانية'
+    - 'مكان تاني'
+    - 'غير ده'
+    - 'حاجة تانية'
+    - 'أي مكان'
+    - 'أي مشروع'
+    - 'في أماكن أخرى'
+    - 'مشاريع أخرى'
+

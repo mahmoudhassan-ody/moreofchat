@@ -1,0 +1,119 @@
+# Property type surface forms to canonical types.
+#
+# Source: the running MoreofChat bot (resolve.ts:47-73, locations.ts:72-83,
+# agent.ts:68-76), transcribed 2026-08-17.
+#
+# Canonical values match the catalogue's `property_type` column exactly, so a
+# resolved type is usable as a filter without a second mapping.
+#
+# Note the lossy mappings: penthouse, flat and studio all resolve to
+# `apartment`, because the catalogue has no finer type. A customer asking for
+# a studio and shown a 3-bedroom apartment has been answered with the wrong
+# thing — the type filter matched while the intent did not. Until the
+# catalogue carries a finer type, `studio` should also constrain bedrooms or
+# area rather than relying on the type alone.
+
+version: 1
+
+canonical:
+  - apartment
+  - villa
+  - townhouse
+  - duplex
+  - chalet
+  - office
+  - retail
+
+types:
+  apartment:
+    latin:
+      - 'apartment'
+      - 'apartments'
+      - 'flat'
+      - 'flats'
+      - 'penthouse'
+      - 'penthouses'
+      - 'studio'
+      - 'studios'
+    arabic:
+      - 'شقة'
+      - 'شقه'
+      - 'شقق'
+      - 'شقتين'
+      - 'استوديو'
+      - 'ستوديو'
+      - 'بنتهاوس'
+
+  villa:
+    latin:
+      - 'villa'
+      - 'villas'
+    arabic:
+      - 'فيلا'
+      - 'ڤيلا'
+      - 'فيلات'
+      - 'ڤيلات'
+      - 'فيلل'
+      - 'ڤيلل'
+
+  townhouse:
+    latin:
+      - 'townhouse'
+      - 'townhouses'
+    arabic:
+      - 'تاونهاوس'
+      - 'تاون هاوس'
+      - 'تاون'
+
+  duplex:
+    latin:
+      - 'duplex'
+      - 'duplexes'
+    arabic:
+      - 'دوبلكس'
+      - 'دوبلكسات'
+
+  chalet:
+    latin:
+      - 'chalet'
+      - 'chalets'
+    arabic:
+      - 'شاليه'
+      - 'شاليهات'
+
+  office:
+    latin:
+      - 'office'
+      - 'offices'
+    arabic:
+      - 'مكتب'
+      - 'مكاتب'
+
+  retail:
+    latin:
+      - 'retail'
+      - 'retails'
+      - 'shop'
+      - 'shops'
+      - 'store'
+      - 'stores'
+      - 'mall'
+      - 'commercial'
+    arabic:
+      - 'محل'
+      - 'محلات'
+      - 'متجر'
+      - 'متاجر'
+      - 'بوتيك'
+      - 'تجاري'
+      - 'تجارية'
+
+# `شقتين` means "two apartments" or "two-bedroom" depending on context. It is
+# listed under apartment because that is how the source bot treats it, but a
+# turn resolving it should also consider bedrooms=2 — a customer writing
+# "شقتين غرفتين" wants one two-bedroom flat, not two flats.
+notes:
+  ambiguous_forms:
+    - form: 'شقتين'
+      resolves_to: apartment
+      also_consider: 'bedrooms=2'

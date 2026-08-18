@@ -1,0 +1,256 @@
+# Extraction vocabulary — inbound message parsing.
+#
+# Source: the running MoreofChat real-estate bot (extraction.ts:136-145,
+# resolve.ts, qualify.ts), transcribed 2026-08-17. This replaces guesses:
+# the sections that overlap with the existing config/arabic/lexicon.yaml were
+# written from assumption in week-1 Task 8, and these are the real maps from
+# production traffic.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CRITICAL — DO NOT MERGE `price_cap_words` INTO `approximation_markers`
+# ─────────────────────────────────────────────────────────────────────────
+# They share words (حوالي, تقريبا, في حدود) and mean opposite things
+# depending on direction:
+#
+#   INBOUND, customer:  "شقة حوالي 5 مليون"
+#     -> a budget hint. Legitimate, expected, sets maxPrice. Must NOT trip
+#        any grounding check — the customer is allowed to be approximate.
+#
+#   OUTBOUND, bot reply: "السعر حوالي 5 مليون"
+#     -> a hedged figure. Trips hedged_figure_rate, a zero-tolerance gate.
+#        The bot either knows the price or hands off; it never estimates.
+#
+# One list serving both breaks one of them. Merge them and either budget
+# extraction stops working, or the hedge check fires on every customer who
+# says "around" — and the fix people reach for is disabling the check.
+# ─────────────────────────────────────────────────────────────────────────
+
+version: 1
+
+price_units:
+  # Applied to a preceding number. `م` is included because brokers write ٦ م.
+  1000:
+    - 'thousand'
+    - 'k'
+    - 'ألف'
+    - 'الف'
+  1000000:
+    - 'million'
+    - 'm'
+    - 'مليون'
+    - 'ملیون'      # Farsi yeh U+06CC — visually identical, different codepoint
+    - 'م'
+    - 'melion'
+
+bare_number_threshold: 100000
+# A number with no unit word is taken as-is only at or above this. Below it,
+# the value is ambiguous ("5" could be 5 million, 5 bedrooms, or a typo) and
+# resolution must fail rather than guess. Guessing here misprices a unit by
+# six orders of magnitude.
+
+price_cap_words:
+  # INBOUND ONLY. Sets maxPrice. See the warning above.
+  latin:
+    - 'under'
+    - 'below'
+    - 'less than'
+    - 'max'
+    - 'maximum'
+    - 'up to'
+    - 'within'
+    - 'around'
+    - 'at most'
+  arabic:
+    - 'أقل من'
+    - 'اقل من'
+    - 'بحد أقصى'
+    - 'بحدود'
+    - 'حتى'
+    - 'ما يزيدش عن'
+    - 'حوالى'
+    - 'حوالي'
+    - 'في حدود'
+    - 'حدود'
+    - 'تقريبا'
+    - 'تقريباً'
+    - 'تقريبًا'
+
+price_min_words:
+  # INBOUND ONLY. Sets minPrice.
+  latin:
+    - 'more than'
+    - 'over'
+    - 'above'
+    - 'at least'
+    - 'minimum'
+    - 'from'
+    - 'starting from'
+    - 'starts from'
+    - 'start from'
+  arabic:
+    - 'أكثر من'
+    - 'اكتر من'
+    - 'أكبر من'
+    - 'بحد أدنى'
+
+bedroom_units:
+  - 'bedroom'
+  - 'bedrooms'
+  - 'bed'
+  - 'bd'
+  - 'br'
+  - 'غرف'
+  - 'غرفة'
+  - 'نوم'
+
+area_units:
+  - 'sqm'
+  - 'm2'
+  - 'متر'
+  - 'م٢'
+  - 'م²'
+
+followup_hint_words:
+  # "the one you sent" — resolves a reference to a unit already shown, so the
+  # turn reuses that unit rather than running a fresh search.
+  latin:
+    - 'it'
+    - 'its'
+    - 'this'
+    - 'that'
+    - 'these'
+    - 'those'
+    - 'the one'
+    - 'this one'
+    - 'that one'
+    - 'first'
+    - 'second'
+    - 'third'
+    - 'fourth'
+    - 'mentioned'
+    - 'the unit'
+    - 'this unit'
+    - 'the apartment'
+    - 'the villa'
+  arabic:
+    - 'اللي'
+    - 'اللى'
+    - 'دي'
+    - 'ده'
+    - 'دول'
+    - 'الوحدة'
+    - 'المذكور'
+    - 'المذكورة'
+    - 'رقم'
+    - 'نمبر'
+    - 'اللي انت'
+    - 'اللي حضرتك'
+
+followup_attr_words:
+  latin:
+    - 'furnished'
+    - 'price'
+    - 'prices'
+    - 'cost'
+    - 'size'
+    - 'area'
+    - 'sqm'
+    - 'square'
+    - 'meters'
+    - 'view'
+    - 'payment'
+    - 'installment'
+    - 'installments'
+    - 'available'
+    - 'room'
+    - 'rooms'
+    - 'bedroom'
+    - 'bathroom'
+    - 'finish'
+  arabic:
+    - 'كم'
+    - 'سعر'
+    - 'مساحة'
+    - 'متاح'
+    - 'متاحة'
+    - 'تشطيب'
+    - 'غرف'
+    - 'حمام'
+    - 'إطلالة'
+    - 'اطلالة'
+    - 'دفعة'
+    - 'بسعر'
+    - 'أسعار'
+
+availability_hints:
+  # Signals the customer is asking what exists, rather than about a known unit.
+  latin:
+    - 'unit'
+    - 'units'
+    - 'available'
+    - 'availability'
+    - 'listing'
+    - 'listings'
+    - 'compound'
+    - 'compounds'
+    - 'property'
+    - 'properties'
+  arabic:
+    - 'وحدات'
+    - 'متاح'
+    - 'متاحة'
+    - 'عندك'
+    - 'عندكم'
+    - 'توجد'
+    - 'يوجد'
+    - 'عاوز'
+    - 'عايز'
+    - 'عاوزين'
+    - 'عايزين'
+    - 'محتاج'
+    - 'محتاجين'
+    - 'فين'
+    - 'بسعر'
+    - 'أقل'
+    - 'اقل'
+    - 'سعر'
+    - 'إيجار'
+    - 'ايجار'
+    - 'يأجر'
+    - 'للبيع'
+    - 'للإيجار'
+    - 'بالأقساط'
+    - 'أقساط'
+
+dialect:
+  # ar-eg only, by decision 2026-08-17. The source bot also carried ar-gulf,
+  # ar-levant and ar-maghreb keyword sets; those are dropped.
+  #
+  # Consequence, stated plainly: a Gulf or Levantine customer is detected as
+  # Arabic and answered in Masri. Acceptable for an Egyptian-market product,
+  # and it removes three keyword sets that nothing in the eval suite covers.
+  # Re-adding one means adding a register option and cases for it — do not
+  # re-add a keyword list without the cases.
+  supported:
+    - 'ar-eg'
+  ar-eg:
+    # PARTIAL. The source reference lists 26 words for ar-eg but shows only
+    # these 17 as samples. Port the full list from language.ts:27-115 rather
+    # than treating this as complete.
+    - 'عايز'
+    - 'عاوز'
+    - 'ايه'
+    - 'ايوه'
+    - 'ازيك'
+    - 'كويس'
+    - 'امتى'
+    - 'فين'
+    - 'كام'
+    - 'كده'
+    - 'دلوقتي'
+    - 'معلش'
+    - 'تمام'
+    - 'محتاج'
+    - 'شوية'
+    - 'خالص'
+    - 'قوى'
