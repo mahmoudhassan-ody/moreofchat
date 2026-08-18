@@ -392,3 +392,58 @@ async def test_chunk_counts_are_stable_across_two_runs(app_engine, tenant):
             return (await s.execute(sql("SELECT count(*) FROM kb_chunks"))).scalar_one()
 
     assert await run() == await run()
+
+
+# ─────────────────────────── the boundary between grounding modes ───────────────────────────
+
+
+@pytest.mark.eval
+async def test_no_kb_chunk_contains_a_broker_unit_id(app_engine, tenant):
+    """The two grounding modes must not merge (§3.2).
+
+    Documents ground on chunks; structured inventory grounds on the inventory
+    connector. Ingesting `units.jsonl` as text would create a second path to a
+    unit's price — and that path has none of the guarantees the first one has.
+    It bypasses the availability filter, so a sold unit's price sits in a
+    retrieved chunk and `sold_unit_offered_rate` reads zero while the reply
+    quotes it. It bypasses the as_of disclosure, so the figure arrives with no
+    statement of when it was current.
+
+    A boundary rather than a scoping decision, which is why it is asserted
+    rather than left to whoever writes the next ingest script.
+    """
+    units = (
+        Path(__file__).parents[2]
+        / "evals"
+        / "fixtures"
+        / "broker_demo_2026_08_01"
+        / "units.jsonl"
+    )
+    unit_ids = [
+        json.loads(line)["unit_id"] for line in units.read_text(encoding="utf-8").splitlines()
+    ]
+    assert unit_ids, "the fixture is empty — this test would pass vacuously"
+
+    async with tenant_session(app_engine, tenant.id) as s:
+        for record in [json.loads(line) for line in SINAI.read_text(encoding="utf-8").splitlines()]:
+            await ingest_document(
+                s,
+                SourceDocument(
+                    doc_id=record["doc_id"] + "_" + record["lang"],
+                    title=record["title"],
+                    vertical=record["vertical"],
+                    lang=record["lang"],
+                    text=record["content"],
+                ),
+            )
+        await s.commit()
+
+        corpus = " ".join(
+            (await s.execute(sql("SELECT content FROM kb_chunks"))).scalars().all()
+        )
+
+    leaked = [unit_id for unit_id in unit_ids if unit_id in corpus]
+    assert leaked == [], (
+        f"broker unit ids reached kb_chunks: {leaked[:5]}. Structured inventory has "
+        f"one grounding path, and it is the one carrying availability and as_of."
+    )
