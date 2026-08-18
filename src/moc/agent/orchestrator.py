@@ -116,6 +116,15 @@ class TurnResult:
     passages: tuple[str, ...] = ()
     grounding: GroundingResult | None = None
     completions: list[Completion] = field(default_factory=list)
+    #: Every provider was down or breaker-open. Distinct from `degraded`,
+    #: which means the failover answered — that is a working turn on the
+    #: fallback path. This one means no model answered at all.
+    #:
+    #: Explicit rather than inferred from `degraded and not completions`,
+    #: because the eval runner has to tell an outage from a quality failure:
+    #: folding an outage into the failure rate corrupts the baseline, and the
+    #: corruption survives into every comparison made against it afterwards.
+    provider_unavailable: bool = False
 
 
 class Orchestrator:
@@ -183,7 +192,12 @@ class Orchestrator:
             # router raised rather than inventing text precisely so this
             # decision is made where the conversation is known.
             return self._scripted(
-                decision, redaction, retrieval, _PROVIDER_UNAVAILABLE, degraded=True
+                decision,
+                redaction,
+                retrieval,
+                _PROVIDER_UNAVAILABLE,
+                degraded=True,
+                provider_unavailable=True,
             )
 
         if not completion.text.strip():
@@ -287,6 +301,7 @@ class Orchestrator:
         degraded: bool = False,
         grounding: GroundingResult | None = None,
         completions: list[Completion] | None = None,
+        provider_unavailable: bool = False,
     ) -> TurnResult:
         """A reply nobody composed, for a turn the model must not answer.
 
@@ -305,6 +320,7 @@ class Orchestrator:
             passages=tuple(retrieval.passages),
             grounding=grounding,
             completions=completions or [],
+            provider_unavailable=provider_unavailable,
         )
 
     @staticmethod

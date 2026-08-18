@@ -127,13 +127,29 @@ def _system_blocks(system: str | None, cache_blocks: Sequence[str]) -> list[dict
     anything that changes per turn must sit *after* everything cached — put the
     persona first and every block behind it misses (design §10).
     """
+    # Anthropic allows at most four cache_control breakpoints and 400s beyond
+    # that. Fusion returns five passages on a normal grounded turn, so the
+    # limit is reached by ordinary traffic rather than by an unusual request —
+    # this surfaced as four eval cases erroring out before composition ran.
+    #
+    # The earliest blocks get the breakpoints because the prefix is what a
+    # cache hit requires; the rest are sent uncached. A cache miss costs
+    # money, a 400 costs the answer.
+    limit = _cache_breakpoints()
     blocks: list[dict[str, Any]] = [
-        {"type": "text", "text": block, "cache_control": {"type": "ephemeral"}}
-        for block in cache_blocks
+        {"type": "text", "text": block}
+        | ({"cache_control": {"type": "ephemeral"}} if index < limit else {})
+        for index, block in enumerate(cache_blocks)
     ]
     if system:
         blocks.append({"type": "text", "text": system})
     return blocks
+
+
+def _cache_breakpoints() -> int:
+    from moc.config_store import load
+
+    return load("llm/routing")["anthropic_cache_breakpoints"]
 
 
 def _to_completion(body: dict[str, Any], model: str) -> Completion:

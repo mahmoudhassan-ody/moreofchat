@@ -88,6 +88,15 @@ class FusionResult:
     degraded_arms: tuple[str, ...] = ()
     elapsed_ms: float = 0.0
     gate_closed: bool = False
+    #: Figures the script itself may state (§3.1). Always empty here — the
+    #: retrieval layer has no script — but present so this object satisfies
+    #: the orchestrator's `Retriever` port directly.
+    #:
+    #: The port is structural, and it has to be: `Retrieval` is defined in
+    #: `moc.agent`, and importing it here would make the retrieval layer
+    #: depend on the agent layer. Satisfying the shape rather than the name is
+    #: what keeps the dependency pointing agent -> retrieval.
+    script_constants: tuple[str, ...] = ()
 
     @property
     def passages(self) -> tuple[str, ...]:
@@ -226,8 +235,110 @@ async def fuse(
     )
 
 
+class FusionRetriever:
+    """Fusion behind the orchestrator's `Retriever` port and the runner's
+    `ChunkSource` port.
+
+    Two methods returning two shapes of the same search, deliberately. The
+    orchestrator needs passage *text* to ground an answer; the recall metric
+    needs chunk *ids*. Handing the orchestrator ids it does not use would put
+    gold-shaped data one refactor away from the prompt, which is the failure
+    the runner's whole design is arranged against.
+
+    The dense arm is optional. Absent, this is §7.3's degraded shape —
+    Meilisearch only — which is a correct turn rather than an outage.
+    """
+
+    def __init__(
+        self,
+        *,
+        lexical: Any,
+        tenant_id: Any,
+        vertical: str,
+        dense: Any = None,
+        embedder: Any = None,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        self._lexical = lexical
+        self._dense = dense
+        self._embedder = embedder
+        self._tenant_id = tenant_id
+        self._vertical = vertical
+        self._config = config or load(_LEXICAL)
+        self._last: FusionResult | None = None
+
+    async def _fuse(self, query: str) -> FusionResult:
+        settings = self._config["fusion"]
+        hits = await self._lexical.search(
+            tenant_id=self._tenant_id,
+            vertical=self._vertical,
+            query=query,
+            limit=settings["candidates_per_arm"],
+        )
+        sparse = [
+            Candidate(
+                chunk_id=hit.chunk_id,
+                rank=hit.rank,
+                # Rank-derived: Meilisearch returns no calibrated 0-1 score by
+                # default. An honest stand-in, and the reason `min_score` is
+                # not yet tuned against anything real.
+                relevance=1.0 / hit.rank,
+                content=hit.content,
+            )
+            for hit in hits
+        ]
+
+        dense: list[Candidate] | None = None
+        if self._dense is not None and self._embedder is not None:
+            vector = (await self._embedder.embed(texts=[query]))[0]
+            dense = [
+                Candidate(
+                    chunk_id=point.chunk_id,
+                    rank=position,
+                    relevance=point.score,
+                    content=point.payload.get("content", ""),
+                )
+                for position, point in enumerate(
+                    await self._dense.search(
+                        tenant_id=self._tenant_id,
+                        vertical=self._vertical,
+                        vector=vector,
+                        limit=settings["candidates_per_arm"],
+                    ),
+                    start=1,
+                )
+            ]
+
+        self._last = await fuse(
+            query=query, dense=dense, sparse=sparse, config=self._config
+        )
+        return self._last
+
+    async def search(self, *, query: str) -> FusionResult:
+        """The orchestrator's port, satisfied structurally.
+
+        Returns the `FusionResult` itself: it already carries `passages`,
+        `confidence` and `script_constants`, which is the whole shape the
+        orchestrator reads. Constructing the agent's own `Retrieval` here
+        would point the retrieval layer at the agent layer for the sake of a
+        name.
+        """
+        return await self._fuse(query)
+
+    async def chunk_ids_for(self, *, query: str) -> tuple[str, ...]:
+        """The runner's port, for measuring recall against gold chunks.
+
+        Reuses the last fusion when the query matches, so a run does not
+        search twice per turn — and so the ids measured are the ids the
+        orchestrator actually saw.
+        """
+        result = self._last if self._last is not None else await self._fuse(query)
+        return tuple(hit.chunk_id for hit in result.hits)
+
+
 __all__ = [
     "Candidate",
+    "FusionRetriever",
     "FusedHit",
     "FusionResult",
     "Reranker",

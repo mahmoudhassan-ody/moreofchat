@@ -20,6 +20,13 @@
 
 version: 1
 
+# Anthropic accepts at most four cache_control breakpoints per request and
+# returns a 400 beyond that. Retrieval routinely produces five passages
+# (fusion's final_k), so this is not an edge case — it is every grounded turn.
+# Blocks past the limit are still sent, just uncached: a cache miss costs
+# money, a 400 costs the answer.
+anthropic_cache_breakpoints: 4
+
 http:
   # A hung provider must not hold a worker. Connect separately from read,
   # because a DNS or TLS stall and a slow generation are different faults.
