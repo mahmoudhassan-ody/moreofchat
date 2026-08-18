@@ -6,12 +6,18 @@
 # Canonical values match the catalogue's `property_type` column exactly, so a
 # resolved type is usable as a filter without a second mapping.
 #
-# Note the lossy mappings: penthouse, flat and studio all resolve to
-# `apartment`, because the catalogue has no finer type. A customer asking for
-# a studio and shown a 3-bedroom apartment has been answered with the wrong
-# thing — the type filter matched while the intent did not. Until the
-# catalogue carries a finer type, `studio` should also constrain bedrooms or
-# area rather than relying on the type alone.
+# `studio` and `penthouse` became canonical on 2026-08-18, when the broker
+# fixture gained 8 studios and 6 penthouses. They previously collapsed into
+# `apartment` because the catalogue held no finer type, which meant a customer
+# asking for a studio and shown a 3-bedroom apartment had been answered with
+# the wrong thing while the type filter reported a match. Leaving the mapping
+# lossy now would be worse than before: the 14 units exist and would be
+# unreachable by the only queries that name them.
+#
+# `flat` stays under `apartment` — it is a synonym, not a tier.
+#
+# This changes config_hash, and it should: a run measured under a two-type
+# residential taxonomy is not comparable to one measured under three.
 
 version: 1
 
@@ -24,6 +30,8 @@ version: 1
 # a category rather than a count.
 display:
   apartment:  {masri: 'شقة',      msa: 'شقة',      english: 'apartment'}
+  studio:     {masri: 'استوديو',  msa: 'استوديو',  english: 'studio'}
+  penthouse:  {masri: 'بنتهاوس',  msa: 'بنتهاوس',  english: 'penthouse'}
   villa:      {masri: 'فيلا',     msa: 'فيلا',     english: 'villa'}
   townhouse:  {masri: 'تاونهاوس', msa: 'تاونهاوس', english: 'townhouse'}
   duplex:     {masri: 'دوبلكس',   msa: 'دوبلكس',   english: 'duplex'}
@@ -33,6 +41,8 @@ display:
 
 canonical:
   - apartment
+  - studio
+  - penthouse
   - villa
   - townhouse
   - duplex
@@ -47,17 +57,25 @@ types:
       - 'apartments'
       - 'flat'
       - 'flats'
-      - 'penthouse'
-      - 'penthouses'
-      - 'studio'
-      - 'studios'
     arabic:
       - 'شقة'
       - 'شقه'
       - 'شقق'
       - 'شقتين'
+
+  studio:
+    latin:
+      - 'studio'
+      - 'studios'
+    arabic:
       - 'استوديو'
       - 'ستوديو'
+
+  penthouse:
+    latin:
+      - 'penthouse'
+      - 'penthouses'
+    arabic:
       - 'بنتهاوس'
 
   villa:

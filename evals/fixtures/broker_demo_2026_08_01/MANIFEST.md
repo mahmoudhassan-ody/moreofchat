@@ -3,8 +3,8 @@
 **Frozen:** 2026-08-17
 **`as_of`:** 2026-08-01 (every case asserting freshness cites this date)
 **Vertical:** realestate
-**Source:** `source/listings.csv` (291 units), `source/projects.csv` (97), both committed beside `build.py`
-**Contents:** 291 units in `units.jsonl`, one JSON object per line.
+**Source:** `listings-egypt-filled.csv` (291 units), `projects-egypt-filled.csv` (97), `developers-egypt-filled.csv` (53)
+**Contents:** 305 units in `units.jsonl`, one JSON object per line — 291 from the export plus 14 synthetic (see addition 3).
 
 Test input, not production catalogue data. Its purpose is to stay still: a case asserting "the reply must cite the instalment from `NOOR-CIT-002-02`" needs that unit and that schedule to mean the same thing in six months.
 
@@ -52,8 +52,31 @@ A model doing the division itself computes 4,837,500 ÷ 16 = 302,343.75 and roun
 
 A plan that does not reconcile to the price is one a customer can dispute, so `build.py` asserts every schedule sums exactly.
 
+### 3. Studio and penthouse units
+
+The taxonomy decision of 2026-08-17 splits residential into **studio | apartment | penthouse**:
+
+- **Studio** — one open living/sleeping space, usually a separate bathroom, sometimes a kitchenette
+- **Apartment** — a residential unit with one or more bedrooms
+- **Penthouse** — a premium top-floor apartment, larger areas, terraces, better views
+
+The source export types all 140 residential units as `apartment`, 2–3 bedrooms, 85–185 sqm. It holds **no studio and no penthouse**. A no-substitution rule between three types cannot be tested when two of them are empty — a gate with no data reads green while untested.
+
+**8 studios and 6 penthouses added.** IDs are prefixed `SYN-STUD-` / `SYN-PENT-` and `source_row` is `null`, so a synthetic unit is identifiable in one field.
+
+**Prices are derived, not invented.** Each unit takes its city's median apartment EGP/sqm rate *from the real export data*, times its area, times a tier multiplier — `0.95` for studio, `1.35` for penthouse. So a New Cairo studio is priced off 71 real New Cairo apartments rather than off a guess, and the set stays internally consistent with the catalogue around it.
+
+Result: studios 2.9–5.0M at 62–85k/sqm, penthouses 21.3–30.1M at 88–121k/sqm.
+
+**The two multipliers are assumptions, not market research.** They are plausible for the Egyptian market and nothing more. No case asserts a price *level* — cases assert that a quoted figure traces to the catalogue — so a wrong multiplier weakens no test. Replace with real figures when real inventory of these types exists.
+
+**Compounds are never invented.** Every synthetic unit sits in a compound that already holds real apartments in that same city, and `build.py` asserts it. That assertion fired three times during authoring — `New Cairo Gate` placed in New Capital, `Kinda` in Sheikh Zayed, `Uptown Cairo` in New Cairo — each a real compound in the wrong city, which is precisely the invented-compound failure `re-0002` forbids. Written by the person who wrote the rule. The assertion is the reason none of them shipped.
+
+The cash-only rule applies unchanged: synthetic units in `Ready to Move` or `Completed` projects carry no payment plan.
+
 ### Not added
 
+- **Rent listings**, still. The export is sale-only.
 - **`amenities`** stays empty. Inventing amenity lists would be fabricated metadata dressed as fixture data, and no case currently depends on it.
 - **Rent listings.** The export is sale-only. Rent cases would need `rentPrice` and `rentPeriod`, which the source does not have; adding them means inventing a rental market. Deferred until real rent data exists.
 
@@ -62,6 +85,8 @@ A plan that does not reconcile to the price is one a customer can dispute, so `b
 ## Do not "fix" these
 
 - **The 15 sold and 8 reserved units are load-bearing.** `sold_unit_offered_rate` is a zero-tolerance gate; marking them all available again silently removes the only data those cases can fail against.
+- **Studio and penthouse counts are load-bearing.** `type_substitution_rate` is a zero-tolerance gate, and it cannot fail against an empty type. Removing these units makes the gate decorative.
+- **Studio and penthouse areas must not overlap.** `build.py` asserts max studio area < min penthouse area. If they overlap the types stop being distinguishable by size and the distinction becomes assertion rather than data.
 - **The rounding remainders are load-bearing.** Replacing them with round numbers makes the arithmetic gate untestable — a model that guesses correctly is indistinguishable from a model that used the tool.
 - **`as_of` is fixed at 2026-08-01.** Cases assert the reply discloses it. Moving it breaks every staleness case.
 
@@ -90,12 +115,12 @@ A plan that does not reconcile to the price is one a customer can dispute, so `b
 | | |
 |---|---|
 | Cities | New Cairo 117, New Capital 60, North Coast 33, West Cairo 30, Ain Sokhna 15, Mostakbal City 9, Sheikh Zayed 6, Red Sea 6, Mokattam 3, October 3, New Zayed 3, New Alamein 3, Cairo 3 |
-| Types | apartment 140, townhouse 75, chalet 33, office 16, retail 13, duplex 9, villa 5 |
+| Types | apartment 140, townhouse 75, chalet 33, office 16, retail 13, duplex 9, **studio 8**, **penthouse 6**, villa 5 |
 | Price | 3.3M – 65.5M EGP, median 10.9M |
 | Area | 70 – 390 sqm, median 145 |
 | Bedrooms | 0 – 5, median 3 |
-| Availability | available 268, sold 15, reserved 8 |
-| Payment | 180 with a plan, 111 cash-only |
+| Availability | available 282, sold 15, reserved 8 |
+| Payment | 189 with a plan, 116 cash-only |
 
 Note **villa is only 5 units** — the thinnest type, and the one customers ask about most in the sample conversations. A "no villas match" reply is often the *correct* answer here, which makes it good material for a case asserting the bot says so plainly rather than substituting an apartment unasked.
 
@@ -113,25 +138,7 @@ Latin `LM` spliced into Arabic — should be `العلمين`. Every Arabic quer
 ## Regenerating
 
 ```bash
-cd evals/fixtures/broker_demo_2026_08_01 && python3 build.py
+python3 build.py    # reads the three source CSVs, writes units.jsonl
 ```
 
-Stdlib only — no pandas, no virtualenv, no arguments. It reads `source/` beside
-itself and writes `units.jsonl` into the working directory.
-
-| File | Was |
-|---|---|
-| `source/listings.csv` | `listings-egypt-filled.csv` (291 rows) |
-| `source/projects.csv` | `projects-egypt-filled.csv` (97 rows) |
-
-`developers-egypt-filled.csv` is **not** carried over. The build loaded it and
-never read a column from it; shipping a source file the build does not depend
-on is provenance that misleads.
-
-The sources are committed. A price a case asserts against has to trace to a row
-in a file that exists, and `tests/evals/test_fixture_rebuild.py` runs this build
-into a temp directory and compares the result byte for byte against the
-committed `units.jsonl` — which is what makes `SEED = 20260801` a checked claim
-rather than an intention.
-
-Asserts: unique unit ids, exactly 15 sold and 8 reserved, every payment schedule sums exactly to its price, and no ready-to-move unit carries a plan. A failed assertion means the fixture is broken — fix the build, not the assertion.
+Asserts: unique unit ids, exactly 15 sold and 8 reserved, exactly 8 studios and 6 penthouses with all three residential types non-empty, no studio/penthouse area overlap, no synthetic unit naming a compound absent from the real export, every payment schedule summing exactly to its price, and no ready-to-move unit carrying a plan. A failed assertion means the fixture is broken — fix the build, not the assertion.
