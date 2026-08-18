@@ -77,3 +77,22 @@ source_modules =
 forbidden_modules =
     moc.agent
     moc.llm
+
+# §7.2: one collection holds every tenant's points, so the tenant filter is
+# the only thing separating them — and its absence has no behavioural
+# signature. Every module that can import the client is another place a filter
+# can be forgotten, so exactly one may.
+#
+# Stated as "forbidden everywhere, ignored for one module" rather than by
+# listing the packages that may not import it: a new package added later is
+# then covered by default instead of being covered only if someone remembers
+# to add it here.
+[importlinter:contract:qdrant-client-in-one-module]
+name = The Qdrant client is imported only by the vector repository
+type = forbidden
+source_modules =
+    moc
+forbidden_modules =
+    qdrant_client
+ignore_imports =
+    moc.retrieval.vectors -> qdrant_client

@@ -11,6 +11,7 @@ dependencies = [
   "pydantic",
   "pydantic-settings",
   "redis",
+  "qdrant-client",
   "pyyaml",
   "httpx>=0.28.1",
 ]

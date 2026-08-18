@@ -49,3 +49,30 @@ outbox:
     - qdrant
     - meilisearch
   max_attempts: 5
+
+# Design §7.2. Every value here is a memory decision on a 3.3 GB box.
+qdrant:
+  # One collection per vertical, never per tenant. Per-collection segment
+  # overhead becomes the binding constraint around a few dozen tenants, and on
+  # this box it binds sooner than that.
+  collections:
+    education: kb_education
+    realestate: kb_realestate
+
+  # Matches the embedding model's Matryoshka truncation in llm/routing.yaml.
+  # Changing either without the other produces vectors Qdrant accepts and
+  # cannot meaningfully compare.
+  vector_size: 1024
+  distance: Cosine
+
+  # Vectors on disk, quantized in RAM. The alternative on 3.3 GB is a box that
+  # swaps under the first real corpus.
+  on_disk_vectors: true
+  scalar_quantization: true
+  quantile: 0.99
+  always_ram_quantized: true
+
+  # Tenant partitioning per §7.2: an indexed payload field, so the filter is a
+  # partition lookup rather than a scan over everyone's points.
+  tenant_field: tenant_id
+  chunk_field: chunk_id

@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     app_password: str
     app_user: str = "moc_app"
 
+    qdrant_host: str = "127.0.0.1"
+    qdrant_port: int = 6333
+    qdrant_key: str = ""
+
     valkey_password: str = ""
     valkey_host: str = "127.0.0.1"
     valkey_port: int = 6379
