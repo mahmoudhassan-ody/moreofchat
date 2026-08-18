@@ -33,7 +33,7 @@ would mean two modules deciding what happens next.
 """
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -224,10 +224,96 @@ def _is_grounded(value: float, sources: set[float]) -> bool:
     return float(value) in sources
 
 
+# ─────────────────────────── inventory grounding ───────────────────────────
+
+
+@dataclass(frozen=True)
+class SubstitutionResult:
+    """Whether the reply offered the type the customer asked for.
+
+    `substituted` lists the (unit, type) pairs that differ from the request.
+    Kept as pairs rather than a count because the fix depends on which type
+    was swapped in: retail-for-office is a filter that is too loose, and
+    townhouse-for-chalet is usually a ranker reaching for the nearest price.
+    """
+
+    passed: bool
+    requested_type: str | None = None
+    substituted: tuple[tuple[str, str], ...] = ()
+
+
+def check_type_substitution(
+    requested_type: str | None, presented: Mapping[str, str]
+) -> SubstitutionResult:
+    """No unit of a different property type may be presented.
+
+    `presented` maps unit id to that unit's `property_type` from the catalogue,
+    read off what the turn actually offered rather than scraped from the reply.
+
+    **A different compound is a legitimate alternative; a different type never
+    is.** A customer who asked for a chalet and is shown a townhouse has been
+    answered with the wrong thing at the right price, and they find out at the
+    viewing — after the tenant's agent has spent the trip. The closest-priced
+    unit of another type is the single most tempting substitution and the one
+    that costs the most trust, which is why this is a gate and not a ranking
+    preference.
+
+    An unknown requested type does not silently pass: with nothing to compare
+    against there is no way to say the offer was right, so the caller gets a
+    result with `requested_type=None` and must treat it as unchecked rather
+    than as clean.
+    """
+    if requested_type is None:
+        return SubstitutionResult(passed=False, requested_type=None)
+    wrong = tuple(
+        (unit_id, unit_type)
+        for unit_id, unit_type in presented.items()
+        if unit_type != requested_type
+    )
+    return SubstitutionResult(
+        passed=not wrong, requested_type=requested_type, substituted=wrong
+    )
+
+
+@dataclass(frozen=True)
+class EntityGroundingResult:
+    """Names a reply used that the catalogue does not contain."""
+
+    passed: bool
+    invented: tuple[str, ...] = ()
+    matched: tuple[str, ...] = ()
+
+
+def check_named_entities(named: Sequence[str], catalogue: Iterable[str]) -> EntityGroundingResult:
+    """Every compound a reply names must exist in the catalogue.
+
+    An invented compound is the same failure as an invented price: a customer
+    is told something specific and checkable that nobody can honour, and it is
+    *more* convincing than a wrong number because a plausible Egyptian compound
+    name reads as local knowledge. "Madinaty East" does not exist; a customer
+    who drives there has been sent somewhere by a bot.
+
+    Comparison is exact against the catalogue's own spelling. No fuzzy match:
+    a near-miss is precisely the case worth catching, and tolerance here would
+    let "Mivida Heights" pass because "Mivida" is real.
+    """
+    known = set(catalogue)
+    invented = tuple(name for name in named if name not in known)
+    return EntityGroundingResult(
+        passed=not invented,
+        invented=invented,
+        matched=tuple(name for name in named if name in known),
+    )
+
+
 __all__ = [
     "PLACEHOLDER_LABELS",
+    "EntityGroundingResult",
     "GroundingResult",
     "Redaction",
+    "SubstitutionResult",
+    "check_named_entities",
     "check_numeric_grounding",
+    "check_type_substitution",
     "redact",
 ]

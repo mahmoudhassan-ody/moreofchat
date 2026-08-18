@@ -60,6 +60,33 @@ replies:
     msa: "نواجه عطلًا تقنيًا مؤقتًا. سيتم تحويلك إلى أحد الزملاء لمساعدتك."
     english: "We're having a brief technical problem — passing you to a colleague."
 
+  # ── real-estate search results ────────────────────────────────────────
+  #
+  # The type the customer asked for is never substituted. A chalet request is
+  # not answered with a townhouse, an office request not with retail. The
+  # closest-priced unit of another type is the wrong answer wearing the right
+  # price, and the customer discovers it after the viewing.
+  #
+  # A different *compound* is a legitimate alternative and the point of the
+  # first shape below; a different *type* never is. Both compounds are named
+  # so the customer can tell what moved — "we have one nearby" hides the swap.
+  #
+  # Every compound named here comes from the catalogue. An invented compound is
+  # the same class of failure as an invented price, and it is caught by the
+  # same gate.
+  no_match_in_compound:
+    masri: "مفيش {type} في {asked} دلوقتي. عندنا {type} في {offered} لو تحب أبعتلك التفاصيل."
+    msa: "لا تتوفر {type} في {asked} حاليًا. تتوفر {type} في {offered}."
+    english: "No {type} in {asked} right now. We do have a {type} in {offered}."
+
+  # Nothing of that type anywhere in range. Said plainly, then handed over —
+  # this is the turn where offering something else is most tempting and most
+  # wrong.
+  no_match_anywhere:
+    masri: "مفيش {type} متاح في النطاق ده حاليًا. هحوّلك لزميلي يشوف إيه الموجود."
+    msa: "لا تتوفر {type} ضمن النطاق المطلوب حاليًا. سيتم تحويلك إلى أحد الزملاء."
+    english: "There's no {type} available in that range right now — passing you to a colleague."
+
 # Slot questions, keyed by the slot the script asked for. Masri by default:
 # asking which faculty is conversation, even when the answer will be regulation.
 ask_for_slot:

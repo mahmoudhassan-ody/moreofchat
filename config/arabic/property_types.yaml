@@ -15,6 +15,22 @@
 
 version: 1
 
+# What to call each type when a reply names it. Every label here is a form
+# already listed under `types` below — transcribed from the running bot, not
+# invented — because a reply that uses a word the matcher does not recognise
+# cannot be parsed back by the customer's next message.
+#
+# Singular, because these render into "no <type> in <compound>", which is about
+# a category rather than a count.
+display:
+  apartment:  {masri: 'شقة',      msa: 'شقة',      english: 'apartment'}
+  villa:      {masri: 'فيلا',     msa: 'فيلا',     english: 'villa'}
+  townhouse:  {masri: 'تاونهاوس', msa: 'تاونهاوس', english: 'townhouse'}
+  duplex:     {masri: 'دوبلكس',   msa: 'دوبلكس',   english: 'duplex'}
+  chalet:     {masri: 'شاليه',    msa: 'شاليه',    english: 'chalet'}
+  office:     {masri: 'مكتب',     msa: 'مكتب',     english: 'office'}
+  retail:     {masri: 'محل',      msa: 'محل',      english: 'retail unit'}
+
 canonical:
   - apartment
   - villa

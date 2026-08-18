@@ -23,7 +23,12 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
-from moc.agent.guards import GroundingResult, check_numeric_grounding
+from moc.agent.guards import (
+    GroundingResult,
+    check_named_entities,
+    check_numeric_grounding,
+    check_type_substitution,
+)
 from moc.arabic.numerals import QuantityKind, normalize_digits
 from moc.arabic.script import detect_language
 from moc.config_store import load
@@ -63,6 +68,14 @@ class InventorySnapshot:
     fixture: str
     as_of: str
     unit_status: Mapping[str, str]
+    #: unit id -> `property_type`, for the substitution gate.
+    unit_type: Mapping[str, str] = field(default_factory=dict)
+    #: unit id -> `compound`. Doubles as the catalogue of real compound names,
+    #: which is what an invented one is checked against.
+    unit_compound: Mapping[str, str] = field(default_factory=dict)
+
+    def compounds(self) -> frozenset[str]:
+        return frozenset(self.unit_compound.values())
 
 
 def check_action(expected: Action, actual: Action) -> CheckResult:
@@ -220,6 +233,82 @@ def check_availability(
     )
 
 
+def check_property_type(
+    requested_type: str | None,
+    presented_unit_ids: Sequence[str],
+    snapshot: InventorySnapshot,
+) -> CheckResult:
+    """The type asked for is the type offered — never a substitute (§19.3).
+
+    A chalet request answered with a townhouse, an office request with retail:
+    the closest-priced unit of another type is the wrong answer wearing the
+    right price, and the customer finds out at the viewing. A different
+    *compound* is a legitimate alternative and is not flagged here; a different
+    *type* never is.
+
+    Skips only when nothing was presented. A turn that offered units without a
+    resolved type is *not* clean — there is nothing to compare against, so it
+    fails rather than passing quietly.
+    """
+    if not presented_unit_ids:
+        return CheckResult(
+            name="property_type",
+            metric="type_substitution_rate",
+            passed=True,
+            skipped=True,
+            detail="no units presented",
+        )
+    presented = {
+        unit_id: snapshot.unit_type.get(unit_id, "not in snapshot")
+        for unit_id in presented_unit_ids
+    }
+    result = check_type_substitution(requested_type, presented)
+    if result.requested_type is None:
+        return CheckResult(
+            name="property_type",
+            metric="type_substitution_rate",
+            passed=False,
+            detail="units were presented without a resolved property_type to check against",
+        )
+    return CheckResult(
+        name="property_type",
+        metric="type_substitution_rate",
+        passed=result.passed,
+        detail=""
+        if result.passed
+        else "asked for {}, offered {}".format(
+            result.requested_type,
+            "; ".join(f"{unit}={kind}" for unit, kind in result.substituted),
+        ),
+    )
+
+
+def check_compound_grounding(
+    named_compounds: Sequence[str], snapshot: InventorySnapshot
+) -> CheckResult:
+    """A compound named in a reply must exist in the catalogue (§19.3).
+
+    The same class of failure as an invented price, and more convincing: a
+    plausible Egyptian compound name reads as local knowledge, so nobody
+    questions it until a customer drives to somewhere that does not exist.
+    """
+    if not named_compounds:
+        return CheckResult(
+            name="compound_grounding",
+            metric="invented_compound_rate",
+            passed=True,
+            skipped=True,
+            detail="reply named no compound",
+        )
+    result = check_named_entities(named_compounds, snapshot.compounds())
+    return CheckResult(
+        name="compound_grounding",
+        metric="invented_compound_rate",
+        passed=result.passed,
+        detail="" if result.passed else f"not in the catalogue: {', '.join(result.invented)}",
+    )
+
+
 def check_asof_disclosure(
     reply: str, snapshot: InventorySnapshot, required: bool
 ) -> CheckResult:
@@ -269,6 +358,8 @@ __all__ = [
     "check_action",
     "check_asof_disclosure",
     "check_availability",
+    "check_compound_grounding",
+    "check_property_type",
     "check_language",
     "check_numeric_grounding",
     "check_slots",

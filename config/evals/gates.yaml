@@ -49,6 +49,14 @@ hard_gates:
     direction: max
     threshold: 0.0
     description: a sold or reserved unit presented as available
+  type_substitution_rate:
+    direction: max
+    threshold: 0.0
+    description: a unit of a different property type than the one asked for
+  invented_compound_rate:
+    direction: max
+    threshold: 0.0
+    description: a compound named in a reply that is not in the catalogue
   asof_disclosure_rate:
     direction: min
     threshold: 0.98
