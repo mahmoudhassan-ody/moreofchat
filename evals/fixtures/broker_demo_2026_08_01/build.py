@@ -7,6 +7,7 @@ against it unaltered.
 """
 import json
 import random
+from collections import Counter
 
 import pandas as pd
 
@@ -17,7 +18,11 @@ listings = pd.read_csv("/mnt/user-data/uploads/listings-egypt-filled.csv")
 projects = pd.read_csv("/mnt/user-data/uploads/projects-egypt-filled.csv")
 developers = pd.read_csv("/mnt/user-data/uploads/developers-egypt-filled.csv")
 
-rng = random.Random(SEED)
+# noqa S311: a seeded PRNG is the requirement, not an oversight. These are
+# synthetic availability states for a test fixture that must rebuild
+# byte-identically; a cryptographic source would make it irreproducible,
+# and nothing here protects anything.
+rng = random.Random(SEED)  # noqa: S311
 
 # ── synthetic addition 1: availability states ────────────────────────────
 # 15 sold, 8 reserved, chosen deterministically across a spread of compounds
@@ -47,7 +52,7 @@ PLAN_SHAPES = [
     {"down_payment_pct": 5,  "years": 12, "frequency": "monthly"},
 ]
 
-proj_status = dict(zip(projects.name, projects.status))
+proj_status = dict(zip(projects.name, projects.status, strict=True))
 
 def plan_for(row, i):
     status = proj_status.get(row.compound, "Under Construction")
@@ -111,7 +116,6 @@ with open("units.jsonl", "w", encoding="utf-8") as f:
 ids = [u["unit_id"] for u in units]
 assert len(ids) == len(set(ids)), "duplicate unit_id"
 
-from collections import Counter
 avail = Counter(u["availability"] for u in units)
 assert avail["sold"] == 15 and avail["reserved"] == 8, avail
 
