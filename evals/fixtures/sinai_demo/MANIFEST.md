@@ -103,7 +103,23 @@ Grounding targets. Any figure in a reply must trace to one of these:
 ## Regenerating
 
 ```bash
-python3 build.py    # reads the two source CSVs, writes chunks.jsonl
+cd evals/fixtures/sinai_demo && python3 build.py
 ```
+
+Stdlib only — no pandas, no virtualenv, no arguments. It reads `source/` beside
+itself and writes `chunks.jsonl` into the working directory.
+
+| File | Was |
+|---|---|
+| `source/kb_arabic.csv` | `kb_translated_full_Arabic.csv` |
+| `source/kb_english.csv` | `kb_translated_full_English1.csv` |
+
+Both carry `title` and `content` columns, 51 row-aligned pairs.
+
+The sources are committed. A figure a case asserts against has to trace to a
+row in a file that exists, and `tests/evals/test_fixture_rebuild.py` runs this
+build into a temp directory and compares the result byte for byte against the
+committed `chunks.jsonl`. That is what makes the freeze a checked claim rather
+than a line in this file.
 
 The build asserts: unique `chunk_id`s, no duplicate titles within a language, no tuition data present, and a complete year relabel. A failed assertion means the fixture is broken — fix the build, not the assertion.

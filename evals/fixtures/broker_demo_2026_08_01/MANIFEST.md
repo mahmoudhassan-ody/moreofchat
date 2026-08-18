@@ -3,7 +3,7 @@
 **Frozen:** 2026-08-17
 **`as_of`:** 2026-08-01 (every case asserting freshness cites this date)
 **Vertical:** realestate
-**Source:** `listings-egypt-filled.csv` (291 units), `projects-egypt-filled.csv` (97), `developers-egypt-filled.csv` (53)
+**Source:** `source/listings.csv` (291 units), `source/projects.csv` (97), both committed beside `build.py`
 **Contents:** 291 units in `units.jsonl`, one JSON object per line.
 
 Test input, not production catalogue data. Its purpose is to stay still: a case asserting "the reply must cite the instalment from `NOOR-CIT-002-02`" needs that unit and that schedule to mean the same thing in six months.
@@ -113,7 +113,25 @@ Latin `LM` spliced into Arabic — should be `العلمين`. Every Arabic quer
 ## Regenerating
 
 ```bash
-python3 build.py    # reads the three source CSVs, writes units.jsonl
+cd evals/fixtures/broker_demo_2026_08_01 && python3 build.py
 ```
+
+Stdlib only — no pandas, no virtualenv, no arguments. It reads `source/` beside
+itself and writes `units.jsonl` into the working directory.
+
+| File | Was |
+|---|---|
+| `source/listings.csv` | `listings-egypt-filled.csv` (291 rows) |
+| `source/projects.csv` | `projects-egypt-filled.csv` (97 rows) |
+
+`developers-egypt-filled.csv` is **not** carried over. The build loaded it and
+never read a column from it; shipping a source file the build does not depend
+on is provenance that misleads.
+
+The sources are committed. A price a case asserts against has to trace to a row
+in a file that exists, and `tests/evals/test_fixture_rebuild.py` runs this build
+into a temp directory and compares the result byte for byte against the
+committed `units.jsonl` — which is what makes `SEED = 20260801` a checked claim
+rather than an intention.
 
 Asserts: unique unit ids, exactly 15 sold and 8 reserved, every payment schedule sums exactly to its price, and no ready-to-move unit carries a plan. A failed assertion means the fixture is broken — fix the build, not the assertion.

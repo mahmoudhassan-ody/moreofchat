@@ -1,22 +1,83 @@
 """Build the broker_demo_2026_08_01 fixture from the real listings export.
 
+Run it from anywhere; it reads `source/` next to this file and writes
+`units.jsonl` into the current directory. `tests/evals/test_fixture_rebuild.py`
+runs it into a temp directory and asserts byte-identical output, which is what
+makes the freeze a checked claim rather than a note in a manifest.
+
 Synthetic additions are deterministic (seeded) and documented in MANIFEST.md.
 The source export has one availability state, one status, one listing kind and
 no payment-plan columns, so the highest-risk real-estate cases could not exist
 against it unaltered.
+
+**Stdlib only, deliberately.** This ran on pandas against absolute paths under
+/mnt/user-data/uploads, so it could only ever execute on the machine it was
+written on. A build script nobody can run is a fixture nobody can regenerate,
+and every unit price a case asserts against stops being traceable the day
+someone needs to check one.
+
+Two coercions pandas did implicitly and this has to do explicitly, because the
+csv module hands back strings and the failure mode of getting either wrong is
+a fixture that rebuilds *differently* rather than one that errors:
+
+  - Integers. `int("6500000")` and `int("6500000.0")` do not both work, so
+    values go through `as_int`, which accepts either form and refuses anything
+    that is not exactly integral.
+  - Booleans. `bool("False")` is **True** — the single nastiest line this
+    rewrite could have contained. `as_bool` parses the word.
 """
+
+import csv
 import json
 import random
 from collections import Counter
+from pathlib import Path
 
-import pandas as pd
+SOURCE = Path(__file__).resolve().parent / "source"
 
 AS_OF = "2026-08-01"
 SEED = 20260801  # fixed: the fixture must be byte-identical on every rebuild
 
-listings = pd.read_csv("/mnt/user-data/uploads/listings-egypt-filled.csv")
-projects = pd.read_csv("/mnt/user-data/uploads/projects-egypt-filled.csv")
-developers = pd.read_csv("/mnt/user-data/uploads/developers-egypt-filled.csv")
+
+def read_rows(name: str) -> list[dict[str, str]]:
+    path = SOURCE / name
+    if not path.is_file():
+        raise SystemExit(
+            f"missing source: {path}\n"
+            f"The fixture sources live beside this script so a price in a case "
+            f"traces to a row in a file that exists. See MANIFEST.md."
+        )
+    with path.open(encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def as_int(text: str, field: str, row_number: int) -> int:
+    number = float(text)
+    if not number.is_integer():
+        raise SystemExit(f"row {row_number}: {field} is not an integer: {text!r}")
+    return int(number)
+
+
+_TRUE = {"true", "1", "yes", "t"}
+_FALSE = {"false", "0", "no", "f", ""}
+
+
+def as_bool(text: str, field: str, row_number: int) -> bool:
+    """Parse the word. Never `bool(text)` — `bool("False")` is True."""
+    token = text.strip().lower()
+    if token in _TRUE:
+        return True
+    if token in _FALSE:
+        return False
+    raise SystemExit(f"row {row_number}: {field} is not a boolean: {text!r}")
+
+
+listings = read_rows("listings.csv")
+projects = read_rows("projects.csv")
+
+# developers.csv is deliberately not read. The pandas version loaded it and
+# never referenced a column; carrying it forward would mean shipping a source
+# file the build does not depend on, which is provenance that misleads.
 
 # noqa S311: a seeded PRNG is the requirement, not an oversight. These are
 # synthetic availability states for a test fixture that must rebuild
@@ -27,7 +88,7 @@ rng = random.Random(SEED)  # noqa: S311
 # ── synthetic addition 1: availability states ────────────────────────────
 # 15 sold, 8 reserved, chosen deterministically across a spread of compounds
 # and price bands so no case can pass by accident of clustering.
-idx = list(listings.index)
+idx = list(range(len(listings)))
 rng.shuffle(idx)
 SOLD = set(idx[:15])
 RESERVED = set(idx[15:23])
@@ -52,14 +113,14 @@ PLAN_SHAPES = [
     {"down_payment_pct": 5,  "years": 12, "frequency": "monthly"},
 ]
 
-proj_status = dict(zip(projects.name, projects.status, strict=True))
+# Last row wins on a duplicate name, which is what dict(zip(...)) did.
+proj_status = {row["name"]: row["status"] for row in projects}
 
-def plan_for(row, i):
-    status = proj_status.get(row.compound, "Under Construction")
+def plan_for(row, i, price):
+    status = proj_status.get(row["compound"], "Under Construction")
     if status in ("Ready to Move", "Completed"):
         return None  # cash only
     shape = PLAN_SHAPES[i % len(PLAN_SHAPES)]
-    price = int(row.price)
     down = round(price * shape["down_payment_pct"] / 100)
     remaining = price - down
     n = shape["years"] * (4 if shape["frequency"] == "quarterly" else 12)
@@ -81,31 +142,31 @@ def plan_for(row, i):
     }
 
 units = []
-for i, row in listings.iterrows():
-    plan = plan_for(row, i)
+for i, row in enumerate(listings):
+    price = as_int(row["price"], "price", i)
     units.append({
-        "unit_id": row.ref,
+        "unit_id": row["ref"],
         "fixture": "broker_demo_2026_08_01",
         "as_of": AS_OF,
-        "title": row.title,
-        "listing_kind": row.listingKind,
-        "property_type": row.propertyType,
-        "compound": row.compound,
-        "area": row.area,
-        "city": row.city,
-        "price": int(row.price),
-        "currency": row.currency,
-        "unit_area_sqm": int(row.unitAreaSqm),
-        "bedrooms": int(row.bedrooms),
-        "bathrooms": int(row.bathrooms),
-        "finish": row.finish,
-        "furnished": bool(row.furnished),
+        "title": row["title"],
+        "listing_kind": row["listingKind"],
+        "property_type": row["propertyType"],
+        "compound": row["compound"],
+        "area": row["area"],
+        "city": row["city"],
+        "price": price,
+        "currency": row["currency"],
+        "unit_area_sqm": as_int(row["unitAreaSqm"], "unitAreaSqm", i),
+        "bedrooms": as_int(row["bedrooms"], "bedrooms", i),
+        "bathrooms": as_int(row["bathrooms"], "bathrooms", i),
+        "finish": row["finish"],
+        "furnished": as_bool(row["furnished"], "furnished", i),
         "availability": availability_of(i),
-        "delivery_date": row.deliveryDate,
-        "project_status": proj_status.get(row.compound),
-        "payment_plan": plan,
-        "address": row.address,
-        "source_row": int(i),
+        "delivery_date": row["deliveryDate"],
+        "project_status": proj_status.get(row["compound"]),
+        "payment_plan": plan_for(row, i, price),
+        "address": row["address"],
+        "source_row": i,
     })
 
 with open("units.jsonl", "w", encoding="utf-8") as f:

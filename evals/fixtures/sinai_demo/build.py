@@ -1,9 +1,62 @@
+"""Build the sinai_demo fixture from the bilingual KB export.
+
+Run it from anywhere; it reads `source/` next to this file and writes
+`chunks.jsonl` into the current directory. `tests/evals/test_fixture_rebuild.py`
+runs it into a temp directory and asserts the output is byte-identical to the
+committed artifact — which is what makes "frozen" a checked claim rather than
+a note in a manifest.
+
+**Stdlib only, deliberately.** This ran on pandas and read absolute paths under
+/mnt/user-data/uploads, so it could not execute anywhere except the machine it
+was written on. A build script that cannot be run is a fixture that cannot be
+regenerated, and every figure in every case that cites it stops being traceable
+the day someone needs to check one.
+"""
+
+import csv
 import json
+from pathlib import Path
 
-import pandas as pd
+SOURCE = Path(__file__).resolve().parent / "source"
+ROWS = 51
 
-ar = pd.read_csv("/mnt/user-data/uploads/kb_translated_full_Arabic.csv")
-en = pd.read_csv("/mnt/user-data/uploads/kb_translated_full_English1.csv")
+
+def read_rows(name: str) -> list[dict[str, str]]:
+    """Read one source CSV.
+
+    `newline=""` is required, not stylistic: several KB entries contain
+    embedded newlines inside quoted fields, and without it the csv module
+    splits a single record across several.
+    """
+    path = SOURCE / name
+    if not path.is_file():
+        raise SystemExit(
+            f"missing source: {path}\n"
+            f"The fixture sources live beside this script so a figure in a case "
+            f"traces to a row in a file that exists. See MANIFEST.md."
+        )
+    with path.open(encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def cell(rows: list[dict[str, str]], index: int, column: str, label: str) -> str:
+    """One cell, stripped, and never silently empty.
+
+    The pandas version rendered a blank cell as the string "nan", which is a
+    plausible-looking chunk body that no reader would question. Neither that
+    nor an empty string is acceptable in a fixture cases assert against, so an
+    absent value stops the build.
+    """
+    value = (rows[index].get(column) or "").strip()
+    if not value:
+        raise SystemExit(f"{label} row {index} has an empty {column!r}")
+    return value
+
+
+ar = read_rows("kb_arabic.csv")
+en = read_rows("kb_english.csv")
+assert len(ar) == ROWS, f"arabic source has {len(ar)} rows, expected {ROWS}"
+assert len(en) == ROWS, f"english source has {len(en)} rows, expected {ROWS}"
 
 SLUGS = [
     "founding", "president", "faculties", "accreditation", "differentiators",
@@ -27,7 +80,7 @@ SLUGS = [
     "contact_marketing", "contact_alumni", "accreditations_international",
     "location_arish", "location_qantara", "location_sama_tower",
 ]
-assert len(SLUGS) == 51
+assert len(SLUGS) == ROWS
 
 # Rows 28-31: identical Arabic titles to 22-25. Disambiguate the international set.
 INTL_QUALIFIER = " (للطلاب الوافدين)"
@@ -97,21 +150,21 @@ def apply_edits(i, lang, content):
 
 
 chunks = []
-for i in range(51):
+for i in range(ROWS):
     slug = SLUGS[i]
     topic = topic_of(i)
     eff = EFFECTIVE.get(i, DEFAULT_EFF)
 
-    ar_title = str(ar.title[i]).strip()
-    en_title = str(en.title[i]).strip()
+    ar_title = cell(ar, i, "title", "arabic")
+    en_title = cell(en, i, "title", "english")
     if i in INTL_ROWS:
         ar_title += INTL_QUALIFIER
     if i in DOM_ROWS:
         ar_title += DOM_QUALIFIER
 
     for lang, title, content in (
-        ("ar", ar_title, apply_edits(i, "ar", str(ar.content[i]).strip())),
-        ("en", en_title, apply_edits(i, "en", str(en.content[i]).strip())),
+        ("ar", ar_title, apply_edits(i, "ar", cell(ar, i, "content", "arabic"))),
+        ("en", en_title, apply_edits(i, "en", cell(en, i, "content", "english"))),
     ):
         chunks.append({
             "chunk_id": f"sinai_{slug}_{lang}",
