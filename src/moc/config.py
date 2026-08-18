@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     qdrant_port: int = 6333
     qdrant_key: str = ""
 
+    meili_host: str = "127.0.0.1"
+    meili_port: int = 7700
+    meili_key: str = ""
+
     valkey_password: str = ""
     valkey_host: str = "127.0.0.1"
     valkey_port: int = 6379

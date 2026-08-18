@@ -96,3 +96,20 @@ forbidden_modules =
     qdrant_client
 ignore_imports =
     moc.retrieval.vectors -> qdrant_client
+
+# Nothing in moc imports the Meilisearch SDK at all — `lexical.py` takes an
+# injected client and uses only its call shape, so it needs no import and no
+# exemption. Stated as a contract rather than left implicit because the first
+# person to want `AsyncClient` for a type hint will add the import without
+# noticing they have widened the surface; this makes that a deliberate edit
+# here rather than a quiet one there.
+#
+# Contrast with Qdrant, where `vectors.py` genuinely needs `models` to build a
+# filter and therefore carries an explicit exemption.
+[importlinter:contract:meilisearch-client-is-injected-not-imported]
+name = The Meilisearch SDK is imported nowhere in moc
+type = forbidden
+source_modules =
+    moc
+forbidden_modules =
+    meilisearch_python_sdk

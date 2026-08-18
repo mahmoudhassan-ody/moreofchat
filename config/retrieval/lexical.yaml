@@ -1,0 +1,158 @@
+# Meilisearch and fusion — design §7.4 and §7.5.
+#
+# This file is where Arabic retrieval is won or lost. The synonym map is the
+# single highest-leverage thing in it: edu-0015 asks about a منحة against a
+# knowledge base that only ever says خصم, and there is no lexical overlap at
+# all between the question and the answer. Without the map every student who
+# says منحة gets nothing, and the failure reads as "the bot doesn't know about
+# scholarships" rather than as a missing synonym.
+
+version: 1
+
+meilisearch:
+  # One shared index per vertical with a tenant filter, plus tenant-scoped
+  # search tokens (§7.4). Index-per-tenant multiplies Meilisearch's per-index
+  # overhead by the tenant count on a 3.3 GB box, and the token is a stronger
+  # boundary than a filter the caller has to remember.
+  indexes:
+    education: kb_education
+    realestate: kb_realestate
+
+  tenant_field: tenant_id
+  primary_key: point_id
+
+  # Both forms are searchable (§7.1). The original carries the tenant's own
+  # spelling, the normalized one carries the spelling customers type — a query
+  # for القنطره has to reach a chunk written القنطرة.
+  searchable_attributes:
+    - content_normalized
+    - content
+    - title_normalized
+    - title
+
+  # Typo tolerance does real work on Franco-Arab and misspelled Arabic (§7.4).
+  # Left on deliberately: turning it off makes exact-match recall look better
+  # in a demo and worse for every customer who types quickly.
+  typo_tolerance:
+    enabled: true
+    min_word_size_for_one_typo: 4
+    min_word_size_for_two_typos: 8
+
+# Arabic stop words. Function words that appear in nearly every chunk carry no
+# discriminative signal and crowd the ranker.
+stop_words:
+  - 'في'
+  - 'من'
+  - 'على'
+  - 'عن'
+  - 'الى'
+  - 'إلى'
+  - 'هل'
+  - 'ما'
+  - 'هو'
+  - 'هي'
+  - 'مع'
+  - 'او'
+  - 'أو'
+  - 'و'
+  - 'ال'
+  - 'يوجد'
+  # Franco fillers. `3ayez`/`a3raf` are "I want" / "to know" — conversational
+  # scaffolding with no discriminative value, and left in they crowd out the
+  # one or two terms in the message that actually select a chunk. `f` is the
+  # franco spelling of في.
+  - 'fe'
+  - 'fi'
+  - 'f'
+  - 'el'
+  - 'al'
+  - '3ayez'
+  - '3ayza'
+  - 'ayez'
+  - 'a3raf'
+  - 'aeraf'
+  - 'ana'
+  - 'is'
+  - 'the'
+
+# Bidirectional where the words are genuinely interchangeable in this domain,
+# one-way where they are not. Meilisearch treats each entry as "when the query
+# contains the key, also match these" — so the direction that matters is
+# query -> corpus.
+synonyms:
+  # THE case. A student asks about a منحة; the KB says خصم and never says
+  # منحة. Same thing in this tenant's world, no shared letters.
+  'منحة':
+    - 'خصم'
+    - 'خصومات'
+  'منح':
+    - 'خصم'
+    - 'خصومات'
+  'خصم':
+    - 'منحة'
+    - 'خصومات'
+
+  # Franco-Arab spellings, mapped at the word level. This is the mechanism the
+  # plan names, and it is what a synonym map is for: a customer typing latin
+  # characters is not making a spelling mistake, they are using the keyboard
+  # they have.
+  'manh':
+    - 'منحة'
+    - 'خصم'
+  'men7a':
+    - 'منحة'
+    - 'خصم'
+  'khasm':
+    - 'خصم'
+  'khsm':
+    - 'خصم'
+  'kantara':
+    - 'القنطرة'
+    - 'القنطره'
+  'qantara':
+    - 'القنطرة'
+    - 'القنطره'
+  # Real vocabulary rather than filler: the corpus says لفرع القنطرة, so a
+  # franco `far3` has a chunk to reach.
+  'far3':
+    - 'فرع'
+    - 'فروع'
+  'fare3':
+    - 'فرع'
+    - 'فروع'
+  'arish':
+    - 'العريش'
+  '3arish':
+    - 'العريش'
+  'sakan':
+    - 'السكن'
+  'masarif':
+    - 'المصروفات'
+  'masareef':
+    - 'المصروفات'
+
+fusion:
+  # §7.5: reciprocal rank fusion over the top 20 from each arm, then rerank to
+  # top 5.
+  candidates_per_arm: 20
+  final_k: 5
+
+  # RRF's smoothing constant. 60 is the value from the original paper and the
+  # one every published comparison uses; changing it without a measurement is
+  # changing the ranking for no reason anyone can defend later.
+  rrf_k: 60
+
+  # §7.5's hard rule: below this the turn does not reach answer composition.
+  # The fusion layer returns *no* passages rather than low-ranked ones — the
+  # gate needs an empty result to route on, and a weak passage handed to
+  # composition is a fee invented from something adjacent.
+  min_score: 0.55
+
+  latency:
+    # Fusion sits inside §2.5's turn budget alongside the model call, which
+    # already measures 2.7-5.0s. Recorded from the first test rather than
+    # discovered at the end.
+    target_ms: 300
+    # Breakage detector, not a target. Past this something is wrong — a
+    # missing payload index, an arm timing out — rather than merely slow.
+    ceiling_ms: 3000

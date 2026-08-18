@@ -12,6 +12,7 @@ dependencies = [
   "pydantic-settings",
   "redis",
   "qdrant-client",
+  "meilisearch-python-sdk",
   "pyyaml",
   "httpx>=0.28.1",
 ]
