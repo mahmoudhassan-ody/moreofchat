@@ -37,7 +37,6 @@ from moc.api.webhooks import build_app
 from moc.channels.base import Channel, ChannelAccount
 from moc.channels.twilio_wa import TwilioWhatsApp
 from moc.channels.valkey import ValkeyEventLog, ValkeyInboundQueue
-from moc.config import settings
 from moc.config_store import load
 from moc.llm.fake import FakeProvider
 from moc.llm.router import Router
@@ -87,13 +86,41 @@ class FixedExtractor:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def valkey():
+    """Real Valkey, on a test-only database index.
+
+    `moc.config` is imported inside the fixture, not at module scope.
+    Instantiating `Settings()` requires the database passwords, and pytest
+    imports every test module during collection — including in jobs that run
+    without infra. A module-level import here took the whole `eval-smoke` job
+    down with a collection error, which is why `conftest.py` has always done
+    it this way.
+
+    **Unreachable Valkey fails in CI and skips locally.** A developer without
+    compose up should get a skip; CI must not, because a silent skip is a test
+    that stopped running while the run stayed green. That has bitten this
+    project twice, and it is the same rule the MOC_PUBLIC_IP guard applies
+    from the other direction.
+    """
+    import os
+
     import redis.asyncio as redis
+
+    from moc.config import settings
 
     client = redis.from_url(settings.valkey_url(TEST_DB), decode_responses=True)
     try:
         await client.ping()
-    except Exception as exc:  # pragma: no cover - infra not running
-        pytest.skip(f"valkey unavailable: {exc}")
+    except Exception as exc:
+        message = (
+            f"valkey unreachable at {settings.valkey_host}:{settings.valkey_port} — {exc}"
+        )
+        if os.environ.get("CI"):
+            pytest.fail(
+                f"{message}. CI brings the stack up with compose, so this is a broken "
+                f"run rather than a missing dependency, and skipping it would hide "
+                f"every worker test behind a green tick."
+            )
+        pytest.skip(f"{message}. Start it with: docker compose up -d valkey")
     await client.flushdb()
     yield client
     await client.flushdb()

@@ -81,6 +81,30 @@ jobs:
         # are invisible in the log.
         run: uv run pytest -rs -q
 
+      - name: Assert the pipeline tests actually ran
+        if: always()
+        run: |
+          set -euo pipefail
+          # The mirror image of the MOC_PUBLIC_IP guard below. Those tests are
+          # *expected* to skip here; these must never skip, because they are the
+          # only proof that a signed webhook reaches a sent reply.
+          #
+          # Two ways they could vanish quietly, both covered:
+          #   - Valkey unreachable. The fixture calls pytest.fail when CI is set
+          #     rather than pytest.skip, so a stack that did not come up is a red
+          #     run instead of a shorter green one.
+          #   - The file deleted or renamed. pytest collects nothing and exits 5,
+          #     which fails this step.
+          #
+          # Silent skips have cost this project twice. A test that stopped
+          # running must not look like a test that passed.
+          output=$(uv run pytest tests/workers -rs -q)
+          echo "$output"
+          if echo "$output" | grep -q "skipped"; then
+            echo "::error::worker pipeline tests skipped in CI — see the reasons above"
+            exit 1
+          fi
+
       - name: Report the security surface CI cannot cover
         if: always()
         run: |
