@@ -12,11 +12,12 @@ autogenerate to diff, and it leaves those objects alone.
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -117,3 +118,97 @@ class UsageLedger(Base):
     provider_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
     degraded: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ─────────────────────────── retrieval (migration 0006) ───────────────────────────
+#
+# These live here rather than under `moc.retrieval` because Alembic reads one
+# `Base.metadata`, and the drift job asserts autogenerate produces nothing. A
+# second declarative base would mean a second metadata, and the table absent
+# from the one Alembic sees would be read as dropped.
+
+
+class KbDocument(Base):
+    """Mirrors migration 0006. Tenant-scoped: RLS policy lives there."""
+
+    __tablename__ = "kb_documents"
+    __table_args__ = (
+        Index("uq_kb_documents_tenant_doc", "tenant_id", "doc_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    #: The tenant's own stable identifier for the source document.
+    doc_id: Mapped[str] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vertical: Mapped[str] = mapped_column(Text)
+    lang: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KbChunk(Base):
+    """Mirrors migration 0006.
+
+    Holds both forms of the text (§7.1): `content` is what a reply quotes,
+    `content_normalized` is what retrieval matches. `embedding_version` is per
+    row so a model change is a tracked backfill rather than a silent reindex.
+    """
+
+    __tablename__ = "kb_chunks"
+    __table_args__ = (
+        Index("uq_kb_chunks_tenant_chunk", "tenant_id", "chunk_id", unique=True),
+        Index("ix_kb_chunks_document", "document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("kb_documents.id", ondelete="CASCADE")
+    )
+    chunk_id: Mapped[str] = mapped_column(Text)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    content_normalized: Mapped[str] = mapped_column(Text)
+    lang: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    entity_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Null means the source states no date. A pipeline defaulting these to
+    #: now() would silently make every fee current (§7.1).
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    embedding_version: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KbOutbox(Base):
+    """Mirrors migration 0006.
+
+    Written in the same transaction as the chunks it describes, so there is no
+    window where a chunk exists and nothing knows to index it.
+    """
+
+    __tablename__ = "kb_outbox"
+    __table_args__ = (
+        Index(
+            "ix_kb_outbox_pending",
+            "tenant_id",
+            "created_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    chunk_id: Mapped[str] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(Text)
+    op: Mapped[str] = mapped_column(Text)
+    #: UUIDv5 of chunk_id, so a replay upserts rather than duplicates (§7.1).
+    point_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
+    attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

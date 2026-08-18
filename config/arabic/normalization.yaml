@@ -1,0 +1,46 @@
+# Search normalization — design §7.1 and §8, config per §19.
+#
+# Two forms of every chunk are stored: the original, which is what a reply
+# quotes, and this normalized form, which is what retrieval matches against.
+# Only the original may ever reach a customer — a reply quoting the normalized
+# text has silently rewritten the tenant's own wording, and for a fee it has
+# rewritten the digits a student will hold against an invoice.
+#
+# Every rule here exists because Egyptians actually type it that way. None is
+# a guess about Arabic in general.
+
+version: 1
+
+# Alef variants collapse to bare alef. `أحمد` / `احمد` / `إحمد` are the same
+# name and only one of them is on the keyboard people use.
+letter_folding:
+  'أ': 'ا'
+  'إ': 'ا'
+  'آ': 'ا'
+  'ٱ': 'ا'
+  # Alef maqsura to ya: `الشمالى` for `الشمالي` is the norm in Egyptian typing,
+  # not a mistake.
+  'ى': 'ي'
+  # Ta marbuta to ha: `القنطره` and `القنطرة` must reach the same form, or the
+  # lexical arm misses on the spelling most customers use.
+  'ة': 'ه'
+  # Hamza carriers to their bases.
+  'ؤ': 'و'
+  'ئ': 'ي'
+  'ء': ''
+
+# Kashida — a typographic stretch with no phonetic value. `الــرسوم` is
+# `الرسوم` written wide.
+remove:
+  - 'ـ'
+
+# Diacritics are stripped via Unicode combining-mark removal rather than a
+# list, so a mark nobody enumerated still folds.
+strip_combining_marks: true
+
+# Latin case-folded, since `Mivida` and `mivida` are one compound.
+casefold_latin: true
+
+# Runs of whitespace collapse to a single space. A chunk that differs from
+# another only by a line break should match it.
+collapse_whitespace: true

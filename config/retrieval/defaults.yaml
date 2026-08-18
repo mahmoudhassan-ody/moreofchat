@@ -1,0 +1,51 @@
+# Retrieval defaults — platform tier (design §19.1), implementing §7.1.
+#
+# Chunking values are the ones a bad answer gets blamed on, so they are config
+# from the first commit: too large and the reranker cannot discriminate, too
+# small and a fee is severed from the sentence naming it.
+
+version: 1
+
+chunking:
+  # §7.1: 400-600 tokens with 15% overlap.
+  target_tokens: 500
+  overlap_ratio: 0.15
+
+  # Tokens are the unit the spec and the embedding model speak; characters are
+  # what we can count without a tokenizer. 2.5 is an estimate for Arabic —
+  # measured against the sinai corpus, where 60,628 bytes of mixed Arabic and
+  # English chunk text runs roughly 2.4-2.6 characters per token on
+  # cl100k-family tokenizers. It is deliberately a config value and not a
+  # constant: if a real tokenizer lands, this becomes 1.0 and target_tokens
+  # starts meaning what it says.
+  chars_per_token: 2.5
+
+  # A sentence is never split. That is the whole point of §7.1's "respecting
+  # Arabic sentence boundaries" — naive character splitting puts `2000` in one
+  # chunk and `جنيه رسوم التقديم` in the next, and the grounding check then
+  # reports an orphan figure in a perfectly correct reply.
+  #
+  # Arabic full stop, Arabic question mark, Arabic semicolon, and their Latin
+  # counterparts. A terminator only ends a sentence when whitespace or the end
+  # of the text follows it, so `6.5` and `su.edu.eg` stay intact.
+  sentence_terminators: ".!?؟؛۔"
+
+  # A sentence longer than the target becomes its own chunk rather than being
+  # cut. An oversized chunk is a retrieval quality problem; a severed one is a
+  # correctness problem, and only one of them is recoverable.
+  allow_oversized_sentences: true
+
+# Written onto every chunk so a model change is a tracked backfill rather than
+# a silent reindex (§5). Changing this invalidates every stored vector, which
+# is exactly why it is recorded per row instead of assumed globally.
+embedding_version: text-embedding-3-large@1024
+
+outbox:
+  # UUIDv5 namespace for point ids. Derived from chunk_id so a replay upserts
+  # the same point rather than duplicating it (§7.1) — the property that makes
+  # the sync worker safe to re-run after a crash.
+  point_namespace: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+  targets:
+    - qdrant
+    - meilisearch
+  max_attempts: 5

@@ -86,9 +86,21 @@ async def two_tenants(engine):
     from moc.tenancy.models import Tenant
 
     async with AsyncSession(engine, expire_on_commit=False) as s:
-        await s.execute(text("DELETE FROM usage_ledger"))
-        await s.execute(text("DELETE FROM conversations"))
-        await s.execute(text("DELETE FROM tenants"))
+        # Children before parents: every one of these carries a tenant_id
+        # foreign key, and a bare DELETE FROM tenants fails on the first of
+        # them that holds a row. Listed explicitly rather than cascaded, so
+        # adding a tenant-scoped table without clearing it here fails loudly
+        # in this fixture instead of leaking rows between tests.
+        for table in (
+            "kb_outbox",
+            "kb_chunks",
+            "kb_documents",
+            "usage_ledger",
+            "conversations",
+            "tenants",
+        ):
+            # noqa S608: the table names are the literal tuple above, not input.
+            await s.execute(text(f"DELETE FROM {table}"))  # noqa: S608
         a = Tenant(slug="tenant-a", name="A", vertical="education")
         b = Tenant(slug="tenant-b", name="B", vertical="realestate")
         s.add_all([a, b])
