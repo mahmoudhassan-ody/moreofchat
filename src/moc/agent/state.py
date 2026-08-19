@@ -49,7 +49,9 @@ class TurnInput:
 
     intent: str | None
     slots: dict[str, Any] = field(default_factory=dict)
-    confidence: float = 0.0
+    #: None when retrieval had no calibrated score to report. The gate must
+    #: not treat that as a low score — see `ScriptEngine.decide`.
+    confidence: float | None = None
     explicit_handoff_request: bool = False
 
 

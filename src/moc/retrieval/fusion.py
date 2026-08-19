@@ -45,15 +45,21 @@ class Candidate:
     flat, so with k=60 a bottom-of-list hit still reads three quarters of a
     top-of-list one, and a threshold set on that closes on nothing.
 
-    `relevance` is the arm's own 0-1 judgement — cosine similarity from
-    Qdrant, ranking score from Meilisearch. It defaults to zero, so an arm
-    that supplies no relevance signal contributes no confidence and the gate
-    fails closed rather than open.
+    `relevance` is the arm's own calibrated 0-1 judgement — cosine similarity
+    from Qdrant. `None` means this arm has no calibrated score to give, which
+    is Meilisearch's actual position: it ranks, it does not score.
+
+    None rather than a rank-derived stand-in, because the stand-in was worse
+    than nothing. `1.0 / rank` made every chunk the lexical arm ranked first
+    score exactly 1.0 — perfect confidence derived from position in a list.
+    Across the 17 education cases 7 read 1.000, three of them cases the suite
+    requires *not* be answered. An arm with nothing calibrated to say must
+    contribute nothing, not a number that outranks every real measurement.
     """
 
     chunk_id: str
     rank: int
-    relevance: float = 0.0
+    relevance: float | None = None
     content: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
 
@@ -63,8 +69,9 @@ class FusedHit:
     #: RRF score — for ordering only. Not comparable between queries.
     chunk_id: str
     score: float
-    #: Best relevance any arm gave this chunk. This is what the gate reads.
-    relevance: float = 0.0
+    #: Best relevance any *calibrated* arm gave this chunk, or None when no
+    #: arm had a score. This is what the gate reads.
+    relevance: float | None = None
     content: str = ""
     arms: tuple[str, ...] = ()
     payload: dict[str, Any] = field(default_factory=dict)
@@ -84,7 +91,10 @@ class FusionResult:
     """
 
     hits: tuple[FusedHit, ...] = ()
-    confidence: float = 0.0
+    #: None when no arm supplied a calibrated score — an embedding outage, or
+    #: a lexical-only deployment. Distinct from 0.0, which means the dense arm
+    #: answered and found nothing similar.
+    confidence: float | None = None
     degraded_arms: tuple[str, ...] = ()
     elapsed_ms: float = 0.0
     gate_closed: bool = False
@@ -141,10 +151,15 @@ def reciprocal_rank_fusion(
                 k + candidate.rank
             )
             contributing.setdefault(candidate.chunk_id, []).append(arm)
-            # Best across arms, not summed: two arms each 60% sure is not 120%.
-            relevance[candidate.chunk_id] = max(
-                relevance.get(candidate.chunk_id, 0.0), candidate.relevance
-            )
+            # Best across arms, not summed: two arms each 60% sure is not
+            # 120%. An arm with no calibrated score is skipped rather than
+            # counted as zero — it has no opinion, which is not the same as a
+            # low one, and averaging silence in would drag every score down.
+            if candidate.relevance is not None:
+                relevance[candidate.chunk_id] = max(
+                    relevance.get(candidate.chunk_id, candidate.relevance),
+                    candidate.relevance,
+                )
             if candidate.content and candidate.chunk_id not in contents:
                 contents[candidate.chunk_id] = candidate.content
             if candidate.payload and candidate.chunk_id not in payloads:
@@ -154,7 +169,7 @@ def reciprocal_rank_fusion(
         FusedHit(
             chunk_id=chunk_id,
             score=score,
-            relevance=relevance.get(chunk_id, 0.0),
+            relevance=relevance.get(chunk_id),
             content=contents.get(chunk_id, ""),
             arms=tuple(contributing[chunk_id]),
             payload=payloads.get(chunk_id, {}),
@@ -166,7 +181,7 @@ def reciprocal_rank_fusion(
     ]
 
 
-def confidence_of(hits: Sequence[FusedHit]) -> float:
+def confidence_of(hits: Sequence[FusedHit]) -> float | None:
     """The §7.5 gate input: how relevant the best hit actually is.
 
     The top hit's own relevance, not its RRF score. RRF scores depend on how
@@ -175,11 +190,13 @@ def confidence_of(hits: Sequence[FusedHit]) -> float:
     threshold set on that would silently tighten whenever an arm went down,
     which is the opposite of degrading gracefully.
 
-    Zero when nothing was found, and zero when the arms supplied no relevance
-    signal at all. Both are "we have no reason to believe this answers the
-    question", and both must close the gate.
+    `None` when nothing was found, and `None` when no arm supplied a
+    calibrated score. That is not the same as zero: zero is the dense arm
+    reporting it found nothing similar, `None` is nobody having looked with an
+    instrument that reads. Conflating them is what let a rank-derived 1.0 pass
+    for certainty.
     """
-    return hits[0].relevance if hits else 0.0
+    return hits[0].relevance if hits else None
 
 
 async def fuse(
@@ -212,7 +229,11 @@ async def fuse(
     fused = reciprocal_rank_fusion(available, config=config)
     confidence = confidence_of(fused)
 
-    if confidence < settings["min_score"]:
+    # An uncalibrated result cannot be thresholded. Skipping the comparison
+    # rather than defaulting it means an embedding outage degrades to
+    # lexical-only (§7.3) instead of closing on every turn.
+    below = confidence is not None and confidence < settings["min_score"]
+    if not fused or below:
         # §7.5. Empty, not low-ranked: the gate needs a result it can route on,
         # and a weak passage handed onward is a fee grounded in something
         # merely adjacent.
@@ -276,15 +297,11 @@ class FusionRetriever:
             limit=settings["candidates_per_arm"],
         )
         sparse = [
-            Candidate(
-                chunk_id=hit.chunk_id,
-                rank=hit.rank,
-                # Rank-derived: Meilisearch returns no calibrated 0-1 score by
-                # default. An honest stand-in, and the reason `min_score` is
-                # not yet tuned against anything real.
-                relevance=1.0 / hit.rank,
-                content=hit.content,
-            )
+            # No relevance: Meilisearch ranks, it does not score. The
+            # rank-derived `1.0 / rank` that used to sit here made every
+            # top-ranked lexical hit read as total certainty, which is how
+            # the gate came to be decorative.
+            Candidate(chunk_id=hit.chunk_id, rank=hit.rank, content=hit.content)
             for hit in hits
         ]
 

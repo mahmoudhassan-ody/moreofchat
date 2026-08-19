@@ -11,6 +11,8 @@ is a caller that will one day forget.
 """
 
 import time
+import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +20,7 @@ from moc.config_store import load
 from moc.retrieval.fusion import (
     Candidate,
     FusedHit,
+    FusionRetriever,
     confidence_of,
     fuse,
     reciprocal_rank_fusion,
@@ -25,6 +28,16 @@ from moc.retrieval.fusion import (
 
 CONFIG = load("retrieval/lexical")
 FUSION = CONFIG["fusion"]
+
+
+class StubLexical:
+    """A Meilisearch repository that returns fixed ranked hits."""
+
+    def __init__(self, hits):
+        self._hits = hits
+
+    async def search(self, *, tenant_id, vertical, query, limit):
+        return self._hits[:limit]
 
 
 def ranked(*chunk_ids: str, relevance: float = 0.9) -> list[Candidate]:
@@ -123,7 +136,7 @@ async def test_the_threshold_comes_from_config():
 async def test_no_results_at_all_is_a_closed_gate_not_a_crash():
     result = await fuse(query="q", dense=[], sparse=[], config=CONFIG)
     assert result.gate_closed is True
-    assert result.confidence == 0.0
+    assert result.confidence is None
 
 
 def test_confidence_survives_a_missing_arm():
@@ -141,11 +154,21 @@ def test_confidence_survives_a_missing_arm():
     assert confidence_of(one_arm) == pytest.approx(confidence_of(two_arms))
 
 
-def test_an_arm_with_no_relevance_signal_closes_the_gate():
-    """Fails closed. No relevance is "no reason to believe this answers the
-    question", which must not read the same as a confident hit."""
+def test_an_arm_with_no_relevance_signal_reports_no_confidence():
+    """Deliberate contract change, recorded here because it reverses one.
+
+    This previously read "no relevance closes the gate", on the reasoning that
+    silence should fail closed. Measurement showed the opposite risk was the
+    live one: the lexical arm was *not* silent, it was supplying `1.0 / rank`,
+    so the gate read certainty for 7 of 17 cases and closed on none of them.
+
+    Silence must therefore be representable. It now reports `None` — no
+    instrument read this — which the caller may not threshold. Failing closed
+    on it would turn an embedding outage into a total outage, which §7.3
+    explicitly rejects.
+    """
     silent = [Candidate(chunk_id="x", rank=1, content="body")]
-    assert confidence_of(reciprocal_rank_fusion({"dense": silent}, config=CONFIG)) == 0.0
+    assert confidence_of(reciprocal_rank_fusion({"dense": silent}, config=CONFIG)) is None
 
 
 def test_relevance_is_the_best_across_arms_not_the_sum():
@@ -259,3 +282,100 @@ def test_a_fused_hit_carries_which_arms_found_it():
     fused = reciprocal_rank_fusion({"dense": ranked("x")}, config=CONFIG)
     assert isinstance(fused[0], FusedHit)
     assert fused[0].arms == ("dense",)
+
+
+# ───────────── confidence comes from a calibrated arm, or not at all ─────────────
+
+
+def test_a_top_ranked_lexical_hit_is_not_read_as_certainty():
+    """The defect this section exists for.
+
+    The lexical arm supplied `1.0 / rank` as its relevance, so any chunk
+    Meilisearch ranked first scored exactly 1.0 — perfect confidence, derived
+    from nothing but position in a list. Measured across the 17 education
+    cases, 7 read 1.000, including three the suite requires *not* be answered.
+    A gate whose input is 1.0 for the cases it must close is decorative.
+    """
+    sparse_first = reciprocal_rank_fusion(
+        {"sparse": [Candidate(chunk_id="x", rank=1)]}, config=CONFIG
+    )
+    assert confidence_of(sparse_first) is None
+
+
+def test_confidence_is_the_dense_arms_cosine():
+    fused = reciprocal_rank_fusion(
+        {"dense": [Candidate(chunk_id="x", rank=1, relevance=0.42)]}, config=CONFIG
+    )
+    assert confidence_of(fused) == pytest.approx(0.42)
+
+
+def test_confidence_is_absent_rather_than_zero_when_no_arm_is_calibrated():
+    """Absent and zero are different claims.
+
+    Zero says "we looked and found nothing similar". Absent says "nothing
+    here can answer that question" — which is the honest report during an
+    embedding outage, and the two must not be conflated by a gate that
+    treats both as failure.
+    """
+    fused = reciprocal_rank_fusion(
+        {"sparse": [Candidate(chunk_id="x", rank=1)]}, config=CONFIG
+    )
+    assert fused[0].relevance is None
+    assert confidence_of(fused) is None
+    assert confidence_of(()) is None
+
+
+def test_an_uncalibrated_arm_does_not_dilute_a_calibrated_one():
+    """Best across arms, ignoring arms that have no opinion to give."""
+    fused = reciprocal_rank_fusion(
+        {
+            "dense": [Candidate(chunk_id="x", rank=2, relevance=0.31)],
+            "sparse": [Candidate(chunk_id="x", rank=1)],
+        },
+        config=CONFIG,
+    )
+    assert fused[0].relevance == pytest.approx(0.31)
+
+
+async def test_an_embedding_outage_reports_no_confidence_and_still_answers():
+    """§7.3: one arm down is a degraded turn, not a refusal.
+
+    With no dense arm there is no calibrated score, so the gate has nothing
+    to read. It must hand the passages on rather than close — the alternative
+    is that an embedding outage silently becomes a total outage.
+    """
+    result = await fuse(
+        query="رسوم التقديم",
+        dense=None,
+        sparse=[Candidate(chunk_id="x", rank=1, content="2000 جنيه")],
+        config=CONFIG,
+    )
+    assert result.confidence is None
+    assert result.degraded_arms == ("dense",)
+    assert result.passages, "a degraded arm must not empty the result"
+
+
+async def test_the_retriever_does_not_invent_relevance_for_the_lexical_arm():
+    """The stand-in removed at its source, not just where it was read.
+
+    `FusionRetriever` built each sparse candidate with `relevance = 1.0/rank`.
+    Leaving that in place and only hardening `confidence_of` would fix
+    nothing: the fake number is manufactured here, and every consumer
+    downstream would keep receiving it.
+    """
+    retriever = FusionRetriever(
+        lexical=StubLexical(
+            [
+                SimpleNamespace(chunk_id="a", rank=1, content="first"),
+                SimpleNamespace(chunk_id="b", rank=2, content="second"),
+            ]
+        ),
+        tenant_id=uuid.uuid4(),
+        vertical="education",
+        config=CONFIG,
+    )
+    result = await retriever.search(query="رسوم التقديم")
+
+    assert result.confidence is None, "a rank is not a score"
+    assert all(hit.relevance is None for hit in result.hits)
+    assert result.passages, "and the turn still gets its passages"

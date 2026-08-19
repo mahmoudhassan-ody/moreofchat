@@ -76,7 +76,10 @@ class Retrieval:
     """
 
     passages: Sequence[str] = ()
-    confidence: float = 0.0
+    #: None when no arm supplied a calibrated score (§7.3 degraded, or a
+    #: lexical-only deployment). Not zero — nobody looked with an instrument
+    #: that reads, which is a different claim from "looked and found nothing".
+    confidence: float | None = None
     script_constants: Sequence[float | str] = ()
 
 

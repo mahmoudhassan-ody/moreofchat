@@ -155,6 +155,26 @@ def test_below_threshold_confidence_cannot_reach_answer_composition(script, defa
     assert decision.grounding_required is False
 
 
+def test_absent_confidence_does_not_close_the_gate(script):
+    """§7.3. `None` is "no arm supplied a calibrated score", not a low one.
+
+    Meilisearch ranks without scoring, so a lexical-only turn — an embedding
+    outage, or a deployment with no dense arm — has no number to threshold.
+    Treating that as below-threshold would turn a degraded turn into a refused
+    one, which is precisely the failure §7.3 says to avoid: the correct
+    behaviour is that search degrades, not that the product stops answering.
+
+    Nothing is lost by allowing it through here. The figures in the composed
+    reply still have to survive `check_numeric_grounding`, which is the guard
+    that actually prevents an invented fee.
+    """
+    decision = script.advance(
+        script.start(),
+        turn(intent="fees", slots={"faculty": "pharmacy"}, confidence=None),
+    )
+    assert decision.action is Action.answer
+
+
 def test_confidence_exactly_at_the_threshold_is_allowed(script, defaults):
     """A boundary worth pinning: >= passes, so the threshold means what it reads."""
     decision = script.advance(

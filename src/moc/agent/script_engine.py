@@ -84,7 +84,10 @@ class ScriptEngine:
         if missing:
             return self._clarify(state, node_name, node, missing)
 
-        if action is Action.answer and turn.confidence < self._confidence_threshold:
+        uncertain = (
+            turn.confidence is not None and turn.confidence < self._confidence_threshold
+        )
+        if action is Action.answer and uncertain:
             # §7.5 and §19.3. The turn does not reach answer composition; the
             # script's fallback node handles it. A hallucinated tuition figure
             # is a commercial incident, so this is not a tunable behaviour.

@@ -277,16 +277,9 @@ async def test_the_lexical_arm_feeds_fusion_and_the_gate_opens(corpus, capsys):
         query="fe manh fe kantara?",
         dense=None,
         sparse=[
-            Candidate(
-                chunk_id=hit.chunk_id,
-                rank=hit.rank,
-                # Rank-derived relevance: Meilisearch ranks but does not return
-                # a calibrated 0-1 score by default. Honest stand-in until the
-                # dense arm supplies a real one — and it is the dense arm's
-                # cosine that the §7.5 threshold is ultimately tuned against.
-                relevance=1.0 / hit.rank,
-                content=hit.content,
-            )
+            # No relevance: Meilisearch ranks, it does not score. Confidence
+            # comes from the dense arm's cosine or from nowhere.
+            Candidate(chunk_id=hit.chunk_id, rank=hit.rank, content=hit.content)
             for hit in hits
         ],
         config=CONFIG,
