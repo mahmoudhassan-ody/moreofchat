@@ -44,7 +44,12 @@ nodes:
     intents: [payment_plan, instalments, calculator]
     action: answer
     register: msa
-    requires_slots: [unit_id]
+    # No required slot, because a customer does not say a unit id. re-0005 is
+    # "the unit in Noor City at six and a half million" — which identifies a
+    # row without naming one, and resolving that is the connector's job rather
+    # than a slot the extractor must somehow fill. A turn whose unit cannot be
+    # resolved hands off; it does not guess which unit was meant.
+    requires_slots: []
     grounding: required
     clarify:
       register: masri
@@ -96,3 +101,25 @@ replies:
     masri: "مفيش {type} متاح في النطاق ده دلوقتي. هحوّلك لزميلي يشوفلك الخيارات. البيانات محدّثة {as_of}."
     msa: "لا يتوفر {type} ضمن هذا النطاق حاليًا. سيتم تحويلك إلى أحد الزملاء. البيانات محدثة بتاريخ {as_of}."
     english: "We have no {type} in that range right now. I'm passing you to a colleague. Inventory current as of {as_of}."
+
+  # Units found. The figures are interpolated from the row, never composed —
+  # §3.1's rule, and what makes `arithmetic_in_model_rate` checkable.
+  units_found:
+    masri: "عندنا {type} في {compound} بسعر {price} {currency}. البيانات محدّثة {as_of}."
+    msa: "يتوفر {type} في {compound} بسعر {price} {currency}. البيانات محدثة بتاريخ {as_of}."
+    english: "We have a {type} in {compound} at {price} {currency}. Inventory current as of {as_of}."
+
+  # re-0007: a completed project is cash only. Says so plainly rather than
+  # offering a plan, because every other unit having one makes the shape of an
+  # answer available when the facts are not.
+  cash_only:
+    masri: "الوحدة دي في {compound} كاش بس، المشروع مكتمل. السعر {price} {currency}. البيانات محدّثة {as_of}."
+    msa: "هذه الوحدة في {compound} متاحة نقدًا فقط لاكتمال المشروع. السعر {price} {currency}. البيانات محدثة بتاريخ {as_of}."
+    english: "This unit in {compound} is cash only — the project is complete. Price {price} {currency}. Inventory current as of {as_of}."
+
+  # re-0005. Every figure comes from the calculator's output, which the gate
+  # string-matches the reply against.
+  payment_plan:
+    masri: "المقدم {down_payment} {currency}، والقسط {installment} {currency} كل ربع سنة على {years} سنين ({count} قسط). البيانات محدّثة {as_of}."
+    msa: "الدفعة المقدمة {down_payment} {currency}، والقسط {installment} {currency} على مدى {years} سنوات ({count} قسط). البيانات محدثة بتاريخ {as_of}."
+    english: "Down payment {down_payment} {currency}, instalment {installment} {currency} over {years} years ({count} payments). Inventory current as of {as_of}."
