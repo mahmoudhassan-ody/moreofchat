@@ -12,16 +12,19 @@ than building template management), and no retry or rate-limit policy lives
 here either. That belongs to the outbound worker, where a token bucket can be
 shared across every message for a tenant instead of per adapter instance.
 
-**A note on `ChannelAccountRegistry`, for whoever wires the table.** The design
-lists `channel_accounts` as tenant-scoped (§5), and every tenant-scoped table
-gets RLS. This lookup is the one that cannot: it runs *before* a tenant context
-exists, because its whole job is to establish which tenant a message belongs
-to. Resolving it under RLS with no tenant set returns nothing, and setting a
-tenant first requires the answer. The options are a narrowly-privileged lookup
-role, or a policy admitting a bootstrap read of only the columns needed to
-resolve. That is a decision with security consequences and it deserves its own
-review, so this stays a Protocol until it gets one — a seam, not a stub, in the
-same shape Task 14 used for retrieval.
+**`ChannelAccountRegistry` and the bootstrap read.** The design lists
+`channel_accounts` as tenant-scoped (§5), and every tenant-scoped table gets
+RLS. This lookup is the one that cannot rely on it: it runs *before* a tenant
+context exists, because its whole job is to establish which tenant a message
+belongs to. Resolving it under RLS with no tenant set returns nothing, and
+setting a tenant first requires the answer.
+
+Settled in migration 0007 as a narrowly-privileged `moc_lookup` role with
+SELECT on a five-column view and no other privilege in the database — not as a
+policy admitting a bootstrap read, which would have widened the base table for
+every role rather than creating a separate, smaller door. The implementation
+is `channels/accounts.py`; the boundary is asserted in
+`tests/tenancy/test_channel_accounts.py`.
 """
 
 import enum
@@ -53,10 +56,16 @@ class MediaRef:
 class ChannelAccount:
     """One connected channel for one tenant (§5, `channel_accounts`).
 
-    `signing_secret` is per account and never platform-wide. A shared token
-    means any party who has seen one tenant's credentials can forge every other
-    tenant's inbound traffic — including that tenant themselves, which is the
-    version that ends up in a dispute.
+    `secret_ref` *names* the signing secret; it is not the secret. The secret
+    is per account and never platform-wide — a shared token means any party
+    who has seen one tenant's credentials can forge every other tenant's
+    inbound traffic, including that tenant themselves, which is the version
+    that ends up in a dispute.
+
+    Holding the reference rather than the value is what lets this object come
+    back from the pre-tenant bootstrap read (Task 21). That lookup runs before
+    any signature has been verified, so it must not be able to reach the one
+    value an attacker would need. `SecretResolver` supplies it separately.
     """
 
     id: UUID
@@ -65,7 +74,7 @@ class ChannelAccount:
     #: The vendor-facing address, vendor prefixes stripped. For WhatsApp this
     #: is the business number in E.164.
     account_ref: str
-    signing_secret: str
+    secret_ref: str
 
 
 @dataclass(frozen=True)
@@ -103,6 +112,17 @@ class OutsideServiceWindow(Exception):
     attached. Sending anyway is worse: Meta rejects it, and a queue of rejected
     sends reads to the tenant as an outage rather than as a policy they hit.
     """
+
+
+class SecretResolver(Protocol):
+    """`secret_ref` -> the signing secret it names.
+
+    A port rather than a column, because the resolving read runs before any
+    signature has been checked and must not be able to reach the secret. See
+    `channels/accounts.py` and migration 0007.
+    """
+
+    def for_ref(self, secret_ref: str) -> str: ...
 
 
 class ChannelAccountRegistry(Protocol):

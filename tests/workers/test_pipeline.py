@@ -48,6 +48,7 @@ WHATSAPP = load("channels/whatsapp")
 SCRIPT = "scripts/education/fees"
 
 SECRET = "auth-token-for-this-account"
+SECRET_REF = "twilio/test/wa"
 PATH = "/webhooks/twilio/whatsapp"
 URL = f"https://moc.example{PATH}"
 BUSINESS_NUMBER = "+201555000111"
@@ -150,8 +151,19 @@ def account(tenant) -> ChannelAccount:
         tenant_id=tenant.id,
         channel=Channel.whatsapp,
         account_ref=BUSINESS_NUMBER,
-        signing_secret=SECRET,
+        secret_ref=SECRET_REF,
     )
+
+
+class FakeSecrets:
+    """`secret_ref` -> secret, without a secret store.
+
+    What matters here is that the secret arrives by reference rather than
+    riding on the account the bootstrap lookup returned (Task 21).
+    """
+
+    def for_ref(self, secret_ref: str) -> str:
+        return {SECRET_REF: SECRET}[secret_ref]
 
 
 class Registry:
@@ -231,7 +243,7 @@ async def test_a_signed_webhook_produces_a_sent_reply(valkey, app_engine, accoun
     """
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    app = build_app(registry=Registry(account), queue=queue, events=events)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
 
     response = await deliver(app, form())
     assert response.status_code == 200
@@ -272,7 +284,7 @@ async def test_the_reply_is_the_scripted_fallback_when_retrieval_is_empty(
 
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    app = build_app(registry=Registry(account), queue=queue, events=events)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
     await deliver(app, form())
 
     inbound = InboundWorker(
@@ -297,7 +309,10 @@ async def test_the_turn_is_metered_under_the_right_tenant(valkey, app_engine, ac
 
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    await deliver(build_app(registry=Registry(account), queue=queue, events=events), form())
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
 
     inbound = InboundWorker(
         client=valkey,
@@ -321,7 +336,10 @@ async def test_a_processed_entry_is_acked_and_not_reprocessed(valkey, app_engine
     """At-least-once needs the ack, or every restart replays the backlog."""
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    await deliver(build_app(registry=Registry(account), queue=queue, events=events), form())
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
 
     worker = InboundWorker(
         client=valkey,
@@ -353,7 +371,10 @@ async def test_a_failing_turn_leaves_the_entry_pending_rather_than_acking_it(
 
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    await deliver(build_app(registry=Registry(account), queue=queue, events=events), form())
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
 
     worker = InboundWorker(
         client=valkey,
@@ -379,7 +400,10 @@ async def test_a_poisoned_entry_is_dead_lettered_rather_than_retried_forever(
 
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    await deliver(build_app(registry=Registry(account), queue=queue, events=events), form())
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
 
     worker = InboundWorker(
         client=valkey,
@@ -404,7 +428,7 @@ async def test_a_vendor_redelivery_produces_one_turn_not_two(valkey, app_engine,
     """The §6.2 guarantee, through the real key store rather than a fake set."""
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    app = build_app(registry=Registry(account), queue=queue, events=events)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
 
     first = await deliver(app, form())
     second = await deliver(app, form())
@@ -444,7 +468,7 @@ async def test_the_thread_is_reused_across_turns(valkey, app_engine, account):
 
     queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
     events = ValkeyEventLog(client=valkey, config=QUEUES)
-    app = build_app(registry=Registry(account), queue=queue, events=events)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
     worker = InboundWorker(
         client=valkey,
         engine=app_engine,

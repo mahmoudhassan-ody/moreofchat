@@ -45,6 +45,7 @@ from moc.channels.base import (
     ChannelAccountRegistry,
     EventLog,
     InboundQueue,
+    SecretResolver,
 )
 from moc.channels.twilio_wa import parse_inbound, verify_signature
 from moc.config_store import load
@@ -64,6 +65,7 @@ def build_app(
     registry: ChannelAccountRegistry,
     queue: InboundQueue,
     events: EventLog,
+    secrets: SecretResolver,
 ) -> FastAPI:
     """Assemble the webhook app from its collaborators.
 
@@ -98,7 +100,11 @@ def build_app(
             raw_body=raw_body,
             content_type=request.headers.get("content-type", ""),
             signature=request.headers.get(settings["signature_header"]),
-            auth_token=account.signing_secret,
+            # The signing secret is fetched by reference, not carried on the
+            # account: resolution runs through `moc_lookup` before anything is
+            # verified, and that role must not be able to reach the one value
+            # an attacker needs to forge this tenant's traffic (Task 21).
+            auth_token=secrets.for_ref(account.secret_ref),
             config=settings,
         ):
             return Response(status_code=_FORBIDDEN)

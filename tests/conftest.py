@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -65,6 +66,32 @@ async def session(engine):
         await trans.rollback()
 
 
+#: Children before parents. Listed rather than cascaded so that adding a
+#: tenant-scoped table without clearing it here fails loudly in a fixture
+#: instead of leaking rows between tests. Exported because more than one test
+#: module needs committed rows and therefore needs to clean up after itself.
+TENANT_SCOPED_TABLES = (
+    "channel_accounts",
+    "kb_outbox",
+    "kb_chunks",
+    "kb_documents",
+    "usage_ledger",
+    "conversations",
+    "tenants",
+)
+
+
+@pytest.fixture(scope="session")
+def tenant_tables() -> tuple[str, ...]:
+    """The delete order for tests that commit rows and must clean up.
+
+    A fixture rather than an importable constant because `tests` is not a
+    package; the point is that the list exists once, so a new tenant-scoped
+    table is added in one place.
+    """
+    return TENANT_SCOPED_TABLES
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def app_engine(engine):
     """Engine connecting as moc_app — a non-owner role, so RLS is enforced."""
@@ -80,25 +107,32 @@ async def app_engine(engine):
     await eng.dispose()
 
 
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def lookup_engine(engine):
+    """Engine connecting as moc_lookup — the pre-tenant bootstrap role.
+
+    Separate from `app_engine` because the point of the role is what it cannot
+    reach; sharing an engine would let a test pass while querying as moc_app.
+    """
+    from moc.config import settings
+
+    async with engine.begin() as c:
+        await c.execute(
+            text(f"ALTER ROLE moc_lookup WITH PASSWORD '{settings.lookup_password}'")
+        )
+
+    eng = create_async_engine(settings.lookup_database_url(TEST_DB))
+    yield eng
+    await eng.dispose()
+
+
 @pytest_asyncio.fixture(loop_scope="session")
 async def two_tenants(engine):
     """Two committed tenants, visible to the app role."""
     from moc.tenancy.models import Tenant
 
     async with AsyncSession(engine, expire_on_commit=False) as s:
-        # Children before parents: every one of these carries a tenant_id
-        # foreign key, and a bare DELETE FROM tenants fails on the first of
-        # them that holds a row. Listed explicitly rather than cascaded, so
-        # adding a tenant-scoped table without clearing it here fails loudly
-        # in this fixture instead of leaking rows between tests.
-        for table in (
-            "kb_outbox",
-            "kb_chunks",
-            "kb_documents",
-            "usage_ledger",
-            "conversations",
-            "tenants",
-        ):
+        for table in TENANT_SCOPED_TABLES:
             # noqa S608: the table names are the literal tuple above, not input.
             await s.execute(text(f"DELETE FROM {table}"))  # noqa: S608
         a = Tenant(slug="tenant-a", name="A", vertical="education")

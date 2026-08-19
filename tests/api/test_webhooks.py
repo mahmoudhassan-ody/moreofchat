@@ -25,6 +25,7 @@ from moc.config_store import load
 
 WHATSAPP = load("channels/whatsapp")
 SECRET = "auth-token-for-this-account"
+SECRET_REF = "twilio/test/wa"
 PATH = "/webhooks/twilio/whatsapp"
 URL = f"https://moc.example{PATH}"
 
@@ -42,8 +43,25 @@ ACCOUNT = ChannelAccount(
     tenant_id=uuid4(),
     channel=Channel.whatsapp,
     account_ref="+201555000111",
-    signing_secret=SECRET,
+    secret_ref=SECRET_REF,
 )
+
+
+class FakeSecrets:
+    """`secret_ref` -> secret, without a secret store.
+
+    The real resolver reads the process environment (`EnvSecretResolver`);
+    what matters to these tests is that the secret arrives by reference rather
+    than riding on the account the bootstrap lookup returned.
+    """
+
+    def __init__(self, secrets: dict[str, str] | None = None) -> None:
+        self.secrets = {SECRET_REF: SECRET} if secrets is None else secrets
+        self.asked: list[str] = []
+
+    def for_ref(self, secret_ref: str) -> str:
+        self.asked.append(secret_ref)
+        return self.secrets[secret_ref]
 
 
 class FakeRegistry:
@@ -97,7 +115,7 @@ def wiring():
 @pytest.fixture
 def client(wiring):
     registry, queue, events = wiring
-    app = build_app(registry=registry, queue=queue, events=events)
+    app = build_app(registry=registry, queue=queue, events=events, secrets=FakeSecrets())
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
     )
@@ -184,7 +202,7 @@ async def test_unknown_channel_account_is_rejected_before_tenant_resolution(wiri
     """
     _, queue, events = wiring
     empty = FakeRegistry(accounts={})
-    app = build_app(registry=empty, queue=queue, events=events)
+    app = build_app(registry=empty, queue=queue, events=events, secrets=FakeSecrets())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
     ) as unknown_client:
@@ -286,7 +304,7 @@ async def test_a_queue_failure_is_not_a_silent_success(client, wiring):
         async def publish(self, message) -> None:
             raise ConnectionError("valkey unreachable")
 
-    app = build_app(registry=registry, queue=BrokenQueue(), events=events)
+    app = build_app(registry=registry, queue=BrokenQueue(), events=events, secrets=FakeSecrets())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
     ) as broken:
@@ -312,7 +330,7 @@ async def test_a_failed_enqueue_releases_the_message_id_for_the_retry(wiring):
                 raise ConnectionError("valkey unreachable")
             queue.published.append(message)
 
-    app = build_app(registry=registry, queue=FlakyQueue(), events=events)
+    app = build_app(registry=registry, queue=FlakyQueue(), events=events, secrets=FakeSecrets())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
     ) as flaky:

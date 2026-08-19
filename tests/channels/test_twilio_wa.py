@@ -39,6 +39,7 @@ from moc.config_store import load
 
 WHATSAPP = load("channels/whatsapp")
 SECRET = "auth-token-for-this-account"
+SECRET_REF = "twilio/test/wa"
 URL = "https://moc.example/webhooks/twilio/whatsapp"
 
 FORM = {
@@ -58,7 +59,7 @@ def account(**overrides) -> ChannelAccount:
             "tenant_id": uuid4(),
             "channel": Channel.whatsapp,
             "account_ref": "+201555000111",
-            "signing_secret": SECRET,
+            "secret_ref": SECRET_REF,
             **overrides,
         }
     )
@@ -270,8 +271,8 @@ def test_secret_is_per_channel_account_not_global():
 
 
 def test_the_account_carries_its_own_secret():
-    assert account().signing_secret == SECRET
-    assert account(signing_secret="other").signing_secret == "other"
+    assert account().secret_ref == SECRET_REF
+    assert account(secret_ref="other").secret_ref == "other"
 
 
 # ─────────────────────────── §6.1 normalization ───────────────────────────

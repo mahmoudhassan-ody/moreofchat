@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     app_password: str
     app_user: str = "moc_app"
 
+    # The pre-tenant bootstrap role (migration 0007). Separate credentials
+    # from `moc_app` on purpose: this one authenticates nothing and runs
+    # before a tenant is known, so its reach is a security property and
+    # sharing a login with the application role would erase the distinction.
+    lookup_password: str = ""
+    lookup_user: str = "moc_lookup"
+
     qdrant_host: str = "127.0.0.1"
     qdrant_port: int = 6333
     qdrant_key: str = ""
@@ -47,6 +54,15 @@ class Settings(BaseSettings):
         """URL for the restricted moc_app role. RLS applies to this role."""
         return (
             f"postgresql+asyncpg://{self.app_user}:{self.app_password}"
+            f"@{self.pg_host}:{self.pg_port}/{database or self.pg_database}"
+        )
+
+    def lookup_database_url(self, database: str | None = None) -> str:
+        """URL for `moc_lookup`, whose only privilege is SELECT on the
+        channel-account view. Its whole security value is what it cannot
+        reach, so it never shares a connection pool with `moc_app`."""
+        return (
+            f"postgresql+asyncpg://{self.lookup_user}:{self.lookup_password}"
             f"@{self.pg_host}:{self.pg_port}/{database or self.pg_database}"
         )
 
