@@ -93,18 +93,39 @@ def slot_vocabulary(script: str) -> dict[str, Any]:
     return vocabulary
 
 
-def _intents(script: str) -> tuple[str, ...]:
-    """Only intents the engine can route. An unroutable one produces a
-    clarification the customer cannot resolve."""
-    return tuple(
-        sorted(
-            {
-                intent
-                for node in load(script)["nodes"].values()
-                for intent in node.get("intents", [])
-            }
-        )
+@lru_cache(maxsize=8)
+def _intent_names(script: str) -> frozenset[str]:
+    """Every routable intent name, for validating what came back."""
+    return frozenset(
+        intent
+        for node in load(script)["nodes"].values()
+        for intent in node.get("intents", [])
     )
+
+
+def _intents(script: str) -> tuple[str, ...]:
+    """Only intents the engine can route, each with the node's own one-line
+    description where it has one.
+
+    The gloss comes from the script rather than the prompt for the same reason
+    the slot values do: a description written into the prompt describes a node
+    that may not exist. It also carries the franco and Arabic surface forms a
+    topic actually arrives as — `khasm`, `manh` — which the intent *name*
+    cannot, and without which the model returns null on exactly the cases the
+    suite was built around."""
+    lines = []
+    for node in load(script)["nodes"].values():
+        names = node.get("intents", [])
+        if not names:
+            continue
+        gloss = node.get("describe")
+        # ONE name per line. Listing a node's aliases made the model return
+        # the whole comma-joined string as the intent — "discounts,
+        # scholarships, financial_aid" — and every one of those turns failed
+        # as unroutable. The aliases stay routable for other callers; the
+        # model is offered exactly one value per node.
+        lines.append(f"{names[0]}" + (f" — {gloss.strip()}" if gloss else ""))
+    return tuple(sorted(lines))
 
 
 def _describe(vocabulary: dict[str, Any]) -> str:
@@ -130,7 +151,7 @@ def render_prompt(*, script: str, message: str, held_slots: dict[str, Any]) -> s
     return (
         template.replace("{message}", message)
         .replace("{held_slots}", json.dumps(held_slots, ensure_ascii=False) or "{}")
-        .replace("{intents}", "\n".join(f"- {intent}" for intent in _intents(script)))
+        .replace("{intents}", "\n".join(f"- {line}" for line in _intents(script)))
         .replace("{slots}", _describe(slot_vocabulary(script)))
     )
 
@@ -190,7 +211,7 @@ class LlmSlotExtractor:
             raise ExtractionFailed("malformed extraction: response was not an object")
 
         intent = document.get("intent")
-        if intent is not None and intent not in _intents(self._script):
+        if intent is not None and intent not in _intent_names(self._script):
             raise ExtractionFailed(
                 f"unroutable intent {intent!r}: the script has no node for it, so the "
                 f"turn would clarify in a way the customer cannot resolve"
@@ -217,12 +238,12 @@ class LlmSlotExtractor:
         vocabulary = slot_vocabulary(self._script)
         clean: dict[str, Any] = {}
         for slot, value in raw.items():
-            if value is None:
-                # An explicit null is "not said", reported the JSON way rather
-                # than by omission. Well-formed, and not the same thing as a
-                # response that cannot be read — only the second is a failed
-                # turn. Nothing is swallowed here: one key is normalised to
-                # the absence it already denotes.
+            if value is None or (isinstance(value, str) and not value.strip()):
+                # An explicit null or an empty string is "not said", reported
+                # the JSON way rather than by omission. Well-formed, and not
+                # the same thing as a response that cannot be read — only the
+                # second is a failed turn. Nothing is swallowed here: one key
+                # is normalised to the absence it already denotes.
                 continue
             if slot not in vocabulary:
                 raise ExtractionFailed(

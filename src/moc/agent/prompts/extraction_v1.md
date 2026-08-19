@@ -18,19 +18,22 @@ customer message:
 slots already held from earlier turns:
 {held_slots}
 
-INTENTS
+INTENTS — values for the `intent` key, and nowhere else
 
-Return exactly one of these, or null if none fits:
+Return exactly one of these as `intent`, or null if none fits:
 
 {intents}
+
+An intent is never a slot. These names go in the `intent` field only; putting
+one inside `slots` is a malformed extraction and fails the turn.
 
 Null is a real answer. A message that fits none of them must return null, and
 the assistant will ask. Choosing the nearest intent is worse than choosing
 none: it routes the customer down a flow built for a different question.
 
-SLOTS
+SLOTS — the only keys allowed inside `slots`
 
-Return only these keys, and only with these values:
+No other key may appear, including any intent name from the list above:
 
 {slots}
 

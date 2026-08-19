@@ -51,6 +51,8 @@ nodes:
   # Core path. edu-0001, edu-0002, edu-0004.
   fees:
     intents: [fees, tuition, credit_hour_fee]
+    describe: >
+      tuition and credit-hour cost for a named faculty. المصاريف، مصروفات الساعة.
     action: answer
     register: msa          # a fee is an official statement
     requires_slots: [faculty]
@@ -62,6 +64,8 @@ nodes:
   # edu-0004 turn 3. Inherits faculty from the fees node rather than asking again.
   instalments:
     intents: [instalments, payment_plan]
+    describe: >
+      paying tuition in stages. أقساط، تقسيط.
     action: answer
     register: msa
     requires_slots: [faculty]
@@ -73,15 +77,112 @@ nodes:
   # edu-0011. No slot needed; the regulation is the same for every faculty.
   transfer_rules:
     intents: [transfer_rules, faculty_transfer]
+    describe: >
+      moving between faculties and what happens to a discount. تحويل من كلية لكلية.
     action: answer
     register: msa
     requires_slots: []
     grounding: required
 
+  # edu-0002. Separate from `fees` because the application fee is one figure
+  # for the whole university — requiring a faculty made "رسوم التقديم كام؟"
+  # clarify against a chunk that answers it outright.
+  application_fee:
+    intents: [application_fee, admission_fee]
+    describe: >
+      the one-off fee paid when applying, not tuition. رسوم التقديم.
+    action: answer
+    register: msa
+    requires_slots: []
+    grounding: required
+
+  # edu-0003, edu-0005, edu-0013, edu-0015. The fixture's discount page is the
+  # most-asked topic in the suite and had no node, so every one of these fell
+  # to the fallback and clarified against a corpus that could answer them.
+  #
+  # MSA: a discount percentage is an official statement, same reasoning as the
+  # fees node. edu-0013 pins masri, and it is the one adversarial case here —
+  # register is node policy (§8.2) rather than mirrored, so one topic gets one
+  # register and the judge grades the mismatch rather than the engine
+  # inventing a second discount node to satisfy it.
+  discounts:
+    intents: [discounts, scholarships, financial_aid]
+    describe: >
+      any reduction on tuition — discount, scholarship, grant. خصم، منحة، منح. Franco: khasm, khsm, manh, men7a.
+    action: answer
+    register: msa
+    requires_slots: []
+    grounding: required
+
+  # edu-0014. No slot: accreditation is a property of the university, not of a
+  # faculty or a branch.
+  accreditation:
+    intents: [accreditation, recognition]
+    describe: >
+      whether the university or a degree is recognised. معتمدة، اعتماد.
+    action: answer
+    register: msa
+    requires_slots: []
+    grounding: required
+
+  # edu-0006. Masri: whether there is student housing is conversation, not
+  # regulation.
+  housing:
+    intents: [housing, accommodation, dorms]
+    describe: >
+      student accommodation, dorms, whether housing exists at a branch. السكن الجامعي. Franco: sakan.
+    action: answer
+    register: masri
+    requires_slots: []
+    grounding: required
+
+  # edu-0010. How to apply is a procedure the KB states; the branch does not
+  # change it.
+  application_methods:
+    intents: [application_methods, how_to_apply]
+    describe: >
+      how to apply and through which channel. طرق التقديم، إزاي أقدم.
+    action: answer
+    register: masri
+    requires_slots: []
+    grounding: required
+
+  # edu-0004 and edu-0007, and the reason this node has three required slots.
+  #
+  # The thresholds chunk holds four numbers per faculty — two branches by two
+  # certificate types — so answering with one of them before all three are
+  # known is a coin flip presented as a fact. edu-0004 names only the faculty
+  # and must clarify; edu-0007 accumulates branch, then certificate and
+  # faculty, and answers on the third turn.
+  admission_thresholds:
+    intents: [admission_thresholds, minimum_grade, acceptance_score]
+    describe: >
+      the minimum grade required for a faculty. الحد الأدنى للقبول، مجموع.
+    action: answer
+    register: msa
+    requires_slots: [branch, certificate, faculty]
+    grounding: required
+    clarify:
+      register: masri
+      ask_for_slot: branch
+
+  # edu-0017: "which faculty gets me a job fastest?". Refuse rather than hand
+  # off — a colleague cannot answer it either, and the KB states no
+  # employment outcomes, so every number would be invented. Refusing names
+  # what is knowable instead.
+  career_advice:
+    intents: [career_advice, job_prospects, best_faculty]
+    describe: >
+      which faculty leads to a job, employment prospects, what to study. Asking us to advise, not to state a fact.
+    action: refuse
+    register: masri
+
   # edu-0008. Sensitive and consequential: a human answers, even though the KB
   # has a partial accessibility page.
   accessibility:
     intents: [accessibility, disability_support]
+    describe: >
+      disability support and accommodations. إعاقة، احتياجات خاصة.
     action: handoff
     register: msa
 

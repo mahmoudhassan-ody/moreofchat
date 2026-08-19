@@ -156,8 +156,16 @@ def test_only_intents_the_engine_can_route_are_offered():
         for intent in node.get("intents", [])
     }
     assert routable
-    for intent in routable:
-        assert intent in prompt
+    # One name per node is offered, not every alias — see
+    # `test_exactly_one_intent_name_is_offered_per_node`. Every offered name
+    # must be routable; not every routable name is offered.
+    offered = {
+        line[2:].split(" — ")[0].strip()
+        for line in prompt.splitlines()
+        if line.startswith("- ") and "—" in line
+    }
+    assert offered <= routable
+    assert len(offered) >= 8, "a node with intents is missing from the menu"
     assert "inventory_lookup" not in prompt, "a vertical is not offered another's intents"
 
 
@@ -329,3 +337,29 @@ def test_the_fake_router_matches_the_real_signature():
         f"the double and the router disagree: only-real={set(real) - set(fake)}, "
         f"only-fake={set(fake) - set(real)}"
     )
+
+
+def test_exactly_one_intent_name_is_offered_per_node():
+    """A node's aliases stay routable and are not offered as choices.
+
+    Listing them made the model return the whole comma-joined string —
+    `"discounts, scholarships, financial_aid"` — as the intent, and every such
+    turn failed as unroutable. The list must read as a menu of values, not as
+    a description of a group.
+    """
+    prompt = render_prompt(script=EDUCATION, message="x", held_slots={})
+    offered = [
+        line[2:].split(" — ")[0].strip()
+        for line in prompt.splitlines()
+        if line.startswith("- ") and "—" in line
+    ]
+    assert offered, "no intents rendered"
+    for name in offered:
+        assert "," not in name, f"{name!r} is a list, not a value"
+
+    routable = {
+        intent
+        for node in load(EDUCATION)["nodes"].values()
+        for intent in node.get("intents", [])
+    }
+    assert set(offered) <= routable

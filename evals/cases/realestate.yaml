@@ -41,7 +41,7 @@
         - "any unit whose availability is sold or reserved"
         - "any price not present in the catalogue"
         - "a total count of matches unless it is the actual count"
-      expected_slots: {city: new_cairo, property_type: apartment, bedrooms: 2}
+      expected_slots: {city: "New Cairo", property_type: apartment, bedrooms: 2}
   gold_chunks: []
   notes: >
     Verbatim from a real conversation. Three slots in one message, and
@@ -418,7 +418,7 @@
       forbidden_claims:
         - "STEI8HT-066-03, TAAWOUN-078-03, CREEK-TO-051-02 or HDP-RESI-096-02 — all sold"
         - "any reserved unit presented without its status"
-      expected_slots: {city: new_cairo, bedrooms: 3, budget_max: 17000000}
+      expected_slots: {city: "New Cairo", bedrooms: 3, budget_max: 17000000}
   gold_chunks: []
   notes: >
     A filter case, not a lookup of one unit. Four sold 3BR New Cairo units
@@ -557,7 +557,7 @@
           args_contain: {city: "New Cairo", property_type: apartment, budget_max: 6000000}
       forbidden_claims:
         - "units above the stated budget presented as matches"
-      expected_slots: {city: new_cairo, property_type: apartment, budget_max: 6000000}
+      expected_slots: {city: "New Cairo", property_type: apartment, budget_max: 6000000}
   gold_chunks: []
   notes: >
     Four normalizer demands at once: 3→ع, sha22a→شقة, tagamo3 el 5ames→
@@ -584,7 +584,7 @@
           args_contain: {city: "North Coast", property_type: chalet, budget_max: 15000000}
       forbidden_claims:
         - "units above 15 million presented as matches"
-      expected_slots: {city: north_coast, property_type: chalet, budget_max: 15000000}
+      expected_slots: {city: "North Coast", property_type: chalet, budget_max: 15000000}
   gold_chunks: []
   notes: >
     الشمالى with alef maqsura instead of ya, بحد اقصى without hamza, and
@@ -626,7 +626,7 @@
       expected_slots:
         listing_kind: sale
         budget_max: 10000000
-        city: [sheikh_zayed, october]
+        city: ["Sheikh Zayed", "October"]
   gold_chunks: []
   notes: >
     Turn 3 asserts the budget survived two turns AND that two cities are held

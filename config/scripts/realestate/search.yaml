@@ -69,6 +69,8 @@ nodes:
   # re-0023 is the positive case whose absence hid the error.
   inventory_lookup:
     intents: [inventory_lookup, search_units, availability]
+    describe: >
+      what units are available — by compound, city, type, bedrooms or budget. Browsing counts: "what have you got in X?". عايز شقة، في فيلا، عندكم إيه.
     action: answer
     register: masri          # showing someone what is available is conversation
     requires_slots: []
@@ -81,6 +83,8 @@ nodes:
   # statement, and the figures come from the calculator rather than the model.
   payment_plan:
     intents: [payment_plan, instalments, calculator]
+    describe: >
+      instalments, down payment, or whether a specific unit can be paid over time. قسط، تقسيط، مقدم.
     action: answer
     register: msa
     # No required slot, because a customer does not say a unit id. re-0005 is
@@ -100,6 +104,8 @@ nodes:
   # answerable.
   negotiation:
     intents: [negotiation, discount_request, best_price, cash_discount]
+    describe: >
+      asking for a discount, the best price, or a cash reduction. أقل سعر، خصم، كاش.
     action: handoff
     register: masri
 
@@ -109,12 +115,16 @@ nodes:
   # here will.
   investment_projection:
     intents: [investment_projection, appreciation, resale_value, roi]
+    describe: >
+      future value, appreciation, or return on investment. هتزيد قيمتها، استثمار.
     action: refuse
     register: masri
 
   # re-0016's shape. Legal and contractual questions are a human's.
   contracts:
     intents: [contract_terms, legal, ownership_transfer]
+    describe: >
+      contract terms, ownership transfer, or legal questions. عقد، تمليك.
     action: handoff
     register: msa
 

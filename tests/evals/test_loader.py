@@ -175,7 +175,10 @@ def test_multi_turn_case_keeps_turn_order():
 def test_slot_value_may_be_a_list():
     """re-0018 holds two cities at once; a scalar-only type would silently coerce."""
     case = by_id(REALESTATE, "re-0018")
-    assert case.turns[2].expected_slots["city"] == ["sheikh_zayed", "october"]
+    # Catalogue spelling since 2026-08-19 — see
+    # `test_location_slots_use_the_catalogue_spelling` for why the files
+    # settled on one form. The shape under test is the list, not the casing.
+    assert case.turns[2].expected_slots["city"] == ["Sheikh Zayed", "October"]
 
 
 def test_rejects_duplicate_ids(tmp_path):
@@ -315,3 +318,36 @@ def test_synthetic_share_under_30_percent():
     cases = load_cases(EDUCATION) + load_cases(REALESTATE)
     synthetic = sum(1 for c in cases if c.source is Source.synthetic)
     assert synthetic / len(cases) <= 0.30
+
+
+def test_location_slots_use_the_catalogue_spelling():
+    """One form across every case, and it is the one everything else uses.
+
+    The files carried both `new_cairo` and `"New Cairo"` for the same slot,
+    while `args_contain` always used the second. No extractor can satisfy
+    both, so `slot_retention_accuracy` had a ceiling below 100% that no
+    prompt work could lift — and the cause looked like a model failure.
+
+    Title case is the form chosen because it is what the extractor's
+    vocabulary emits (built from `locations.yaml`'s canonical values), what
+    `inventory_units.city` and `.compound` hold, and what the tool-call
+    assertions already pinned. The other two would each have needed a
+    translation step somewhere, and a translation step is where the drift
+    comes back.
+    """
+    from moc.agent.extraction import slot_vocabulary
+
+    vocabulary = slot_vocabulary("scripts/realestate/search")
+    cases = load_cases(REALESTATE)
+    seen = 0
+    for case in cases:
+        for turn in case.turns:
+            for slot in ("city", "compound"):
+                value = (turn.expected_slots or {}).get(slot)
+                for one in value if isinstance(value, list) else [value] if value else []:
+                    seen += 1
+                    assert one in vocabulary[slot], (
+                        f"{case.id} pins {slot}={one!r}, which the extractor cannot "
+                        f"emit and the connector cannot filter on"
+                    )
+    assert seen >= 8, "no location slots checked — this assertion would pass vacuously"
