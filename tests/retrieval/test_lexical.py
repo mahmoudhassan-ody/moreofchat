@@ -376,6 +376,27 @@ def test_stripping_preserves_the_original_spelling_of_what_survives():
     assert strip_stop_words("عايز منحة في القنطرة", TEST_CONFIG) == "منحة القنطرة"
 
 
+def test_a_stop_word_is_stripped_with_punctuation_attached():
+    """Customers type `كام؟`, not `كام ؟`.
+
+    Whitespace splitting alone leaves the question mark glued to the word, so
+    the token never equals the config entry and the filler survives — which is
+    the same empty-result failure the strip exists to prevent, reintroduced by
+    a space that is not there.
+    """
+    assert strip_stop_words("رسوم التقديم كام؟", TEST_CONFIG) == "رسوم التقديم"
+    assert strip_stop_words("الخصم إيه، بالظبط؟", TEST_CONFIG) == "الخصم"
+
+
+def test_punctuation_is_not_stripped_from_words_that_survive():
+    """Only the comparison ignores punctuation. Meilisearch tokenizes it
+    perfectly well, and rewriting the query is how a synonym key stops
+    matching."""
+    assert strip_stop_words("عايز السكن الجامعي في القنطره؟", TEST_CONFIG) == (
+        "السكن الجامعي القنطره؟"
+    )
+
+
 def test_a_query_of_only_stop_words_is_searched_unchanged():
     """Stripping to nothing would turn a weak query into a match-everything
     one. Better to search the words the customer sent and rank badly."""
@@ -394,3 +415,4 @@ async def test_a_leading_masri_filler_does_not_empty_the_result(corpus):
     with_filler = await chunk_ids(repository, tenant, "عايز أعرف الحد الأدنى للقبول")
     assert bare, "the question alone must retrieve something for this test to mean anything"
     assert with_filler == bare
+

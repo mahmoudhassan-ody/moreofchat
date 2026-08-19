@@ -21,6 +21,7 @@ meilisearch:
   tenant_field: tenant_id
   primary_key: point_id
 
+
   # Both forms are searchable (§7.1). The original carries the tenant's own
   # spelling, the normalized one carries the spelling customers type — a query
   # for القنطره has to reach a chunk written القنطرة.

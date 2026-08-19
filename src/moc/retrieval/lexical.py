@@ -32,6 +32,10 @@ from moc.config_store import load
 
 _LEXICAL = "retrieval/lexical"
 
+#: Stripped before a token is compared against the stop list, never from the
+#: query itself. Both scripts' marks, because a Masri message mixes them.
+_PUNCTUATION = "؟،؛«»…\"'()[]{}!?.,:;-—–"
+
 
 @dataclass(frozen=True)
 class LexicalDocument:
@@ -52,9 +56,20 @@ class LexicalHit:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
 
+def _comparable(word: str) -> str:
+    """The form a stop word is recognised by: normalized, punctuation off.
+
+    Customers type `كام؟` and `عامة،`, not `كام ؟`. Splitting on whitespace
+    alone leaves the mark glued to the word, the token never equals the config
+    entry, and the filler survives — the same empty result this module exists
+    to prevent, reintroduced by a space that is not there.
+    """
+    return normalize(word.strip(_PUNCTUATION))
+
+
 @lru_cache(maxsize=8)
 def _stop_word_forms(stop_words: tuple[str, ...]) -> frozenset[str]:
-    return frozenset(normalize(word) for word in stop_words)
+    return frozenset(_comparable(word) for word in stop_words)
 
 
 def strip_stop_words(query: str, config: dict[str, Any] | None = None) -> str:
@@ -84,7 +99,7 @@ def strip_stop_words(query: str, config: dict[str, Any] | None = None) -> str:
     """
     settings = config or load(_LEXICAL)
     stop = _stop_word_forms(tuple(settings["stop_words"]))
-    kept = [word for word in query.split() if normalize(word) not in stop]
+    kept = [word for word in query.split() if _comparable(word) not in stop]
     # Stripping to nothing turns a weak query into a match-everything one.
     # Searching the words the customer actually sent and ranking badly is the
     # better failure.
@@ -127,7 +142,9 @@ class _TenantScope:
     async def search(self, *, query: str, limit: int) -> list[LexicalHit]:
         index = self.client.index(self.index)
         response = await index.search(
-            strip_stop_words(query, self.config), limit=limit, filter=self._filter()
+            strip_stop_words(query, self.config),
+            limit=limit,
+            filter=self._filter(),
         )
         return [
             LexicalHit(
