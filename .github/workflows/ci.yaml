@@ -155,6 +155,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
+      # Infra, because `-m eval` is not "no database". Task 17 marked the
+      # ingestion checks `eval` — the sinai fixture going through the real
+      # path, and the guard that no kb_chunk holds a broker unit id — and
+      # those need Postgres. Without it they error at fixture setup on a
+      # missing MOC_PG_PASSWORD, which is what turned this job red and kept it
+      # red for eight runs.
+      - uses: ./.github/actions/infra
       - name: Deterministic eval smoke subset
         # -m eval selects the corpus-backed checks. pytest exits 5 if the
         # marker selects nothing, so this job cannot pass by running zero tests.

@@ -33,6 +33,10 @@ runs:
           echo "MOC_QDRANT_KEY=$(openssl rand -hex 16)"
           echo "MOC_MEILI_KEY=$(openssl rand -hex 16)"
           echo "MOC_APP_PASSWORD=$(openssl rand -hex 16)"
+          # The pre-tenant bootstrap role (migration 0007). Distinct from
+          # MOC_APP_PASSWORD on purpose: the whole value of moc_lookup is what
+          # it cannot reach, and a shared login would erase the distinction.
+          echo "MOC_LOOKUP_PASSWORD=$(openssl rand -hex 16)"
           # Left unset on purpose — see the note above.
           echo "MOC_PUBLIC_IP="
         } > .env

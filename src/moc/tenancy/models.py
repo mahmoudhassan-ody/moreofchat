@@ -16,7 +16,9 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -68,6 +70,7 @@ class Conversation(Base):
         Index("ix_conversations_tenant_id", "tenant_id"),
         # Mirrors 0005. Partial, because a conversation opened from the agent
         # inbox has no inbound sender and several of those must coexist.
+        Index("ix_conversations_contact_id", "contact_id"),
         Index(
             "uq_conversations_thread",
             "tenant_id",
@@ -85,6 +88,10 @@ class Conversation(Base):
     sender_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     channel_account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
+    )
+    #: The person, across channels (§9, migration 0008).
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id"), nullable=True
     )
     #: When the customer last wrote. The 24-hour service window (§6.2) is
     #: measured from here, so the outbound worker can tell whether a freeform
@@ -212,3 +219,117 @@ class KbOutbox(Base):
     processed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class ChannelAccount(Base):
+    """Mirrors migration 0007.
+
+    Not to be confused with `moc.channels.base.ChannelAccount`, which is the
+    resolved value object the bootstrap lookup returns. This is the table, and
+    it holds one column that object deliberately never carries: the signing
+    secret. See migration 0007 for why the resolving path cannot reach it.
+    """
+
+    __tablename__ = "channel_accounts"
+    __table_args__ = (
+        Index("ix_channel_accounts_tenant_id", "tenant_id"),
+        # Global, not per tenant: an inbound message carries an address and
+        # nothing else, so two tenants claiming one address would make
+        # resolution a guess.
+        Index("uq_channel_accounts_address", "channel", "address", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    channel: Mapped[str] = mapped_column(Text)
+    address: Mapped[str] = mapped_column(Text)
+    #: Names the signing secret. Exposed to `moc_lookup` through the view.
+    secret_ref: Mapped[str] = mapped_column(Text)
+    #: The secret itself. Never in the view, never in the bootstrap path.
+    signing_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'active'"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Contact(Base):
+    """Mirrors migration 0008. The person behind an address (§9).
+
+    One row per `contact_ref`, which is the channel address a customer wrote
+    from. Two channels start as two contacts; joining them is an operator
+    action, because guessing that a phone number and an Instagram handle are
+    one person would show two strangers each other's messages.
+    """
+
+    __tablename__ = "contacts"
+    __table_args__ = (Index("uq_contacts_ref", "tenant_id", "contact_ref", unique=True),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    contact_ref: Mapped[str] = mapped_column(Text)
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Message(Base):
+    """Mirrors migration 0008. The thread an agent reads (§9)."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint(
+            "author IN ('customer', 'bot', 'agent')", name="ck_messages_author"
+        ),
+        Index("ix_messages_conversation_seq", "tenant_id", "conversation_id", "seq"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    channel: Mapped[str] = mapped_column(Text)
+    #: customer | bot | agent. Closed by the CHECK above, because
+    #: `unprocessed_inbound` decides what the bot is asked to answer and a
+    #: fourth value would change that silently.
+    author: Mapped[str] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: clock_timestamp(), not now(): `now()` is transaction start, so a turn's
+    #: two messages would share a timestamp and the thread would have no order.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
+    )
+    #: Total order, independent of clock resolution.
+    seq: Mapped[int] = mapped_column(BigInteger, autoincrement=True)
+
+
+class Handoff(Base):
+    """Mirrors migration 0008. A conversation a human has taken (§9)."""
+
+    __tablename__ = "handoffs"
+    __table_args__ = (
+        # One live handoff per conversation, so two agents are never both told
+        # they own it. Partial, because a returned one must not block the next.
+        Index(
+            "uq_handoffs_open",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("status <> 'returned'"),
+        ),
+        Index("ix_handoffs_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'open'"))
+    #: The script cursor as it stood when the human took over. Written back
+    #: verbatim on return, so the customer is not asked again for slots they
+    #: already gave.
+    resume_state: Mapped[dict] = mapped_column(JSONB)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
