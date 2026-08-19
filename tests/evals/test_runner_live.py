@@ -237,6 +237,43 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             else "unmeasured"
         )
         print(f"  retrieval_recall_at_5 {recall}")
+        # §2.1's two hard gates, both at zero in config/evals/gates.yaml.
+        # Printed with their denominators: "0 of 0" is an unmeasured gate, not
+        # a clean one, and the two read identically without the count.
+        #
+        # These measure the reply that was SENT. A composition the runtime
+        # gate rejected never reached anyone, so it cannot count against the
+        # gate — but how often the model tried is a real signal about
+        # composition, so it is reported below rather than lost.
+        for metric in ("hallucinated_figure_rate", "hedged_figure_rate"):
+            fed = [
+                check
+                for outcome in outcomes
+                for turn in outcome.turns
+                for check in turn.checks
+                if check.metric == metric and not check.skipped
+            ]
+            failed = [check for check in fed if not check.passed]
+            rate = f"{len(failed) / len(fed):.1%}" if fed else "unmeasured"
+            print(
+                f"  {metric:21} {rate}"
+                f"  ({len(failed)}/{len(fed)} turns that stated a figure)"
+            )
+        attempted = [
+            turn.grounding
+            for outcome in outcomes
+            for turn in outcome.turns
+            if turn.grounding is not None
+        ]
+        rejected = [g for g in attempted if not g.passed]
+        print(f"{'-' * 62}")
+        print(
+            f"  tracked: the runtime gate rejected {len(rejected)} of {len(attempted)} "
+            "compositions"
+        )
+        print("  (§19.3 discards a reply whose figure has no source and sends a")
+        print("  scripted one instead, so these never reached a customer and do")
+        print("  not count against the gate above — but they are what it is for.)")
         print(f"{'-' * 62}")
         for outcome in outcomes:
             mark = "err " if outcome.errored else ("PASS" if outcome.passed else "fail")

@@ -117,6 +117,11 @@ class TurnResult:
     degraded: bool = False
     redacted: tuple[str, ...] = ()
     passages: tuple[str, ...] = ()
+    #: §3.1's figures the script itself may state. Carried alongside
+    #: `passages` because together they are the full source set the delivered
+    #: reply is graded against — without them a scripted fee reads as an
+    #: orphan.
+    script_constants: tuple[str, ...] = ()
     grounding: GroundingResult | None = None
     completions: list[Completion] = field(default_factory=list)
     #: Every provider was down or breaker-open. Distinct from `degraded`,
@@ -244,6 +249,7 @@ class Orchestrator:
             degraded=completion.degraded,
             redacted=redaction.found,
             passages=tuple(retrieval.passages),
+            script_constants=tuple(str(c) for c in retrieval.script_constants),
             grounding=grounding,
             completions=[completion],
         )
@@ -328,6 +334,7 @@ class Orchestrator:
             degraded=degraded,
             redacted=redaction.found,
             passages=tuple(retrieval.passages),
+            script_constants=tuple(str(c) for c in retrieval.script_constants),
             grounding=grounding,
             completions=completions or [],
             provider_unavailable=provider_unavailable,

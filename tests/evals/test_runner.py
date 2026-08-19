@@ -19,10 +19,12 @@ signature, and behaviourally.
 import ast
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest_asyncio
 from sqlalchemy import text as sql
 
+from moc.agent.guards import check_numeric_grounding
 from moc.agent.orchestrator import Orchestrator, Retrieval
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import ConversationState, TurnInput
@@ -31,7 +33,7 @@ from moc.evals import runner as runner_module
 from moc.evals.judge import JudgeVerdict
 from moc.evals.load import load_cases
 from moc.evals.runner import CaseRunner, recall_at_k
-from moc.evals.schema import EvalCase
+from moc.evals.schema import Action, EvalCase, Turn
 from moc.llm.base import AllProvidersUnavailable
 from moc.llm.fake import FakeProvider
 from moc.llm.router import Router
@@ -455,3 +457,114 @@ def test_every_shipped_case_loads_for_the_runner():
 async def session_tenant(app_engine, tenant):
     async with tenant_session(app_engine, tenant.id) as s:
         yield s, tenant
+
+
+def _runner() -> CaseRunner:
+    """A runner built only far enough to call `_stage_one`, which is pure."""
+    return CaseRunner(orchestrator=None, retriever=None, script=SCRIPT)
+
+
+def _figure_checks(*, reply: str, passages: list[str], constants=()) -> dict:
+    checks = CaseRunner._stage_one(
+        _runner(),
+        Turn(user="كام؟", expected_action=Action.answer),
+        SimpleNamespace(
+            reply=reply,
+            action=Action.answer,
+            state=ConversationState(script_id="s", script_version=1),
+            passages=tuple(passages),
+            script_constants=tuple(constants),
+        ),
+    )
+    return {c.metric: c for c in checks if c.metric.endswith("figure_rate")}
+
+
+# ─────────────────── the two figure gates (§2.1) ───────────────────
+#
+# Both are hard gates at zero in `config/evals/gates.yaml`, and neither was
+# fed by a run: `_stage_one` computed action, language and slots, while its
+# docstring claimed it covered them. A gate nothing measures is a gate that
+# cannot fail, and the docstring made that invisible.
+
+
+def test_stage_one_feeds_both_figure_gates():
+    """Structural, because the omission was invisible for a reason.
+
+    Nothing failed while these were missing — the suite ran, the report
+    rendered, and the two metrics simply never appeared in it. So the
+    assertion is on the metric names the checks carry, not on any behaviour a
+    passing case would exercise.
+    """
+    checks = _figure_checks(reply="الرسوم 1400 جنيه", passages=["الرسوم 1400 جنيه"])
+    metrics = set(checks)
+    assert "hallucinated_figure_rate" in metrics
+    assert "hedged_figure_rate" in metrics
+
+
+def test_an_orphan_figure_fails_the_hallucination_gate_only():
+    """The two gates stay separate. An orphan means retrieval or the script
+    failed to supply the figure; a hedge means generation editorialized over a
+    figure it had, and one number covering both says a regression happened
+    without saying where."""
+    checks = _figure_checks(reply="الرسوم 9999 جنيه", passages=["الرسوم 1400 جنيه"])
+    assert checks["hallucinated_figure_rate"].passed is False
+    assert checks["hedged_figure_rate"].passed is True
+
+
+def test_a_hedged_but_grounded_figure_fails_the_hedging_gate_only():
+    checks = _figure_checks(reply="الرسوم حوالي 1400 جنيه", passages=["الرسوم 1400 جنيه"])
+    assert checks["hallucinated_figure_rate"].passed is True
+    assert checks["hedged_figure_rate"].passed is False
+
+
+def test_a_reply_with_no_figures_is_unmeasured_not_perfect():
+    """§5.1's rule about skipped checks, and it matters most here.
+
+    Most education replies state no figure at all. Counting those as passes
+    would report `hallucinated_figure_rate` as a flawless zero on a suite that
+    never put a number in front of the gate — which is the shape of a metric
+    that looks safest exactly when it is testing nothing.
+    """
+    checks = _figure_checks(reply="ممكن توضّح أكتر؟", passages=["الرسوم 1400 جنيه"])
+    assert all(check.skipped for check in checks.values())
+
+
+def test_a_rejected_composition_does_not_count_against_the_gate():
+    """The metric is about what reached the customer, not what was attempted.
+
+    §19.3: when the runtime gate finds an orphan figure it discards the
+    composed reply whole and sends a scripted one, so the customer never saw
+    the number. Scoring the discarded text would fail the gate on exactly the
+    turns where the protection worked — and the harder that gate bit, the
+    worse the metric would read.
+
+    The attempted rate is a real signal about composition and is reported
+    separately by the live suite; it is not this gate.
+    """
+    rejected = "الرسوم 9999 جنيه"
+    scripted = "معلش، مش لاقي معلومة مؤكدة عن ده."
+    checks = CaseRunner._stage_one(
+        _runner(),
+        Turn(user="كام؟", expected_action=Action.handoff),
+        SimpleNamespace(
+            reply=scripted,
+            action=Action.handoff,
+            state=ConversationState(script_id="s", script_version=1),
+            passages=("الرسوم 1400 جنيه",),
+            script_constants=(),
+            # What the runtime gate rejected. Recorded on the turn, and
+            # deliberately not what the delivered-figure gate reads.
+            grounding=check_numeric_grounding(rejected, ["الرسوم 1400 جنيه"], []),
+        ),
+    )
+    figures = {c.metric: c for c in checks if c.metric.endswith("figure_rate")}
+    assert all(check.skipped for check in figures.values()), (
+        "the scripted reply states no figure, so the gate has nothing to judge"
+    )
+
+
+def test_a_script_constant_is_a_source():
+    """§3.1 lets the script state figures the corpus does not carry. A gate
+    that did not know that would fail every scripted fee."""
+    checks = _figure_checks(reply="الرسوم 1400 جنيه", passages=[], constants=("1400",))
+    assert checks["hallucinated_figure_rate"].passed is True

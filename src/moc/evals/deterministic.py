@@ -93,6 +93,65 @@ def check_action(expected: Action, actual: Action) -> CheckResult:
     )
 
 
+def check_figures(
+    reply: str,
+    retrieved_passages: Sequence[str],
+    script_constants: Sequence[Any] = (),
+) -> tuple[CheckResult, CheckResult]:
+    """§2.1's two figure gates, measured on the reply that was **sent**.
+
+    The delivered reply, not the composed one, and the distinction decides
+    what the metric means. §19.3 has the runtime gate discard a composition
+    containing an orphan figure whole and send a scripted reply instead, so
+    the customer never saw the number. Scoring the discarded text would fail
+    the gate on exactly the turns where the protection worked — the harder the
+    gate bit, the worse the metric would read. `hallucinated_figure_rate` is
+    "a fee the knowledge base never stated, reaching a student on WhatsApp",
+    and reaching them is the part being counted.
+
+    Measuring the sent text also audits the scripted replies themselves, which
+    the runtime gate never inspects because nothing composed them. A figure
+    typed into a script node is as unsourced as one a model invented.
+
+    Delegates to `check_numeric_grounding` rather than reimplementing: two
+    implementations would drift, and the drift presents as a green eval suite
+    while production emits an orphan.
+
+    Two results from one extraction, because the gates are separate and their
+    fixes are different. An orphan means retrieval or the script failed to
+    supply the figure; a hedge means generation editorialized over a figure it
+    had. One number covering both says a regression happened and nothing about
+    where.
+
+    Both skip when the reply states no figure. Most education replies contain
+    no number at all, and counting those as passes would report a flawless
+    zero on a suite that never put a figure in front of the gate — a metric
+    that looks safest exactly when it is measuring nothing.
+    """
+    grounding = check_numeric_grounding(reply, retrieved_passages, script_constants)
+    if not grounding.reply_numbers:
+        detail = "reply states no figure"
+        return (
+            CheckResult("hallucinated_figure", "hallucinated_figure_rate", True, detail, True),
+            CheckResult("hedged_figure", "hedged_figure_rate", True, detail, True),
+        )
+    orphans, hedged = grounding.orphan_numbers, grounding.hedged_numbers
+    return (
+        CheckResult(
+            name="hallucinated_figure",
+            metric="hallucinated_figure_rate",
+            passed=not orphans,
+            detail="" if not orphans else f"no source for {', '.join(map(str, orphans))}",
+        ),
+        CheckResult(
+            name="hedged_figure",
+            metric="hedged_figure_rate",
+            passed=not hedged,
+            detail="" if not hedged else f"hedged a grounded {', '.join(map(str, hedged))}",
+        ),
+    )
+
+
 def check_language(reply: str, expected_lang: str | None) -> CheckResult:
     """Reply script matches expected_lang (§5.1), by majority of letters."""
     if expected_lang is None:
@@ -357,6 +416,7 @@ __all__ = [
     "ToolCall",
     "check_action",
     "check_asof_disclosure",
+    "check_figures",
     "check_availability",
     "check_compound_grounding",
     "check_property_type",

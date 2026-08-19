@@ -38,7 +38,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import ConversationState
-from moc.evals.deterministic import CheckResult, check_action, check_language, check_slots
+from moc.evals.deterministic import (
+    CheckResult,
+    check_action,
+    check_figures,
+    check_language,
+    check_slots,
+)
 from moc.evals.judge import JudgeVerdict
 from moc.evals.report import CaseResult
 from moc.evals.run_metadata import RunMetadata, TaskBinding, capture
@@ -69,6 +75,11 @@ class TurnOutcome:
     action: str
     state: ConversationState
     retrieved_chunk_ids: tuple[str, ...] = ()
+    #: What the *runtime* gate saw, which is not what the figure checks
+    #: measure. §19.3 discards a composition holding an orphan figure and
+    #: sends a scripted reply, so this records an attempt the customer never
+    #: received — a signal about composition quality, not a gate.
+    grounding: Any = None
     checks: tuple[CheckResult, ...] = ()
     verdict: JudgeVerdict | None = None
 
@@ -210,6 +221,7 @@ class CaseRunner:
                     action=str(result.action),
                     state=state,
                     retrieved_chunk_ids=retrieved,
+                    grounding=getattr(result, "grounding", None),
                     checks=tuple(checks),
                     verdict=verdict,
                 )
@@ -224,11 +236,28 @@ class CaseRunner:
         )
 
     def _stage_one(self, turn: Turn, result: Any) -> list[CheckResult]:
-        """Deterministic checks. Free, fast, and they cover both hard gates."""
+        """Deterministic checks. Free, fast, non-flaky.
+
+        Covers §2.1's two figure gates — `hallucinated_figure_rate` and
+        `hedged_figure_rate`, both at zero in `config/evals/gates.yaml` —
+        measured on the reply that was **sent**. A composition the runtime
+        gate rejected never reached anyone, and scoring it would fail the
+        metric on the turns where the protection worked.
+
+        This docstring previously claimed that coverage while the list below
+        held only action, language and slots. Nothing failed: the suite ran,
+        the report rendered, and two hard gates simply never appeared in it.
+        A gate nothing measures is a gate that cannot fail.
+        """
         return [
             check_action(turn.expected_action, result.action),
             check_language(result.reply, turn.expected_lang),
             check_slots(turn.expected_slots, result.state.slots),
+            *check_figures(
+                result.reply,
+                getattr(result, "passages", ()),
+                getattr(result, "script_constants", ()),
+            ),
         ]
 
     async def _stage_two(
