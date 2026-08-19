@@ -173,7 +173,7 @@ async def test_ta_marbuta_and_hamza_folding_still_match(corpus):
     field carries both to the same form.
     """
     repository, tenant = corpus
-    assert HOUSING in await chunk_ids(repository, tenant, "السكن الجامعي موجود في القنطره؟")
+    assert HOUSING in await chunk_ids(repository, tenant, "السكن الجامعي في القنطره")
 
 
 async def test_the_arabic_spelling_in_the_corpus_also_matches(corpus):
@@ -416,3 +416,44 @@ async def test_a_leading_masri_filler_does_not_empty_the_result(corpus):
     assert bare, "the question alone must retrieve something for this test to mean anything"
     assert with_filler == bare
 
+
+# ─────────────────────── matching strategy (§7.4) ───────────────────────
+
+
+def test_matching_strategy_comes_from_config():
+    """§19. Which word a ranker discards is a retrieval-quality decision, and
+    it must be visible in config_hash rather than buried in a call site."""
+    assert CONFIG["meilisearch"]["matching_strategy"] == "frequency"
+
+
+async def test_the_discriminating_term_may_sit_at_the_end_of_the_query(corpus):
+    """Masri puts the question last. `last` drops from the end.
+
+    "ثانوية عامة، طب أسنان" — the customer answering which certificate and
+    which faculty — carries its selective terms at the end, and under the
+    end-first drop the gold chunk fell out of the lexical arm entirely.
+    """
+    repository, tenant = corpus
+    found = await chunk_ids(repository, tenant, "ثانوية عامة، طب أسنان")
+    assert "sinai_admission_thresholds_2026_ar" in found[:5]
+
+
+async def test_the_price_of_frequency_is_recorded_not_absorbed(corpus):
+    """`frequency` is chosen on the fused number, and it is not free.
+
+    "السكن الجامعي موجود في القنطره؟" is an ordinary customer question in
+    which every word matches at least one chunk, and under `frequency` the
+    lexical arm returns *nothing* for it — `last` returns the gold chunk at
+    rank 1. edu-0006 survives only because the dense arm holds it at rank 2.
+
+    Pinned as a test so the cost stays visible. Two futures make this fail and
+    both want attention: the engine changes its discarding order, or someone
+    reverts to `last` without re-reading why. It is not an assertion that the
+    behaviour is *correct* — it is one that we know about it.
+    """
+    repository, tenant = corpus
+    assert await chunk_ids(repository, tenant, "السكن الجامعي في القنطره") != []
+    assert await chunk_ids(repository, tenant, "السكن الجامعي موجود في القنطره؟") == [], (
+        "if this now returns hits, re-run the strategy comparison — the "
+        "reason `frequency` cost us a natural query may be gone"
+    )

@@ -21,6 +21,32 @@ meilisearch:
   tenant_field: tenant_id
   primary_key: point_id
 
+  # How Meilisearch discards words when no document carries all of them.
+  #
+  # `last` — the engine default — drops from the END of the query. Masri word
+  # order puts the scaffolding first and the selective term last, so the
+  # end-first drop keeps exactly the words that select nothing. "ثانوية عامة،
+  # طب أسنان" lost its gold chunk from the lexical arm entirely under `last`.
+  #
+  # `frequency` drops the most common word first, which is the discarding
+  # order the query actually wants in either language.
+  #
+  # Measured over the 10 gold-chunk education cases, both arms live:
+  #
+  #             fused@5   lexical@5   empty lexical
+  #   last        70.0%       70.0%          2 / 12
+  #   frequency   90.0%       60.0%          1 / 12
+  #   all         60.0%       30.0%          7 / 12
+  #
+  # `frequency` is chosen on the fused number, which is what
+  # `retrieval_recall_at_5` gates. The lexical dip is real and not free: it
+  # costs edu-0006 and edu-0011, which fusion only absorbs because the dense
+  # arm holds both at rank <= 2. So this trade is also a bet that the dense
+  # arm is up — during an embedding outage (§7.3) Meilisearch-only recall is
+  # *worse* under `frequency`, 60% against 70%. Recorded here because that is
+  # the run where someone will wonder why retrieval got worse than the
+  # degraded mode they measured.
+  matching_strategy: frequency
 
   # Both forms are searchable (§7.1). The original carries the tenant's own
   # spelling, the normalized one carries the spelling customers type — a query

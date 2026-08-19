@@ -36,6 +36,10 @@ _LEXICAL = "retrieval/lexical"
 #: query itself. Both scripts' marks, because a Masri message mixes them.
 _PUNCTUATION = "؟،؛«»…\"'()[]{}!?.,:;-—–"
 
+#: Stripped before a token is compared against the stop list, never from the
+#: query itself. Both scripts' marks, because a Masri message mixes them.
+_PUNCTUATION = "؟،؛«»…\"'()[]{}!?.,:;-—–"
+
 
 @dataclass(frozen=True)
 class LexicalDocument:
@@ -134,6 +138,9 @@ class _TenantScope:
     #: loaded config rather than being required, so a scope is still cheap to
     #: construct in a test.
     config: dict[str, Any] | None = None
+    #: §7.4. `last` drops query words from the end, which is the wrong end for
+    #: Masri. See the config comment for the measured comparison.
+    matching_strategy: str = "frequency"
 
     def _filter(self) -> str:
         """The one place a filter is built, and it always names the tenant."""
@@ -145,6 +152,7 @@ class _TenantScope:
             strip_stop_words(query, self.config),
             limit=limit,
             filter=self._filter(),
+            matching_strategy=self.matching_strategy,
         )
         return [
             LexicalHit(
@@ -249,6 +257,7 @@ class MeilisearchRepository:
             index=index_for(vertical, config=self._config),
             tenant_field=self._settings["tenant_field"],
             config=self._config,
+            matching_strategy=self._settings["matching_strategy"],
         )
 
     async def add(
