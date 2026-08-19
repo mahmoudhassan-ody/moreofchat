@@ -1,3 +1,4 @@
+# TEMPORARY: deliberate ruff E501 violation to prove the notify-on-red path actually fires; reverted in the very next commit.
 import subprocess
 
 
