@@ -297,6 +297,22 @@ class InboundMessage(BaseModel):
 
 **No failover for embeddings.** Vectors are only comparable within the same model and dimension count, so a "fallback embedding provider" would silently return vectors from a different space and retrieval quality would collapse without erroring. If the embedding endpoint is down, ingest queues and search degrades to Meilisearch-only — that is the correct behaviour, and the fusion layer must handle a missing dense arm gracefully.
 
+**Known consequence: the degraded path is now worse than it was, and worse than this section originally assumed.** Measured 2026-08-19 over the 10 gold-chunk education cases:
+
+| | fused recall@5 | Meilisearch-only recall@5 |
+|---|---|---|
+| `matching_strategy: last` | 70.0% | 70.0% |
+| `matching_strategy: frequency` | 90.0% | **60.0%** |
+
+`frequency` was chosen because it is what clears `retrieval_recall_at_5`'s 0.85 gate on the healthy path (§7.4). It buys that by discarding query words in an order that suits Masri, and it costs edu-0006 and edu-0011 their **entire** lexical arm — "السكن الجامعي موجود في القنطره؟", every word of which matches at least one chunk, returns nothing lexically. Both cases survive only because the dense arm holds them at rank ≤ 2.
+
+So the two arms are no longer independent in the way this section assumes. "Search degrades to Meilisearch-only" is still the correct behaviour, but the degradation is steeper than before the change and steeper than the fused number suggests: an embedding outage now costs roughly a third of lexical recall rather than leaving it intact. Two things follow:
+
+- Embedding availability is closer to a correctness dependency than the phrase "degrades gracefully" implies. It deserves monitoring on that basis.
+- The trade is revisitable. Querying both matching strategies and merging measured 80.0% fused / 80.0% lexical with no empty results — better on the degraded path, short of the gate on the healthy one. If the degraded path becomes the binding concern, that is the change to make.
+
+Recorded here rather than only in a test comment because it changes what an incident looks like, not just what a number reads.
+
 **Redact before embedding, not just before completion.** The embedding call sits *earlier* in the pipeline than the LLM call, and it receives the customer's raw message at query time. National IDs, payment details and student IDs must be stripped in `agent/guards.py` before either call.
 
 `text-embedding-3-large`, truncated via Matryoshka to **1024 dimensions**. The model supports dimension reduction with minimal quality loss, and 1024 cuts Qdrant storage roughly threefold versus 3072. Store `embedding_version` on every chunk so a future model change is a tracked backfill rather than a guess.
@@ -309,7 +325,15 @@ class InboundMessage(BaseModel):
 
 ### 7.5 Fusion
 
-Reciprocal rank fusion over Meilisearch top-20 and Qdrant top-20, then a cross-encoder rerank to top-5. Hard rule: if the top fused score is below the tenant's threshold, the turn does **not** reach answer composition — it routes to the script's fallback node or to handoff.
+Reciprocal rank fusion over Meilisearch top-20 and Qdrant top-20, then a cross-encoder rerank to top-5. Hard rule: a turn retrieval cannot support does **not** reach answer composition — it routes to the script's fallback node or to handoff.
+
+**The gate decides presence, not similarity.** It was specified as a score threshold. That was measured on 2026-08-19 against all 17 education cases and does not work — the top fused hit's cosine runs 0.218–0.610 for cases that must be answered and 0.280–0.779 for cases that must not. The populations overlap almost entirely, and the wrong way round: the most similar result in the suite (0.779) is a case requiring clarification, and the least similar (0.218) is edu-0015 retrieving exactly the right chunk. No cutoff exists, and the placeholder 0.55 would have refused six of the ten cases that must answer.
+
+The failure is structural rather than a tuning miss. Cosine answers "is this chunk similar to the query", and edu-0015 is the case built to show that is the wrong question: منحة and خصم share no letters, so the synonym map does the work and the dense arm cannot see it. Meanwhile answer-versus-clarify is decided by whether the required slots are known, which is the script engine's job.
+
+The gate therefore closes when nothing was retrieved, or nothing retrieved carries text to ground on. `min_score` and `confidence_threshold` remain tenant-tunable config at the floor, so a corpus that does separate cleanly can raise them. The invariant that a figure must trace to a retrieved chunk is enforced separately by `check_numeric_grounding` (§3.1), which is evidence-based and unaffected.
+
+**Confidence comes from a calibrated arm or is absent.** Meilisearch ranks without scoring, so the lexical arm reports no relevance rather than a rank-derived stand-in. The earlier `1.0 / rank` made every top-ranked lexical hit read as certainty — 7 of 17 cases scored exactly 1.000, three of them cases that must not be answered. An absent score is distinct from a zero one and must not be thresholded: during an embedding outage there is no calibrated number at all, and treating that as low confidence would turn a degraded turn into a refusal.
 
 ---
 
