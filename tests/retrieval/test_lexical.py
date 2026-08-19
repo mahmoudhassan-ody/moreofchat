@@ -29,6 +29,7 @@ from moc.retrieval.lexical import (
     MeilisearchAdmin,
     MeilisearchRepository,
     index_for,
+    strip_stop_words,
 )
 
 CONFIG = load("retrieval/lexical")
@@ -302,3 +303,94 @@ async def test_the_lexical_arm_feeds_fusion_and_the_gate_opens(corpus, capsys):
     assert result.gate_closed is False
     assert result.passages, "the gate closed on the milestone query"
     assert search_ms + result.elapsed_ms < FUSION["latency"]["ceiling_ms"]
+
+
+# ─────────────────────── query-side stop words (§7.4) ───────────────────────
+#
+# Meilisearch normalizes the `stopWords` setting on write — ي and ى become ی
+# (U+06CC), ك becomes ک — but matches tokens against the stored list without
+# applying that same normalization. A stop word containing any of those
+# letters is therefore stored in a form nothing will ever equal, and is
+# silently inert. Measured on 1.53.1 with a three-document index: `عاوز` as a
+# stop word makes `عاوز` unsearchable, `عايز` does not.
+#
+# That is not cosmetic. The default matching strategy drops query words from
+# the *end*, and Masri puts the filler at the *start*, so one inert filler
+# ANDs the whole query to nothing. Six of the sixteen Arabic stop words in
+# config are affected, including `في` — which is exactly the word the franco
+# `fe`/`fi`/`f` entries were added to mirror.
+
+
+async def test_meilisearch_ignores_a_stop_word_containing_yeh(client):
+    """The engine defect the query-side strip exists to work around.
+
+    Asserted rather than described, so that if a future Meilisearch fixes it
+    this test fails and tells us the workaround can go — rather than the
+    workaround quietly outliving its reason.
+    """
+    index_name = "test_lex_yeh"
+    await client.delete_index_if_exists(index_name)
+    await client.create_index(index_name, primary_key="point_id")
+    index = client.index(index_name)
+    await client.wait_for_task(
+        (await index.update_searchable_attributes(["content"])).task_uid
+    )
+    # `عايز` carries a yeh; `عاوز` is the same word one letter apart and does not.
+    await client.wait_for_task((await index.update_stop_words(["عايز", "عاوز"])).task_uid)
+    await client.wait_for_task(
+        (
+            await index.add_documents(
+                [
+                    {"point_id": "1", "content": "عايز اسكن هنا"},
+                    {"point_id": "2", "content": "عاوز اسكن هنا"},
+                ]
+            )
+        ).task_uid
+    )
+
+    without_yeh = await index.search("عاوز", limit=10)
+    with_yeh = await index.search("عايز", limit=10)
+    await client.delete_index_if_exists(index_name)
+
+    assert not without_yeh.hits, "a stop word with no yeh is honoured"
+    assert with_yeh.hits, (
+        "meilisearch still matches a stop word containing yeh — if this now "
+        "returns nothing, the engine was fixed and `strip_stop_words` can go"
+    )
+
+
+def test_stop_words_are_stripped_by_normalized_form():
+    """`أعرف` and `اعرف` are one word. Config carries one spelling."""
+    assert strip_stop_words("عايز أعرف الحد الأدنى للقبول", TEST_CONFIG) == (
+        "الحد الأدنى للقبول"
+    )
+    assert strip_stop_words("عايز اعرف الحد الأدنى للقبول", TEST_CONFIG) == (
+        "الحد الأدنى للقبول"
+    )
+
+
+def test_stripping_preserves_the_original_spelling_of_what_survives():
+    """The surviving words keep their own form — normalization is used to
+    *decide*, never to rewrite. A rewritten query no longer matches the
+    synonym keys, which are stored as the customer types them."""
+    assert strip_stop_words("عايز منحة في القنطرة", TEST_CONFIG) == "منحة القنطرة"
+
+
+def test_a_query_of_only_stop_words_is_searched_unchanged():
+    """Stripping to nothing would turn a weak query into a match-everything
+    one. Better to search the words the customer sent and rank badly."""
+    assert strip_stop_words("عايز أعرف", TEST_CONFIG) == "عايز أعرف"
+
+
+async def test_a_leading_masri_filler_does_not_empty_the_result(corpus):
+    """The four-of-twelve failure, as a test.
+
+    `عايز أعرف` in front of a real question returned zero lexical hits — not
+    a bad ranking, an empty list — because the filler survived every step of
+    the end-first word drop.
+    """
+    repository, tenant = corpus
+    bare = await chunk_ids(repository, tenant, "الحد الأدنى للقبول")
+    with_filler = await chunk_ids(repository, tenant, "عايز أعرف الحد الأدنى للقبول")
+    assert bare, "the question alone must retrieve something for this test to mean anything"
+    assert with_filler == bare

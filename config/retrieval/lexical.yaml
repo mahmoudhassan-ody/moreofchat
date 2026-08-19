@@ -40,6 +40,17 @@ meilisearch:
 
 # Arabic stop words. Function words that appear in nearly every chunk carry no
 # discriminative signal and crowd the ranker.
+#
+# Applied by `lexical.strip_stop_words` before the query is sent, not by
+# Meilisearch. The engine normalizes this list on write — ي and ى become ی
+# (U+06CC), ك becomes ک — and then matches tokens against it without applying
+# that normalization, so every entry below containing one of those letters was
+# silently inert until the query-side strip landed. `في` was among them.
+#
+# Consequence, and the reason these are worth listing at all: the default
+# matching strategy drops query words from the END, and Masri puts the filler
+# at the START. One unlisted leading filler ANDs the whole query to zero
+# results — not a poor ranking, an empty list.
 stop_words:
   - 'في'
   - 'من'
@@ -74,6 +85,40 @@ stop_words:
   - 'ana'
   - 'is'
   - 'the'
+
+  # Masri conversational scaffolding. The franco spellings `3ayez`/`a3raf`
+  # above were added when edu-0005 was fixed; their Arabic equivalents were
+  # not, so a customer typing franco got a working lexical arm and a customer
+  # typing Arabic got an empty one — the opposite of what a franco-tolerance
+  # feature should do.
+  #
+  # One spelling each: matching is on the normalized form, so `أعرف` covers
+  # `اعرف` and `إيه` covers `ايه`.
+  - 'عايز'
+  - 'عاوز'
+  - 'عايزة'
+  - 'عاوزة'
+  - 'أعرف'
+  - 'ينفع'
+  - 'قولي'
+  - 'إيه'
+  - 'اللي'
+  - 'كام'
+  - 'عشان'
+  - 'مش'
+  - 'بالظبط'
+  - 'تقريبا'
+
+  # Not scaffolding — `أحول` is "I transfer", the content word of edu-0011.
+  # It earns its place here only because the corpus writes the same idea as
+  # التحويل and نقل قيدهم, so `أحول` matches nothing and can only subtract:
+  # listing it took the lexical arm from 60% to 70% on the scored turns.
+  # The more durable fix is a synonym أحول -> التحويل, which would let the
+  # word contribute instead of merely not harming. Left as a stop word for
+  # now because a synonym is a retrieval-quality change wanting its own
+  # before-and-after, and because this entry becomes wrong the moment a
+  # tenant's corpus does say أحول.
+  - 'أحول'
 
 # Bidirectional where the words are genuinely interchangeable in this domain,
 # one-way where they are not. Meilisearch treats each entry as "when the query

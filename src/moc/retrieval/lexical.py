@@ -23,6 +23,7 @@ makes that happen.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
@@ -51,6 +52,45 @@ class LexicalHit:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
 
+@lru_cache(maxsize=8)
+def _stop_word_forms(stop_words: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(normalize(word) for word in stop_words)
+
+
+def strip_stop_words(query: str, config: dict[str, Any] | None = None) -> str:
+    """Remove stop words from the query before it reaches Meilisearch.
+
+    A workaround for an engine defect, and it has to live here rather than in
+    config. Meilisearch normalizes the `stopWords` setting on write — ي and ى
+    become ی (U+06CC), ك becomes ک — but matches tokens against the stored
+    list without applying that normalization, so any stop word containing one
+    of those letters is stored in a form nothing equals and never fires.
+    Measured on 1.53.1: `عاوز` as a stop word makes `عاوز` unsearchable,
+    `عايز` does not. Six of the sixteen Arabic entries in config are affected,
+    `في` among them. Writing the entry in the U+06CC form does not help — all
+    three spellings collapse to the same stored value, and none of them work.
+
+    Why an inert filler is not a small loss: the default matching strategy
+    drops query words from the *end*, and Masri puts the scaffolding at the
+    *start*. So `عايز أعرف الحد الأدنى للقبول` keeps `عايز` through every drop
+    step, and since it matches no document the whole query ANDs to nothing.
+    Not a bad ranking — an empty result.
+
+    Matching is on the normalized form so config carries one spelling of a
+    word rather than every hamza variant. The *surviving* words keep their
+    original form: normalization decides what to drop, it never rewrites what
+    stays, because the synonym keys are stored as customers type them and a
+    rewritten query stops matching them.
+    """
+    settings = config or load(_LEXICAL)
+    stop = _stop_word_forms(tuple(settings["stop_words"]))
+    kept = [word for word in query.split() if normalize(word) not in stop]
+    # Stripping to nothing turns a weak query into a match-everything one.
+    # Searching the words the customer actually sent and ranking badly is the
+    # better failure.
+    return " ".join(kept) if kept else query
+
+
 def index_for(vertical: str, *, config: dict[str, Any] | None = None) -> str:
     """One index per vertical. A `KeyError` on an unknown one.
 
@@ -75,6 +115,10 @@ class _TenantScope:
     tenant_id: UUID
     index: str
     tenant_field: str = "tenant_id"
+    #: Carried so the scope can strip stop words query-side. Defaults to the
+    #: loaded config rather than being required, so a scope is still cheap to
+    #: construct in a test.
+    config: dict[str, Any] | None = None
 
     def _filter(self) -> str:
         """The one place a filter is built, and it always names the tenant."""
@@ -82,7 +126,9 @@ class _TenantScope:
 
     async def search(self, *, query: str, limit: int) -> list[LexicalHit]:
         index = self.client.index(self.index)
-        response = await index.search(query, limit=limit, filter=self._filter())
+        response = await index.search(
+            strip_stop_words(query, self.config), limit=limit, filter=self._filter()
+        )
         return [
             LexicalHit(
                 chunk_id=hit["chunk_id"],
@@ -185,6 +231,7 @@ class MeilisearchRepository:
             tenant_id=tenant_id,
             index=index_for(vertical, config=self._config),
             tenant_field=self._settings["tenant_field"],
+            config=self._config,
         )
 
     async def add(
@@ -214,4 +261,5 @@ __all__ = [
     "MeilisearchAdmin",
     "MeilisearchRepository",
     "index_for",
+    "strip_stop_words",
 ]
