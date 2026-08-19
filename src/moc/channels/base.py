@@ -28,6 +28,7 @@ is `channels/accounts.py`; the boundary is asserted in
 """
 
 import enum
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -102,6 +103,53 @@ class InboundMessage:
 class OutboundReceipt:
     provider_message_id: str
     status: str
+
+
+@dataclass(frozen=True)
+class OutboundJob:
+    """A reply waiting to be sent — the shape that crosses to the sender.
+
+    Defined here rather than in the worker because both the orchestrator's
+    reply path and the agent inbox construct one, and neither may import the
+    workers layer. Putting it in the worker made "one send path" impossible to
+    honour without a layer violation, which is a good sign the type belonged
+    in the channel vocabulary all along.
+
+    `last_inbound_at` travels with the job rather than being looked up at send
+    time: the window (§6.2) is a property of the conversation as it stood when
+    the turn ran, and re-reading it later would let a reply become
+    window-invalid purely because the sender was backed up.
+    """
+
+    tenant_id: str
+    channel: str
+    to: str
+    text: str | None = None
+    template: str | None = None
+    template_variables: dict[str, str] | None = None
+    last_inbound_at: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "tenant_id": self.tenant_id,
+                "channel": self.channel,
+                "to": self.to,
+                "text": self.text,
+                "template": self.template,
+                "template_variables": self.template_variables,
+                "last_inbound_at": self.last_inbound_at,
+            },
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def from_json(cls, record: str | dict[str, Any]) -> OutboundJob:
+        document = json.loads(record) if isinstance(record, str) else record
+        return cls(**document)
+
+    def inbound_at(self) -> datetime | None:
+        return datetime.fromisoformat(self.last_inbound_at) if self.last_inbound_at else None
 
 
 class OutsideServiceWindow(Exception):

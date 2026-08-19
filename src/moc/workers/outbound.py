@@ -17,57 +17,13 @@ infinite retry. Retrying it forever is how one bad row becomes a sender that
 delivers nothing else.
 """
 
-import json
 import time
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
-from moc.channels.base import MessagingProvider
+from moc.channels.base import MessagingProvider, OutboundJob
 from moc.workers.streams import consumer_from_config
 
 _CONSUMER = "outbound-1"
-
-
-@dataclass(frozen=True)
-class OutboundJob:
-    """A reply waiting to be sent.
-
-    `last_inbound_at` travels with the job rather than being looked up at send
-    time: the window (§6.2) is a property of the conversation as it stood when
-    the turn ran, and re-reading it later would let a reply become
-    window-invalid purely because the sender was backed up.
-    """
-
-    tenant_id: str
-    channel: str
-    to: str
-    text: str | None = None
-    template: str | None = None
-    template_variables: dict[str, str] | None = None
-    last_inbound_at: str | None = None
-
-    def to_json(self) -> str:
-        return json.dumps(
-            {
-                "tenant_id": self.tenant_id,
-                "channel": self.channel,
-                "to": self.to,
-                "text": self.text,
-                "template": self.template,
-                "template_variables": self.template_variables,
-                "last_inbound_at": self.last_inbound_at,
-            },
-            ensure_ascii=False,
-        )
-
-    @classmethod
-    def from_json(cls, record: str | dict[str, Any]) -> OutboundJob:
-        document = json.loads(record) if isinstance(record, str) else record
-        return cls(**document)
-
-    def inbound_at(self) -> datetime | None:
-        return datetime.fromisoformat(self.last_inbound_at) if self.last_inbound_at else None
 
 
 class OutboundWorker:

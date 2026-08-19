@@ -21,10 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from moc.agent.conversations import ConversationStore
 from moc.agent.script_engine import ScriptEngine
-from moc.channels.base import InboundMessage
+from moc.channels.base import InboundMessage, OutboundJob
 from moc.channels.valkey import decode
 from moc.tenancy.context import tenant_session
-from moc.workers.outbound import OutboundJob
 from moc.workers.streams import consumer_from_config
 
 _CONSUMER = "inbound-1"

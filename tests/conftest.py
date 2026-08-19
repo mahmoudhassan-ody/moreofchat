@@ -21,6 +21,11 @@ def pytest_configure(config):
 
 
 TEST_DB = "moc_test"
+#: Valkey database index for tests, distinct from the Postgres database name
+#: above. Shared here rather than per module: two suites now need a real
+#: Valkey, and two fixtures would be two places to get the index wrong — which
+#: would show up as one suite quietly flushing the other's streams.
+VALKEY_TEST_DB = 15
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -71,12 +76,15 @@ async def session(engine):
 #: instead of leaking rows between tests. Exported because more than one test
 #: module needs committed rows and therefore needs to clean up after itself.
 TENANT_SCOPED_TABLES = (
+    "handoffs",
+    "messages",
     "channel_accounts",
     "kb_outbox",
     "kb_chunks",
     "kb_documents",
     "usage_ledger",
     "conversations",
+    "contacts",
     "tenants",
 )
 
@@ -140,3 +148,46 @@ async def two_tenants(engine):
         s.add_all([a, b])
         await s.commit()
         return a, b
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def valkey():
+    """Real Valkey, on a test-only database index.
+
+    `moc.config` is imported inside the fixture, not at module scope.
+    Instantiating `Settings()` requires the database passwords, and pytest
+    imports every test module during collection — including in jobs that run
+    without infra. A module-level import here took the whole `eval-smoke` job
+    down with a collection error, which is why `conftest.py` has always done
+    it this way.
+
+    **Unreachable Valkey fails in CI and skips locally.** A developer without
+    compose up should get a skip; CI must not, because a silent skip is a test
+    that stopped running while the run stayed green. That has bitten this
+    project twice, and it is the same rule the MOC_PUBLIC_IP guard applies
+    from the other direction.
+    """
+    import os
+
+    import redis.asyncio as redis
+
+    from moc.config import settings
+
+    client = redis.from_url(settings.valkey_url(VALKEY_TEST_DB), decode_responses=True)
+    try:
+        await client.ping()
+    except Exception as exc:
+        message = (
+            f"valkey unreachable at {settings.valkey_host}:{settings.valkey_port} — {exc}"
+        )
+        if os.environ.get("CI"):
+            pytest.fail(
+                f"{message}. CI brings the stack up with compose, so this is a broken "
+                f"run rather than a missing dependency, and skipping it would hide "
+                f"every worker test behind a green tick."
+            )
+        pytest.skip(f"{message}. Start it with: docker compose up -d valkey")
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()

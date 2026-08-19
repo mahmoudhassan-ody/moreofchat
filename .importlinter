@@ -113,3 +113,29 @@ source_modules =
     moc
 forbidden_modules =
     meilisearch_python_sdk
+
+# Task 22. An agent's reply is a message to a customer on a messaging
+# platform, so it is subject to the same rate limit and the same 24-hour
+# service window as a bot reply (§6.2). The inbox therefore publishes an
+# `OutboundJob` and the existing sender worker delivers it.
+#
+# The layered contract does not cover this: `moc.api -> moc.channels` is a
+# legal direction, so importing the Twilio adapter here breaks nothing it
+# checks. But a second send path means a second token bucket — and two buckets
+# each allowing the full rate is the same as no limit — and a second place for
+# the window rule to be wrong, on the path where it is most likely to be:
+# an agent replies to a conversation that has been queued, which is exactly
+# when the window has expired.
+#
+# The queue adapter is forbidden for the same reason from the other side: the
+# publisher is a port, injected by the composition root, so that "one send
+# path" is a property of the wiring rather than a habit.
+[importlinter:contract:one-send-path]
+name = The agent inbox never reaches a channel adapter or the queue directly
+type = forbidden
+source_modules =
+    moc.api.inbox
+forbidden_modules =
+    moc.channels.twilio_wa
+    moc.channels.valkey
+    moc.workers
