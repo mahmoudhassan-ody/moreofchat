@@ -37,7 +37,7 @@ from moc.evals.inventory_runner import (
 from moc.evals.load import load_cases
 from moc.evals.schema import ExpectedToolCall
 from moc.retrieval.inventory import InventoryRepository, load_units
-from moc.verticals.realestate.agent import InventoryAgent, SlotExtractor
+from moc.verticals.realestate.agent import InventoryAgent, KeywordSlotExtractor
 
 CASES = Path(__file__).parents[2] / "evals" / "cases" / "realestate.yaml"
 FIXTURE = (
@@ -91,7 +91,7 @@ async def runner(app_engine, stocked):
             agent=InventoryAgent(
                 repository=repository,
                 engine=ScriptEngine.from_config(SCRIPT),
-                extractor=SlotExtractor(),
+                extractor=KeywordSlotExtractor(),
             ),
             snapshot=snapshot_from_fixture(FIXTURE),
             script=SCRIPT,

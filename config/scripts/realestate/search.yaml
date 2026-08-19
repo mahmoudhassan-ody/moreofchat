@@ -24,6 +24,34 @@ entry: fallback
 settings:
   max_consecutive_clarifications: 3
 
+# What each slot may hold. `from` pulls the vocabulary out of a shared config
+# file rather than restating it here — the property types are the catalogue's
+# own column and the locations are the alias map's canonical values, and a
+# second copy of either would drift into a value the connector cannot filter
+# on (§19, §19.3).
+#
+# This is injected into the extraction prompt at render time. A compound named
+# only in the prompt is a compound the resolver cannot parse back, and the
+# model cannot tell the difference — it would emit a plausible name and every
+# downstream filter would return nothing, reading as "no inventory".
+slots:
+  property_type:
+    from: agent/property_types
+  city:
+    from: arabic/locations
+    kind: city
+  compound:
+    from: arabic/locations
+    kind: compound
+  bedrooms:
+    type: integer
+  budget_max:
+    type: integer
+  listing_kind:
+    values: [sale, rent]
+  unit_id:
+    free: true
+
 nodes:
   # re-0001, re-0002, re-0021, re-0022, re-0023.
   #

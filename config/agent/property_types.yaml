@@ -1,0 +1,49 @@
+# Property type vocabulary — design §19, §19.3.
+#
+# The canonical values are exactly the `property_type` column in the
+# catalogue, because a resolved type is used as a filter directly. A type the
+# extractor can emit and the connector cannot filter on returns nothing and
+# reads as "no inventory" — the same failure mode `locations.yaml`'s `kind`
+# map exists to prevent for cities and compounds.
+#
+# This file is injected into the extraction prompt at render time rather than
+# written into the prompt text. A type named only in the prompt is a type the
+# resolver cannot parse back, and the model has no way to know that: it would
+# emit `chalet_villa` or `duplex penthouse` and every downstream filter would
+# silently return nothing.
+#
+# Aliases are what Egyptians actually type — Arabic, franco-Arab, and the
+# English the catalogue itself uses. Franco matters here for the same reason
+# it does in retrieval: a customer typing latin characters is using the
+# keyboard they have, not making a mistake.
+
+version: 1
+
+types:
+  apartment:
+    arabic: ['شقة', 'شقه', 'شقق']
+    latin: ['apartment', 'flat', 'sha2a', 'sha22a', 'shaqqa']
+  studio:
+    arabic: ['استوديو', 'ستوديو']
+    latin: ['studio', 'stodio']
+  duplex:
+    arabic: ['دوبلكس', 'دوبليكس']
+    latin: ['duplex', 'doublex']
+  penthouse:
+    arabic: ['بنتهاوس', 'بنت هاوس']
+    latin: ['penthouse', 'pent house']
+  townhouse:
+    arabic: ['تاون هاوس', 'تاونهاوس', 'تاون']
+    latin: ['townhouse', 'town house', 'twinhouse']
+  villa:
+    arabic: ['فيلا', 'فيلة', 'فلل']
+    latin: ['villa', 'vila']
+  chalet:
+    arabic: ['شاليه', 'شالية', 'شاليهات']
+    latin: ['chalet', 'chalih']
+  office:
+    arabic: ['مكتب', 'مكاتب', 'اداري', 'إداري']
+    latin: ['office', 'admin']
+  retail:
+    arabic: ['محل', 'محلات', 'تجاري']
+    latin: ['retail', 'shop', 'store']

@@ -20,9 +20,9 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from moc.agent.extraction import LlmSlotExtractor
 from moc.agent.orchestrator import Orchestrator
 from moc.agent.script_engine import ScriptEngine
-from moc.agent.state import ConversationState, TurnInput
 from moc.config_store import load
 from moc.evals.judge import Judge
 from moc.evals.load import load_cases
@@ -45,6 +45,7 @@ pytestmark = pytest.mark.live
 ROUTING = load("llm/routing")
 LEXICAL = load("retrieval/lexical")
 CASES = Path(__file__).parents[2] / "evals" / "cases" / "education.yaml"
+SCRIPT_ID = "scripts/education/fees"
 SINAI = Path(__file__).parents[2] / "evals" / "fixtures" / "sinai_demo" / "chunks.jsonl"
 
 RUN_INDEXES = {"education": "run_kb_education", "realestate": "run_kb_realestate"}
@@ -66,29 +67,6 @@ class Embedder:
 
     async def embed(self, *, texts):
         return await self._router.embed(texts=texts)
-
-
-class SlotExtractor:
-    """Intent and slots without a model call.
-
-    The extraction prompt is not built yet, and a real Haiku call here would
-    add a second variable to a measurement whose point is retrieval and
-    composition. Keyword matching against the script's own intents, stated
-    plainly so the number is read with it in mind.
-    """
-
-    INTENTS = {
-        "مصاريف": "fees", "رسوم": "fees", "خصم": "fees", "منحة": "fees",
-        "منح": "fees", "manh": "fees", "khasm": "fees", "قسط": "instalments",
-        "تحويل": "transfer_rules", "سكن": "fees", "قبول": "fees",
-    }
-
-    async def extract(self, *, text: str, state: ConversationState) -> TurnInput:
-        intent = next(
-            (value for token, value in self.INTENTS.items() if token in text.lower()),
-            None,
-        )
-        return TurnInput(intent=intent, slots={"faculty": "engineering"})
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -212,7 +190,7 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             engine=ScriptEngine.from_config("scripts/education/fees"),
             router=router,
             retriever=retriever,
-            extractor=SlotExtractor(),
+            extractor=LlmSlotExtractor(router=router, script=SCRIPT_ID),
         ),
         retriever=retriever,
         judge=Judge.from_config(router=router),

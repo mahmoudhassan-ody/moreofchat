@@ -77,13 +77,18 @@ class InventoryTurn:
     as_of: str | None = None
 
 
-class SlotExtractor:
-    """Intent and slots without a model call.
+class KeywordSlotExtractor:
+    """A test double. **Not the production extractor.**
 
-    Keyword matching against the script's own intents and the location
-    aliases. Stated plainly because it bounds what any number from this path
-    means: it measures the connector, the calculator and the reply rules, and
-    it does not measure extraction.
+    `moc.agent.extraction.LlmSlotExtractor` is what runs — §2.6's
+    `slot_extraction` task, Haiku with an OpenAI failover. This keyword
+    matcher stays only so the offline runner tests can exercise the connector,
+    the calculator and the reply rules without a model call and without an API
+    key.
+
+    Renamed from `SlotExtractor` on 2026-08-19 so its status is unmistakable
+    at the call site. A double whose name reads like the real thing is a
+    double that ends up in production wiring.
     """
 
     INTENTS = (
@@ -439,4 +444,4 @@ def _as_row(unit: Any) -> dict[str, Any]:
     }
 
 
-__all__ = ["InventoryAgent", "InventoryTurn", "RecordedCall", "SlotExtractor"]
+__all__ = ["InventoryAgent", "InventoryTurn", "KeywordSlotExtractor", "RecordedCall"]

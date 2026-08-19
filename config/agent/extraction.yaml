@@ -1,0 +1,26 @@
+# Slot and intent extraction — design §3.1 and §19.
+#
+# Resolved to src/moc/agent/prompts/<prompt>.md. The recorded prompt_version is
+# this name plus a digest of the file, because `config_hash` covers config/ and
+# not a prompt living under src/ — without the digest, editing the instructions
+# would change every extracted slot in the suite while every run still claimed
+# comparability with a baseline measured under the old wording (§2.3).
+#
+# The vocabulary is NOT in the prompt file. Intents come from the script's own
+# nodes and slot values from `slots:` in the same script, both injected at
+# render time. A value named only in the prompt is a value the resolver cannot
+# parse back, and the failure is silent: the filter matches nothing and reads
+# as "no inventory" rather than as an extraction error.
+
+version: 1
+
+prompt: extraction_v1
+
+# Routing is §2.6's table, in llm/routing.yaml under `slot_extraction`:
+# claude-haiku-4-5 primary, gpt-5.6-luna failover. Not restated here — one
+# place decides which model runs a task.
+
+# `max_tokens` is deliberately absent. `llm/routing.yaml` sets it per task
+# (512 for slot_extraction), and a second value here would be a second thing
+# to keep in step with §2.6's table — which is the kind of duplication that
+# stays correct until exactly one of the two is edited.

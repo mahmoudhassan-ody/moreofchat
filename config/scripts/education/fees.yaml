@@ -22,6 +22,31 @@ settings:
   # settable here — see the note in agent/defaults.yaml and §19.3.
   max_consecutive_clarifications: 3
 
+# What each slot may hold, injected into the extraction prompt at render time
+# (§19). Written here rather than in the prompt text: a value the model can
+# emit and the script cannot route on is a slot that silently narrows nothing,
+# and the model has no way to discover that. Keeping the list in config also
+# means adding a faculty is a config edit that moves config_hash, rather than
+# a prompt edit that invalidates every baseline.
+#
+# `free` marks a slot with no closed vocabulary — the model returns what the
+# customer said and the downstream resolver decides.
+slots:
+  faculty:
+    values:
+      - dentistry
+      - pharmacy
+      - engineering
+      - business
+      - mass_communication
+      - information_systems
+      - physiotherapy
+      - biotechnology
+  branch:
+    values: [arish, qantara]
+  certificate:
+    values: [general_secondary, azhari, arab_equivalent, foreign_equivalent]
+
 nodes:
   # Core path. edu-0001, edu-0002, edu-0004.
   fees:
