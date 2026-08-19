@@ -148,9 +148,22 @@ async def corpus(app_engine, engine):
     )
     await QdrantAdmin(client=qdrant).ensure_collections()
     dense = QdrantRepository(client=qdrant)
-    embedder = Embedder(Router(config=ROUTING, providers={
-        "openai": OpenAIDirect(api_key=key("MOC_OPENAI_API_KEY"), http=ROUTING["http"])
-    }))
+    # Both providers, not just the one embedding uses: `Router` validates
+    # every configured task at construction (§7.3's wiring check), so a router
+    # built with a subset raises before it is ever asked to embed.
+    embedder = Embedder(
+        Router(
+            config=ROUTING,
+            providers={
+                "anthropic": AnthropicDirect(
+                    api_key=key("MOC_ANTHROPIC_API_KEY"), http=ROUTING["http"]
+                ),
+                "openai": OpenAIDirect(
+                    api_key=key("MOC_OPENAI_API_KEY"), http=ROUTING["http"]
+                ),
+            },
+        )
+    )
     vectors = await embedder.embed(
         texts=[embedding_text(title=r["title"], content=r["content"]) for r in records]
     )
