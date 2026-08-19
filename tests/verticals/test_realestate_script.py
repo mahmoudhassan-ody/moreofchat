@@ -327,11 +327,28 @@ def test_a_refusal_has_its_own_reply_rather_than_the_clarify_text():
     assert "refuse" in load("agent/replies")["replies"]
 
 
-def test_the_search_node_requires_a_property_type():
-    """Without one there is no rule to enforce: "what have you got?" answered
-    with anything is not a substitution, and asking is the correct turn."""
+def test_the_search_node_does_not_require_a_property_type():
+    """Deliberate reversal, recorded because it reverses one.
+
+    This asserted the opposite until 2026-08-19, on the reasoning that without
+    a type there is no substitution rule to enforce. The reasoning held; the
+    conclusion did not. A customer who named no type cannot be given the wrong
+    one — there is nothing to substitute *from* — so the requirement refused
+    legitimate browse questions ("what have you got in Celian?", which is how
+    most real conversations open) while enforcing nothing.
+
+    What it stood in for was a measurement, and `unresolved_type_rate` is now
+    that measurement: turns presenting units with no resolved type are counted
+    as un-checkable rather than refused. re-0023 is the positive case whose
+    absence hid the error — re-0012 and re-0014 were failing on it and both
+    were read as extraction misses, because neither exists to test browsing.
+    """
     node = load(SCRIPT)["nodes"]["inventory_lookup"]
-    assert "property_type" in node["requires_slots"]
+    assert node["requires_slots"] == []
+
+    # The substitution rule itself is untouched: it applies whenever a type
+    # *was* named, and that is what the rest of this file asserts.
+    assert "no_match_same_type" in load(SCRIPT)["replies"]
 
 
 def test_find_same_type_elsewhere_offers_no_way_to_change_the_type():

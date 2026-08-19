@@ -128,7 +128,11 @@ async def test_every_inventory_case_runs_without_erroring(runner):
     outcomes = await case_runner.run(cases())
     errored = [(o.case_id, o.error) for o in outcomes if o.errored]
     assert errored == []
-    assert len(outcomes) == 22
+    # Length from the file rather than a literal: the suite is append-only and
+    # a hard-coded count turns "a case was added" into a failure that reads
+    # like a regression.
+    assert len(outcomes) == len(cases())
+    assert len(outcomes) >= 23
 
 
 # ─────────────────────── the checks that feed the gates ───────────────────────
@@ -291,6 +295,70 @@ async def test_a_gate_with_no_observations_says_so_rather_than_zero(runner):
         assert report[gate].observations == 0
         assert report[gate].rate is None
         assert "not measured" in report[gate].render().lower()
+
+
+async def test_a_browse_question_naming_only_a_compound_is_answered(runner):
+    """re-0023. "What have you got in Celian?" — no property type named.
+
+    `inventory_lookup` used to require a `property_type` slot, so every browse
+    question clarified instead of answering. The requirement enforced nothing:
+    a customer who named no type cannot be given the wrong one, because there
+    is nothing to substitute from. It refused legitimate questions and the
+    refusals read as extraction misses, because no case existed that only
+    browsing could fail.
+    """
+    case_runner, _ = runner
+    case = next(c for c in cases() if c.id == "re-0023")
+    outcome = await case_runner.run_case(case)
+    turn = outcome.turns[0]
+
+    assert str(turn.action) == "answer"
+    assert turn.presented_unit_ids, "a browse question is answered with a unit"
+    assert "Celian" in turn.reply
+    assert "2026-08-01" in turn.reply, "an inventory answer carries its as_of"
+    assert turn.named_compounds == ("Celian",)
+
+
+async def test_a_browse_answer_is_still_availability_filtered(runner):
+    """Dropping the type requirement must not widen anything else. The units
+    a browse returns are the same filtered rows any other query returns."""
+    case_runner, _ = runner
+    case = next(c for c in cases() if c.id == "re-0023")
+    outcome = await case_runner.run_case(case)
+    for unit_id in outcome.turns[0].presented_unit_ids:
+        assert case_runner.snapshot.unit_status[unit_id] == "available"
+
+
+async def test_an_observational_check_does_not_fail_the_case(runner):
+    """re-0023 can never satisfy `unresolved_type_rate` — it is the case that
+    names no type, deliberately.
+
+    A check that asserts nothing the case pinned must not decide whether the
+    case passed, or the observation becomes a permanent red mark on correct
+    behaviour and someone eventually deletes the observation. `check_tool_calls`
+    is the contrast: it grades an expectation the case wrote down, so it does
+    count.
+    """
+    case_runner, _ = runner
+    outcome = await case_runner.run_case(next(c for c in cases() if c.id == "re-0023"))
+    observational = [c for c in outcome.turns[0].checks if c.observational]
+
+    assert [c.name for c in observational] == ["type_resolved"]
+    assert not observational[0].passed
+    assert outcome.passed, "an observation is not an expectation"
+
+
+async def test_the_un_checkable_population_stays_visible(runner):
+    """The requirement was standing in for a measurement. Now the measurement
+    exists, so a browse turn is counted as un-checkable rather than refused —
+    and `type_substitution_rate` does not quietly absorb it."""
+    case_runner, _ = runner
+    case = next(c for c in cases() if c.id == "re-0023")
+    outcome = await case_runner.run_case(case)
+    by_metric = {c.metric: c for c in outcome.turns[0].checks}
+
+    assert by_metric["type_substitution_rate"].skipped
+    assert not by_metric["unresolved_type_rate"].passed
 
 
 # ─────────────────────── the three cases with teeth ───────────────────────

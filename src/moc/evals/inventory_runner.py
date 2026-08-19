@@ -108,7 +108,14 @@ class InventoryTurnOutcome:
 
     @property
     def passed(self) -> bool:
-        return all(check.passed for check in self.checks)
+        """Graded on what the case asserted.
+
+        Observational checks are excluded: they grade the run rather than the
+        case, and a case written to exercise the observed condition — re-0023
+        names no property type on purpose — could never pass while they
+        counted.
+        """
+        return all(check.passed for check in self.checks if not check.observational)
 
 
 @dataclass(frozen=True)

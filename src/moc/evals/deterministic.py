@@ -39,11 +39,22 @@ _LEXICON = "arabic/lexicon"
 
 @dataclass(frozen=True)
 class CheckResult:
+    """One check's verdict, and which §2.1 metric it feeds.
+
+    `observational` marks a check that grades nothing the case pinned. It is
+    still reported — the whole point is that the population stays visible —
+    but it must not decide whether the case passed, or a case that correctly
+    exercises the observed condition carries a permanent red mark and someone
+    eventually deletes the observation to make it green. `check_type_resolved`
+    is the one: re-0023 names no property type on purpose.
+    """
+
     name: str
     metric: str
     passed: bool
     detail: str = ""
     skipped: bool = False
+    observational: bool = False
 
 
 @dataclass(frozen=True)
@@ -376,6 +387,7 @@ def check_type_resolved(
             passed=True,
             skipped=True,
             detail="no units presented, so nothing needed resolving",
+            observational=True,
         )
     resolved = requested_type is not None
     return CheckResult(
@@ -383,6 +395,7 @@ def check_type_resolved(
         metric="unresolved_type_rate",
         passed=resolved,
         detail="" if resolved else "units presented without a resolved property_type",
+        observational=True,
     )
 
 

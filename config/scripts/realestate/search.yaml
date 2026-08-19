@@ -25,14 +25,25 @@ settings:
   max_consecutive_clarifications: 3
 
 nodes:
-  # re-0001, re-0002, re-0021, re-0022. `property_type` is required because
-  # without one there is no rule to enforce — "what have you got?" answered
-  # with anything is not a substitution, and asking is the correct turn.
+  # re-0001, re-0002, re-0021, re-0022, re-0023.
+  #
+  # No required slot. `property_type` was required here until 2026-08-19, on
+  # the reasoning that without one there is no substitution rule to enforce.
+  # That reasoning was right and the conclusion was wrong: a customer who
+  # named no type cannot be given the wrong one, because there is nothing to
+  # substitute *from*. The requirement refused legitimate browse questions —
+  # "what have you got in Celian?", which is how most real conversations open
+  # — without enforcing anything.
+  #
+  # What it was standing in for was a measurement, and that now exists:
+  # `unresolved_type_rate` counts turns that presented units with no resolved
+  # type, so the un-checkable population is visible instead of being refused.
+  # re-0023 is the positive case whose absence hid the error.
   inventory_lookup:
     intents: [inventory_lookup, search_units, availability]
     action: answer
     register: masri          # showing someone what is available is conversation
-    requires_slots: [property_type]
+    requires_slots: []
     grounding: required
     clarify:
       register: masri

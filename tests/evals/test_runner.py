@@ -446,11 +446,22 @@ async def test_the_runner_produces_case_results_the_report_can_consume(session_t
 
 
 def test_every_shipped_case_loads_for_the_runner():
-    """39 cases across both files. The runner has to handle all of them, and a
-    case it cannot load is a case silently absent from the number."""
+    """Both files, whatever they hold. A case the runner cannot load is a case
+    silently absent from the number.
+
+    Asserted as a floor and by id, not as an exact count. Both files are
+    append-only, and a literal total turns "a case was added" into a failure
+    that reads like a regression — which is how the loader tests broke once
+    already. The ids pin the cases the gates are built on, so one deleted or
+    renamed fails here rather than quietly leaving the denominator.
+    """
     education = load_cases(CASES / "education.yaml")
     realestate = load_cases(CASES / "realestate.yaml")
-    assert len(education) + len(realestate) == 39
+    ids = {case.id for case in education + realestate}
+
+    assert len(ids) == len(education) + len(realestate), "duplicate case id"
+    assert len(ids) >= 40
+    assert {"edu-0015", "re-0002", "re-0005", "re-0021", "re-0022", "re-0023"} <= ids
 
 
 @pytest_asyncio.fixture(loop_scope="session")

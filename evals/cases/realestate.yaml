@@ -779,3 +779,55 @@
     the region and the second half must still name a compound —
     "no studio on the North Coast, we have one in <compound>". A city-level
     alternative would leave the customer with nowhere to go.
+
+- id: re-0023
+  vertical: realestate
+  source: synthetic
+  category: inventory_lookup
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "عندكم إيه في سيلان؟"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {compound: "Celian"}
+      expected_facts:
+        - id: f1
+          claim: "a unit that exists in Celian, with its type"
+          required: true
+        - id: f2
+          claim: "its price as listed"
+          required: true
+      forbidden_claims:
+        - "a compound name not present in the catalogue"
+        - "a unit in a compound other than the one asked about"
+        - "any unit not currently available"
+      expected_slots: {compound: "Celian"}
+  gold_chunks: []
+  notes: >
+    Browse, not search. The customer names a compound and no property type,
+    which is how most real conversations open — "what have you got in X?"
+    before any preference is formed.
+
+    Added 2026-08-19 because the suite had no positive case for it, and the
+    absence hid a design error: `inventory_lookup` required a `property_type`
+    slot, so every browse question clarified instead of answering. re-0012 and
+    re-0014 were failing on it and both were read as extraction misses,
+    because neither exists to test browsing and both had other reasons to fail.
+
+    A customer who named no type cannot be substituted against — there is
+    nothing to substitute *from* — so the requirement refused legitimate
+    questions without enforcing anything. `unresolved_type_rate` now makes the
+    un-checkable population visible, which is what the requirement was
+    standing in for.
+
+    Celian is deliberately unremarkable: three units, all available, two
+    types, no sold or reserved rows. Nothing about availability or
+    substitution confounds what this case measures.
