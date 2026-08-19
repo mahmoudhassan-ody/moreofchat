@@ -225,11 +225,33 @@ fusion:
   # changing the ranking for no reason anyone can defend later.
   rrf_k: 60
 
-  # §7.5's hard rule: below this the turn does not reach answer composition.
-  # The fusion layer returns *no* passages rather than low-ranked ones — the
-  # gate needs an empty result to route on, and a weak passage handed to
-  # composition is a fee invented from something adjacent.
-  min_score: 0.55
+  # §7.5's hard rule stands: a turn retrieval cannot support does not reach
+  # answer composition. What changed is what the gate decides on. It closes on
+  # *presence* — nothing retrieved, or nothing with text to ground on — rather
+  # than on similarity, because similarity was measured and does not separate.
+  #
+  # Top fused hit's cosine across all 17 education cases:
+  #
+  #   must ANSWER  (10 cases)   0.218 - 0.610   median 0.491
+  #   must NOT     ( 7 cases)   0.280 - 0.779   median 0.413
+  #
+  #   threshold   gold opened   no-gold closed
+  #        0.20        10/10              0/7
+  #        0.35         6/10              2/7
+  #        0.45         5/10              6/7
+  #        0.55         4/10              6/7   <- the old value
+  #
+  # The populations overlap the wrong way round. The most similar result in
+  # the suite, 0.779, is edu-0008 which must clarify; the least similar, 0.218,
+  # is edu-0015 retrieving exactly the right chunk — منحة against a corpus that
+  # only says خصم, where the synonym map does the work and cosine cannot see
+  # it. The old 0.55 would have refused six of the ten cases that must answer,
+  # including the acceptance case.
+  #
+  # Kept as a value rather than deleted: a tenant whose corpus does separate
+  # cleanly should be able to raise it without a deploy. Do not raise it here
+  # without re-running the table above.
+  min_score: 0.0
 
   latency:
     # Fusion sits inside §2.5's turn budget alongside the model call, which

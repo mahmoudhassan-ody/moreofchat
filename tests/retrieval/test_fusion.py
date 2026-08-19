@@ -104,19 +104,38 @@ def test_only_the_configured_depth_per_arm_is_considered():
 # ─────────────────────────── the gate ───────────────────────────
 
 
-async def test_below_threshold_confidence_returns_no_passages():
-    """§7.5, and the reason it returns nothing rather than something.
+async def test_the_gate_closes_when_there_is_nothing_to_ground_on():
+    """§7.5, narrowed to what the gate can actually decide.
 
-    A weak passage handed to composition is a fee grounded in a chunk that
-    merely mentions the topic — an invented figure that traces to a real
-    source, which is the hardest kind to catch afterwards.
+    Composition must not be handed an empty passage set: with nothing to
+    ground on, every figure in the reply would be the model's own. That is a
+    question the gate can answer from what it holds.
     """
-    weak = [Candidate(chunk_id="weak", rank=19, relevance=0.2, content="barely related")]
-    result = await fuse(query="q", dense=weak, sparse=None, config=CONFIG)
+    empty = [Candidate(chunk_id="a", rank=1, relevance=0.9, content="   ")]
+    result = await fuse(query="q", dense=empty, sparse=None, config=CONFIG)
     assert result.passages == ()
-    assert result.hits == ()
     assert result.gate_closed is True
-    assert result.confidence < FUSION["min_score"]
+
+
+async def test_a_low_similarity_score_does_not_close_the_gate():
+    """The measured reason `min_score` sits at the floor.
+
+    0.218 is edu-0015's real cosine — "fe manh fe kantara?" retrieving
+    `sinai_discount_tuition_ar`, correctly, as the top hit. The question and
+    the answer share no letters; the synonym map does the work and cosine
+    cannot see it. Any threshold that would close on 0.218 closes on the
+    project's own acceptance case.
+    """
+    weak = [Candidate(chunk_id="right", rank=1, relevance=0.218, content="خصم 25%")]
+    result = await fuse(query="fe manh fe kantara?", dense=weak, sparse=None, config=CONFIG)
+    assert result.gate_closed is False
+    assert result.passages == ("خصم 25%",)
+
+
+def test_min_score_is_at_the_floor_and_says_why():
+    """§19. Kept as a value so it stays visible and tunable, set to the floor
+    because measurement showed no cutoff separates the two populations."""
+    assert FUSION["min_score"] == 0.0
 
 
 async def test_a_strong_agreed_hit_passes_the_gate():
@@ -127,7 +146,10 @@ async def test_a_strong_agreed_hit_passes_the_gate():
     assert result.passages == ("body of top",)
 
 
-async def test_the_threshold_comes_from_config():
+async def test_the_threshold_still_comes_from_config_when_a_tenant_raises_it():
+    """At the floor it never fires, but the mechanism stays wired: a tenant
+    whose corpus does separate cleanly may raise it, and that must not need a
+    deploy."""
     strict = {**CONFIG, "fusion": {**FUSION, "min_score": 1.01}}
     result = await fuse(query="q", dense=ranked("top"), sparse=ranked("top"), config=strict)
     assert result.gate_closed is True

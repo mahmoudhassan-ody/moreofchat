@@ -36,8 +36,14 @@ def defaults() -> dict:
     return config_store.load("agent/defaults")
 
 
-def turn(intent=None, slots=None, confidence=HIGH, **kwargs) -> TurnInput:
-    return TurnInput(intent=intent, slots=slots or {}, confidence=confidence, **kwargs)
+def turn(intent=None, slots=None, confidence=HIGH, grounded=True, **kwargs) -> TurnInput:
+    return TurnInput(
+        intent=intent,
+        slots=slots or {},
+        confidence=confidence,
+        grounded=grounded,
+        **kwargs,
+    )
 
 
 # ─────────────────── edu-0004: the multi-turn slot sequence ───────────────────
@@ -155,6 +161,43 @@ def test_below_threshold_confidence_cannot_reach_answer_composition(script, defa
     assert decision.grounding_required is False
 
 
+def test_a_turn_with_nothing_retrieved_cannot_reach_answer_composition(script):
+    """§19.3's invariant, now carried by presence instead of a threshold.
+
+    This is what the confidence threshold was really enforcing: not "the
+    passages are similar enough" but "there are passages at all". Similarity
+    turned out to carry no separating signal; presence does, and it is the
+    condition composition actually depends on — with nothing retrieved, every
+    figure in the reply would be the model's own.
+    """
+    decision = script.advance(
+        script.start(),
+        turn(intent="fees", slots={"faculty": "pharmacy"}, grounded=False),
+    )
+    assert decision.action is not Action.answer
+    assert decision.grounding_required is False
+
+
+def test_a_correctly_retrieved_low_cosine_turn_still_answers(script):
+    """edu-0015's real number, driven through the gate that reads it.
+
+    0.218 is the measured cosine for "fe manh fe kantara?" retrieving
+    `sinai_discount_tuition_ar` — the right chunk, first, from a corpus that
+    never says منحة. The threshold used to be 0.55, which was set before there
+    was anything to measure and would refuse six of the ten education cases
+    that must answer, this one included.
+
+    The measurement is in `config/retrieval/lexical.yaml`: across all 17
+    cases, similarity does not separate must-answer from must-not, and it
+    overlaps the wrong way round.
+    """
+    decision = script.advance(
+        script.start(),
+        turn(intent="fees", slots={"faculty": "pharmacy"}, confidence=0.218),
+    )
+    assert decision.action is Action.answer
+
+
 def test_absent_confidence_does_not_close_the_gate(script):
     """§7.3. `None` is "no arm supplied a calibrated score", not a low one.
 
@@ -188,19 +231,36 @@ def test_confidence_exactly_at_the_threshold_is_allowed(script, defaults):
     assert decision.action is Action.answer
 
 
-def test_the_confidence_gate_cannot_be_disabled_by_the_script():
+def test_the_gate_cannot_be_disabled_by_the_script():
     """§19.3: fixed enforcement, configurable parameter.
 
-    A script that tried to opt out of the gate must not be able to. Threshold
-    moves; the rule does not.
+    Demonstrated on presence rather than on the threshold. The threshold now
+    sits at the platform floor, so a script setting it to 0.0 no longer
+    differs from the default and could not show anything — but the rule it was
+    protecting is unchanged, and it is the ungrounded turn that must not reach
+    composition however the script is written.
     """
     opted_out = dict(config_store.load(SCRIPT))
     opted_out["settings"] = {**opted_out["settings"], "confidence_threshold": 0.0}
     engine = ScriptEngine(script=opted_out, defaults=config_store.load("agent/defaults"))
     decision = engine.advance(
-        engine.start(), turn(intent="fees", slots={"faculty": "pharmacy"}, confidence=0.0)
+        engine.start(),
+        turn(intent="fees", slots={"faculty": "pharmacy"}, grounded=False),
     )
     assert decision.action is not Action.answer
+
+
+def test_the_threshold_is_read_from_the_platform_not_the_script():
+    """The other half of §19.3: a tenant may not raise it either, because the
+    parameter is platform-tier config and the script is tenant-authored."""
+    stricter = dict(config_store.load(SCRIPT))
+    stricter["settings"] = {**stricter["settings"], "confidence_threshold": 0.99}
+    engine = ScriptEngine(script=stricter, defaults=config_store.load("agent/defaults"))
+    decision = engine.advance(
+        engine.start(),
+        turn(intent="fees", slots={"faculty": "pharmacy"}, confidence=0.3),
+    )
+    assert decision.action is Action.answer, "the script's 0.99 must be ignored"
 
 
 # ─────────────────────────── fallback ───────────────────────────
@@ -329,7 +389,15 @@ async def test_edu_0004_runs_end_to_end_against_the_fake_provider(script):
         )
         parsed = json.loads(completion.text)
         decision = script.advance(
-            state, TurnInput(intent=parsed["intent"], slots=parsed["slots"], confidence=HIGH)
+            state,
+            TurnInput(
+                intent=parsed["intent"],
+                slots=parsed["slots"],
+                confidence=HIGH,
+                # Built by hand here; the orchestrator is what normally sets
+                # this from the retrieval result.
+                grounded=True,
+            ),
         )
         state, _ = decision.state, actions.append(decision.action)
 
@@ -345,3 +413,24 @@ def test_action_values_match_the_eval_schema():
     from moc.evals.schema import Action as EvalAction
 
     assert {a.value for a in Action} == {a.value for a in EvalAction}
+
+
+def test_a_gate_refusal_is_flagged_not_inferred_from_its_wording(script):
+    """The customer-visible reply is chosen from this flag.
+
+    It used to be selected by `decision.reason.startswith("retrieval
+    confidence")`, so when the ungrounded branch grew its own wording the
+    customer silently started getting "which faculty?" instead of "I can't
+    find confirmed information about that" — a bot asking a question it had
+    already asked. A diagnostic string is not an interface.
+    """
+    missing_slot = script.advance(script.start(), turn(intent="fees"))
+    assert missing_slot.action is Action.clarify
+    assert missing_slot.gate_closed is False
+
+    ungrounded = script.advance(
+        script.start(),
+        turn(intent="fees", slots={"faculty": "pharmacy"}, grounded=False),
+    )
+    assert ungrounded.action is Action.clarify
+    assert ungrounded.gate_closed is True

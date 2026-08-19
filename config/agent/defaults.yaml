@@ -12,11 +12,31 @@
 version: 1
 
 # §7.5: below this fused retrieval score the turn routes to the script's
-# fallback node or to handoff, never to answer composition. Deliberately not
-# tuned to a measured value yet — that needs the retrieval layer in P1 and a
-# corpus to measure against. Treat it as a placeholder that fails safe: too
-# high yields extra handoffs, too low yields a hallucinated fee.
-confidence_threshold: 0.55
+# fallback node or to handoff, never to answer composition.
+#
+# 0.55 was a placeholder set before there was a corpus to measure against.
+# There is one now, and it says the threshold cannot do the job it was given.
+# Top fused hit's cosine across the 17 education cases:
+#
+#   must ANSWER  (10 cases)   0.218 - 0.610   median 0.491
+#   must NOT     ( 7 cases)   0.280 - 0.779   median 0.413
+#
+# The populations overlap, and they overlap the wrong way round: the most
+# similar result in the suite (0.779) is a case that must clarify, and the
+# least similar (0.218) is edu-0015 retrieving exactly the right chunk. At
+# 0.55 this gate refused six of the ten cases that must answer — it only ever
+# looked safe because the lexical arm was feeding it a rank-derived 1.0.
+#
+# So it sits at the floor. That is not the protection being switched off:
+# §19.3's invariant is enforced by `check_numeric_grounding`, which refuses to
+# send a figure with no retrieved chunk behind it, and by the fusion layer's
+# gate, which returns no passages when there is nothing to ground on. Those
+# decide from evidence. This one was deciding from a number that does not
+# carry the signal.
+#
+# Raise it only with a fresh version of the table above. A tenant whose corpus
+# does separate cleanly is the case this stays configurable for.
+confidence_threshold: 0.0
 
 # Design §9 handoff trigger. Three loops means the bot has failed to
 # understand and a human should take it, not a fourth rephrasing.

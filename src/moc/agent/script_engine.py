@@ -84,10 +84,15 @@ class ScriptEngine:
         if missing:
             return self._clarify(state, node_name, node, missing)
 
+        # §7.5, as two separate questions. Presence is the one that carries:
+        # with nothing retrieved, composition would have to invent every
+        # figure. The threshold is kept because it is configurable, but it
+        # sits at the floor — measurement showed similarity does not separate
+        # the turns that must answer from the turns that must not.
         uncertain = (
             turn.confidence is not None and turn.confidence < self._confidence_threshold
         )
-        if action is Action.answer and uncertain:
+        if action is Action.answer and (not turn.grounded or uncertain):
             # §7.5 and §19.3. The turn does not reach answer composition; the
             # script's fallback node handles it. A hallucinated tuition figure
             # is a commercial incident, so this is not a tunable behaviour.
@@ -97,9 +102,14 @@ class ScriptEngine:
                 _FALLBACK_NODE,
                 fallback,
                 (),
+                gate_closed=True,
                 reason=(
-                    f"retrieval confidence {turn.confidence} below threshold "
-                    f"{self._confidence_threshold}"
+                    "retrieval returned nothing to ground an answer in"
+                    if not turn.grounded
+                    else (
+                        f"retrieval confidence {turn.confidence} below threshold "
+                        f"{self._confidence_threshold}"
+                    )
                 ),
             )
 
@@ -124,6 +134,7 @@ class ScriptEngine:
         node: dict[str, Any],
         missing: tuple[str, ...],
         reason: str = "",
+        gate_closed: bool = False,
     ) -> Decision:
         clarify = node.get("clarify") or {}
         register = clarify.get("register") or node.get("register", Register.masri)
@@ -134,6 +145,7 @@ class ScriptEngine:
             state=_count_clarification(state, node_name),
             missing_slots=missing,
             ask_for_slot=clarify.get("ask_for_slot") if missing else None,
+            gate_closed=gate_closed,
             reason=reason,
         )
 

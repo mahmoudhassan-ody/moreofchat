@@ -14,11 +14,30 @@ incomparable scales; normalizing them means choosing a normalization that
 nobody can defend when the ranking changes. Rank is the one thing both arms
 agree on the meaning of.
 
-**The confidence gate returns nothing, not something.** §7.5 is a hard rule:
-below the threshold the turn does not reach answer composition. Handing back a
-weak passage would let composition ground a fee on something merely adjacent,
-which is precisely the shape of an invented figure that traces to a real
-chunk. The gate needs an empty result to route on.
+**The gate returns nothing, not something.** §7.5 is a hard rule: a turn that
+retrieval cannot support does not reach answer composition, and the gate needs
+an empty result to route on rather than a weak passage the caller might use
+anyway.
+
+What the gate decides is *presence*, not similarity. It was specified as a
+similarity threshold, and that was measured against the 17 education cases
+and does not work: cases that must be answered scored 0.218-0.610 and cases
+that must not scored 0.280-0.779. The populations overlap almost entirely and
+overlap the wrong way round — the single most similar result in the suite
+(0.779) is a case requiring clarification, and the least similar (0.218) is
+the acceptance case retrieving exactly the right chunk. No cutoff exists.
+
+The reason is structural rather than a matter of tuning. Cosine answers "is
+this chunk similar to the query", and edu-0015 is the case built to show that
+is the wrong question: منحة and خصم share no letters, the synonym map does the
+work, and the dense arm cannot see it. Meanwhile answer-versus-clarify is
+decided by whether the slots are known — which is the script engine's job, not
+retrieval's.
+
+So the gate now closes on what it can actually determine: nothing was
+retrieved, or nothing retrieved has any text to ground on. `min_score` stays
+in config, at the floor, because a tenant whose corpus does separate cleanly
+should be able to raise it without a deploy.
 
 **One arm is a degraded result, not an error** (§7.3). If embeddings are down
 the correct behaviour is Meilisearch-only, and the caller is told which arm was
@@ -229,11 +248,20 @@ async def fuse(
     fused = reciprocal_rank_fusion(available, config=config)
     confidence = confidence_of(fused)
 
+    top = fused[: settings["final_k"]]
+
+    # Presence, not similarity. See the module docstring for the measurement
+    # that moved this: nothing retrieved, or nothing with text on it, means
+    # composition would have to invent every figure in the reply.
+    nothing_to_ground_on = not any(hit.content.strip() for hit in top)
+
     # An uncalibrated result cannot be thresholded. Skipping the comparison
     # rather than defaulting it means an embedding outage degrades to
-    # lexical-only (§7.3) instead of closing on every turn.
+    # lexical-only (§7.3) instead of closing on every turn. At the configured
+    # floor this never fires; it stays wired for a tenant who raises it.
     below = confidence is not None and confidence < settings["min_score"]
-    if not fused or below:
+
+    if nothing_to_ground_on or below:
         # §7.5. Empty, not low-ranked: the gate needs a result it can route on,
         # and a weak passage handed onward is a fee grounded in something
         # merely adjacent.
@@ -244,7 +272,6 @@ async def fuse(
             gate_closed=True,
         )
 
-    top = fused[: settings["final_k"]]
     if reranker is not None:
         top = await reranker.rerank(query=query, hits=top, top_k=settings["final_k"])
 

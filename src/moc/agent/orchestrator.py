@@ -166,8 +166,15 @@ class Orchestrator:
 
         turn = await self._extractor.extract(text=redaction.text, state=state)
         retrieval = await self._retriever.search(query=redaction.text)
-        # The extractor's own confidence, if it reported one, is discarded here.
-        turn = replace(turn, confidence=retrieval.confidence)
+        # The extractor's own confidence, if it reported one, is discarded
+        # here. `grounded` is the §7.5 gate's real input: a script constant
+        # counts, because §3.1 lets the script state figures the corpus does
+        # not carry.
+        turn = replace(
+            turn,
+            confidence=retrieval.confidence,
+            grounded=bool(retrieval.passages or retrieval.script_constants),
+        )
 
         decision = self._engine.advance(state, turn)
         result = await self._resolve(session, decision, retrieval, redaction, channel)
@@ -290,7 +297,7 @@ class Orchestrator:
         """
         if decision.action is Action.handoff:
             return _HANDOFF
-        if decision.reason.startswith("retrieval confidence"):
+        if decision.gate_closed:
             return _LOW_CONFIDENCE
         return _CLARIFY
 

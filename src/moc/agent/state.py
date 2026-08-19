@@ -45,6 +45,11 @@ class TurnInput:
     `confidence` is the fused retrieval score (§7.5), not the model's own
     reported certainty — a model's self-assessment is not evidence that the
     knowledge base contains the fee.
+
+    `grounded` is what the §7.5 gate actually decides on: whether retrieval
+    returned anything to ground an answer in. It carries the signal the
+    confidence threshold was assumed to carry and does not — see
+    `config/retrieval/lexical.yaml` for the measurement.
     """
 
     intent: str | None
@@ -52,6 +57,10 @@ class TurnInput:
     #: None when retrieval had no calibrated score to report. The gate must
     #: not treat that as a low score — see `ScriptEngine.decide`.
     confidence: float | None = None
+    #: At least one retrieved passage, or a script constant, to answer from.
+    #: Defaults False so a caller that never sets it cannot compose a figure
+    #: out of nothing by omission.
+    grounded: bool = False
     explicit_handoff_request: bool = False
 
 
@@ -107,4 +116,9 @@ class Decision:
     missing_slots: tuple[str, ...] = ()
     ask_for_slot: str | None = None
     grounding_required: bool = False
+    #: The turn was refused by the §7.5 gate rather than by a missing slot.
+    #: A flag rather than a prefix on `reason`: the customer-visible reply is
+    #: chosen from this, and matching on the wording of a diagnostic string
+    #: means rephrasing that string silently changes what customers are told.
+    gate_closed: bool = False
     reason: str = ""
