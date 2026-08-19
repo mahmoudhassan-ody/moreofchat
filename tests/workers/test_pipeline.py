@@ -29,6 +29,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import text as sql
+from sqlalchemy import text as sql_text
 
 from moc.agent.orchestrator import Orchestrator, Retrieval
 from moc.agent.script_engine import ScriptEngine
@@ -85,15 +86,18 @@ class FixedExtractor:
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def tenant(engine):
+async def tenant(engine, tenant_tables):
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from moc.tenancy.models import Tenant
 
     async with AsyncSession(engine, expire_on_commit=False) as s:
-        await s.execute(sql("DELETE FROM usage_ledger"))
-        await s.execute(sql("DELETE FROM conversations"))
-        await s.execute(sql("DELETE FROM tenants"))
+        # The shared ordering from conftest rather than a local list: this
+        # fixture already went stale once when new tenant-scoped tables
+        # landed, and a stale list here reads as a foreign-key error in an
+        # unrelated test.
+        for table in tenant_tables:
+            await s.execute(sql(f"DELETE FROM {table}"))  # noqa: S608
         row = Tenant(slug="pipeline", name="Pipeline", vertical="education")
         s.add(row)
         await s.commit()
@@ -495,3 +499,170 @@ async def test_the_rate_limiter_is_shared_across_sender_processes(valkey):
     assert taken == limit["capacity"], (
         "the two processes drew from separate buckets — each would allow the full rate"
     )
+
+
+# ─────────────────── the thread an agent will read (§9) ───────────────────
+#
+# The inbox tables existed and were tested before anything populated them, so
+# a real handoff would have shown an agent an empty thread — the acceptance
+# criterion held in tests and not in production. These close that.
+
+
+async def test_a_turn_records_both_sides_of_the_conversation(valkey, app_engine, account):
+    """The customer's words and the bot's reply, in order.
+
+    Written inside the turn's transaction, not after it. A thread that can
+    disagree with the conversation state is one an agent reads while the bot
+    believes something else — and the disagreement appears exactly when a turn
+    half-fails, which is when a human is most likely to be looking.
+    """
+    from moc.agent.handoff import MessageLog
+    from moc.tenancy.context import tenant_session
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
+
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+    )
+    await worker.run_once()
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        contact_id = (
+            await session.execute(
+                sql_text("SELECT contact_id FROM conversations WHERE sender_ref = :s"),
+                {"s": CUSTOMER},
+            )
+        ).scalar_one()
+        assert contact_id is not None, "the turn must attach the thread to a contact"
+        thread = await MessageLog(session=session).history_for_contact(contact_id=contact_id)
+
+    assert [m.author for m in thread] == ["customer", "bot"]
+    assert thread[0].body == "كام رسوم الساعة؟"
+    assert thread[1].body, "the bot's reply is part of the thread the agent reads"
+    assert all(m.channel == "whatsapp" for m in thread)
+
+
+async def test_a_contact_is_created_once_and_reused_across_turns(
+    valkey, app_engine, account
+):
+    """One customer, one contact row.
+
+    A contact per message would make the agent's thread one message long and
+    defeat the join the inbox reads through.
+    """
+    from moc.tenancy.context import tenant_session
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+    )
+    for n in range(3):
+        await deliver(app, form(MessageSid=f"SM-contact-{n}", Body=f"سؤال {n}"))
+        await worker.run_once()
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        contacts = (
+            await session.execute(sql_text("SELECT count(*) FROM contacts"))
+        ).scalar_one()
+        messages = (
+            await session.execute(sql_text("SELECT count(*) FROM messages"))
+        ).scalar_one()
+
+    assert contacts == 1
+    assert messages == 6, "three turns, both sides of each"
+
+
+async def test_a_handed_off_conversation_shows_the_agent_what_happened(
+    valkey, app_engine, account
+):
+    """P1's acceptance criterion, end to end.
+
+    A real conversation runs through the webhook and the worker, a handoff is
+    opened on it, and the inbox thread returns the messages that actually
+    happened — rather than an empty list, which is what it returned while the
+    tables existed and nothing wrote to them.
+    """
+    import httpx
+
+    from moc.agent.handoff import HandoffStore
+    from moc.api.inbox import AgentPrincipal, build_inbox
+    from moc.tenancy.context import tenant_session
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form(MessageSid="SM-handoff-1"))
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+    )
+    await worker.run_once()
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        row = (
+            await session.execute(
+                sql_text("SELECT id, state FROM conversations WHERE sender_ref = :s"),
+                {"s": CUSTOMER},
+            )
+        ).one()
+        opened = await HandoffStore(session=session).open(
+            conversation_id=row.id, reason="customer asked for a human", resume_state=row.state
+        )
+        await session.commit()
+
+    class Publisher:
+        def __init__(self) -> None:
+            self.jobs: list = []
+
+        async def publish(self, job) -> None:
+            self.jobs.append(job)
+
+    class Events:
+        async def publish(self, *, tenant_id, event) -> None:
+            return None
+
+        async def subscribe(self, *, tenant_id):
+            return
+            yield  # pragma: no cover
+
+    async def authenticate(request) -> AgentPrincipal:
+        return AgentPrincipal(tenant_id=account.tenant_id, agent_id="agent-1")
+
+    inbox = build_inbox(
+        engine=app_engine,
+        publisher=Publisher(),
+        events=Events(),
+        authenticate=authenticate,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=inbox), base_url="https://moc.example"
+    ) as client:
+        listed = await client.get("/inbox")
+        thread = await client.get(f"/inbox/{opened.id}/thread")
+
+    assert [item["reason"] for item in listed.json()] == ["customer asked for a human"]
+    bodies = [message["body"] for message in thread.json()]
+    assert "كام رسوم الساعة؟" in bodies, "the agent must see what the customer actually wrote"
+    assert len(bodies) == 2

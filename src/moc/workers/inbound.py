@@ -20,6 +20,7 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from moc.agent.conversations import ConversationStore
+from moc.agent.handoff import BOT, CUSTOMER, ContactStore, MessageLog
 from moc.agent.script_engine import ScriptEngine
 from moc.channels.base import InboundMessage, OutboundJob
 from moc.channels.valkey import decode
@@ -76,13 +77,39 @@ class InboundWorker:
                 text=message.text or "",
                 channel=str(message.channel),
             )
-            await store.save(
+            # The person behind the address (§9). Resolved before the upsert
+            # so a first message arrives with its contact already attached —
+            # a conversation that exists for a while without one is a thread
+            # the inbox cannot join, and backfilling it later is guesswork.
+            contact_id = await ContactStore(session=session).resolve(
+                contact_ref=message.sender_ref
+            )
+            conversation_id = await store.save(
                 channel=str(message.channel),
                 sender_ref=message.sender_ref,
                 channel_account_id=message.channel_account_id,
                 last_inbound_at=message.received_at,
                 state=result.state,
+                contact_id=contact_id,
             )
+            # Both sides, inside the turn's transaction. A thread that can
+            # disagree with the conversation state is one an agent reads while
+            # the bot believes something else — and they diverge exactly when
+            # a turn half-fails, which is when a human is most likely looking.
+            log = MessageLog(session=session)
+            await log.append(
+                conversation_id=conversation_id,
+                channel=str(message.channel),
+                author=CUSTOMER,
+                body=message.text,
+            )
+            if result.reply:
+                await log.append(
+                    conversation_id=conversation_id,
+                    channel=str(message.channel),
+                    author=BOT,
+                    body=result.reply,
+                )
             await session.commit()
 
         await self._enqueue_reply(message, result.reply)

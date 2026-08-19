@@ -34,18 +34,24 @@ WHERE channel = :channel AND sender_ref = :sender_ref
 _UPSERT = text(
     """
 INSERT INTO conversations (
-  id, tenant_id, state, channel, sender_ref, channel_account_id, last_inbound_at
+  id, tenant_id, state, channel, sender_ref, channel_account_id, last_inbound_at,
+  contact_id
 ) VALUES (
   :id,
   nullif(current_setting('moc.tenant_id', true), '')::uuid,
-  cast(:state as jsonb), :channel, :sender_ref, :channel_account_id, :last_inbound_at
+  cast(:state as jsonb), :channel, :sender_ref, :channel_account_id, :last_inbound_at,
+  :contact_id
 )
 ON CONFLICT (tenant_id, channel, sender_ref)
   WHERE channel IS NOT NULL AND sender_ref IS NOT NULL
 DO UPDATE SET
   state = EXCLUDED.state,
   channel_account_id = EXCLUDED.channel_account_id,
-  last_inbound_at = EXCLUDED.last_inbound_at
+  last_inbound_at = EXCLUDED.last_inbound_at,
+  -- coalesce, not overwrite: an operator may have merged this conversation
+  -- onto another contact, and a later turn must not silently unmerge it.
+  contact_id = coalesce(conversations.contact_id, EXCLUDED.contact_id)
+RETURNING id
 """
 )
 
@@ -79,10 +85,18 @@ class ConversationStore:
         channel_account_id: UUID | None,
         last_inbound_at: datetime | None,
         state: ConversationState,
-    ) -> None:
+        contact_id: UUID | None = None,
+    ) -> UUID:
+        """Upsert the thread and return its id.
+
+        The id is returned because the caller writes the turn's messages
+        against it in the same transaction. Fetching it separately would be a
+        second statement that can see a different row than the one just
+        written, under a concurrent delivery for the same customer.
+        """
         import json
 
-        await self._session.execute(
+        result = await self._session.execute(
             _UPSERT,
             {
                 "id": uuid4(),
@@ -91,8 +105,10 @@ class ConversationStore:
                 "sender_ref": sender_ref,
                 "channel_account_id": channel_account_id,
                 "last_inbound_at": last_inbound_at,
+                "contact_id": contact_id,
             },
         )
+        return result.scalar_one()
 
 
 __all__ = ["ConversationStore"]

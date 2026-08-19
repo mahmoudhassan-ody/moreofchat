@@ -193,6 +193,56 @@ class HandoffStore:
         return handoff
 
 
+#: Upsert on (tenant_id, contact_ref). `DO UPDATE` rather than `DO NOTHING`
+#: because `RETURNING` yields no row for a conflict that did nothing, and a
+#: second round trip to fetch the id would be a race with a concurrent turn
+#: for the same customer.
+_RESOLVE_CONTACT = text("""
+INSERT INTO contacts (id, tenant_id, contact_ref, display_name)
+VALUES (
+  :id,
+  nullif(current_setting('moc.tenant_id', true), '')::uuid,
+  :contact_ref,
+  :display_name
+)
+ON CONFLICT (tenant_id, contact_ref) DO UPDATE
+  SET display_name = coalesce(contacts.display_name, EXCLUDED.display_name)
+RETURNING id
+""")
+
+
+class ContactStore:
+    """The person behind an address.
+
+    One contact per `contact_ref`, which for now is the channel address the
+    customer wrote from. That means a customer who uses WhatsApp and Instagram
+    starts as two contacts, and the schema is what lets them later become one.
+
+    Deliberately not merged automatically: knowing that a phone number and an
+    Instagram handle are the same person requires evidence this pipeline does
+    not have, and guessing would join two strangers' conversations into one
+    thread and show each of them the other's messages. Merging is an operator
+    action, and the `contact_id` on `conversations` is where it lands.
+    """
+
+    def __init__(self, *, session: AsyncSession) -> None:
+        self._session = session
+
+    async def resolve(
+        self, *, contact_ref: str, display_name: str | None = None
+    ) -> uuid.UUID:
+        return (
+            await self._session.execute(
+                _RESOLVE_CONTACT,
+                {
+                    "id": uuid.uuid4(),
+                    "contact_ref": contact_ref,
+                    "display_name": display_name,
+                },
+            )
+        ).scalar_one()
+
+
 _APPEND = text("""
 INSERT INTO messages (id, tenant_id, conversation_id, channel, author, body)
 SELECT :id, c.tenant_id, c.id, :channel, :author, :body
@@ -271,4 +321,13 @@ class MessageLog:
         return [Message(**row._mapping) for row in rows]
 
 
-__all__ = ["AGENT", "BOT", "CUSTOMER", "Handoff", "HandoffStore", "Message", "MessageLog"]
+__all__ = [
+    "AGENT",
+    "BOT",
+    "CUSTOMER",
+    "ContactStore",
+    "Handoff",
+    "HandoffStore",
+    "Message",
+    "MessageLog",
+]
