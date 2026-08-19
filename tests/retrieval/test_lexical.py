@@ -457,3 +457,75 @@ async def test_the_price_of_frequency_is_recorded_not_absorbed(corpus):
         "if this now returns hits, re-run the strategy comparison — the "
         "reason `frequency` cost us a natural query may be gone"
     )
+
+
+async def test_a_title_match_outranks_an_incidental_body_match(client):
+    """What the attribute order buys, isolated from everything else.
+
+    Meilisearch's `attribute` rule ranks a match in an earlier-listed
+    attribute above one in a later attribute. With content ahead of title, a
+    chunk whose body merely mentions the subject beat a chunk titled with it —
+    so in a Q&A corpus, where the title is the question, the chunk that
+    answers lost to whichever chunk happened to repeat the phrase.
+    """
+    index_name = "test_lex_attr"
+    await client.delete_index_if_exists(index_name)
+    await client.create_index(index_name, primary_key="point_id")
+    index = client.index(index_name)
+    await client.wait_for_task(
+        (
+            await index.update_searchable_attributes(
+                CONFIG["meilisearch"]["searchable_attributes"]
+            )
+        ).task_uid
+    )
+    await client.wait_for_task(
+        (
+            await index.add_documents(
+                [
+                    # The answer: the subject is in the title, the body is the figure.
+                    {
+                        "point_id": "answer",
+                        "title": "رسوم التقديم",
+                        "title_normalized": "رسوم التقديم",
+                        "content": "2000 جنيه مصري",
+                        "content_normalized": "2000 جنيه مصري",
+                    },
+                    # Another topic that happens to mention the subject in passing.
+                    {
+                        "point_id": "aside",
+                        "title": "السكن الجامعي",
+                        "title_normalized": "السكن الجامعي",
+                        "content": "رسوم التقديم غير مستردة",
+                        "content_normalized": "رسوم التقديم غير مستردة",
+                    },
+                ]
+            )
+        ).task_uid
+    )
+    found = await index.search("رسوم التقديم", limit=10)
+    await client.delete_index_if_exists(index_name)
+    assert [hit["point_id"] for hit in found.hits] == ["answer", "aside"]
+
+
+async def test_the_fee_chunk_is_retrievable_at_all_for_the_fee_question(corpus):
+    """edu-0002, on the arm that can be asserted here.
+
+    The attribute order lifts `sinai_fee_application_initial_ar` but does not
+    put it first: both candidate titles contain رسوم التقديم, and the refund
+    chunk carries the phrase earlier within its title, which Meilisearch also
+    weighs. What actually settles edu-0002 is the dense arm, once the chunk is
+    embedded on a text that mentions the fee at all — see
+    `embedding_text` and its tests.
+    """
+    repository, tenant = corpus
+    found = await chunk_ids(repository, tenant, "رسوم التقديم كام؟")
+    assert "sinai_fee_application_initial_ar" in found[:5]
+
+
+def test_the_title_is_the_first_searchable_attribute():
+    """§19, and the order *is* the ranking rule — not a listing convention."""
+    assert CONFIG["meilisearch"]["searchable_attributes"][:2] == [
+        "title_normalized",
+        "title",
+    ]

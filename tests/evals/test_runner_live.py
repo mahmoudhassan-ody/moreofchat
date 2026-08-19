@@ -30,12 +30,14 @@ from moc.evals.runner import CaseRunner, summarize
 from moc.llm.anthropic_direct import AnthropicDirect
 from moc.llm.openai_direct import OpenAIDirect
 from moc.llm.router import Router
+from moc.retrieval.chunker import embedding_text
 from moc.retrieval.fusion import FusionRetriever
 from moc.retrieval.lexical import (
     LexicalDocument,
     MeilisearchAdmin,
     MeilisearchRepository,
 )
+from moc.retrieval.vectors import QdrantAdmin, QdrantRepository, VectorPoint
 from moc.tenancy.context import tenant_session
 
 pytestmark = pytest.mark.live
@@ -54,6 +56,16 @@ def key(name: str) -> str:
     if not value:
         pytest.skip(f"{name} not set")
     return value
+
+
+class Embedder:
+    """`Router.embed` behind the one-method shape fusion asks for."""
+
+    def __init__(self, router: Router) -> None:
+        self._router = router
+
+    async def embed(self, *, texts):
+        return await self._router.embed(texts=texts)
 
 
 class SlotExtractor:
@@ -81,10 +93,18 @@ class SlotExtractor:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def corpus(app_engine, engine):
-    """The frozen sinai fixture in Meilisearch, under one tenant."""
+    """The frozen sinai fixture in BOTH arms, under one tenant.
+
+    Both, deliberately. An earlier version of this fixture built the retriever
+    with no dense arm, so the suite silently measured §7.3's degraded shape —
+    Meilisearch alone — and the recall it reported was read as fusion recall.
+    A missing arm has no behavioural signature: every case still runs, the
+    number is merely lower and nobody can tell why.
+    """
     import json
 
     from meilisearch_python_sdk import AsyncClient
+    from qdrant_client import AsyncQdrantClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from moc.config import settings
@@ -122,7 +142,35 @@ async def corpus(app_engine, engine):
             for r in records
         ],
     )
-    yield lexical, tenant, len(records)
+    qdrant = AsyncQdrantClient(
+        url=f"http://{settings.qdrant_host}:{settings.qdrant_port}",
+        api_key=settings.qdrant_key or None,
+    )
+    await QdrantAdmin(client=qdrant).ensure_collections()
+    dense = QdrantRepository(client=qdrant)
+    embedder = Embedder(Router(config=ROUTING, providers={
+        "openai": OpenAIDirect(api_key=key("MOC_OPENAI_API_KEY"), http=ROUTING["http"])
+    }))
+    vectors = await embedder.embed(
+        texts=[embedding_text(title=r["title"], content=r["content"]) for r in records]
+    )
+    await dense.upsert(
+        tenant_id=tenant.id,
+        vertical="education",
+        points=[
+            VectorPoint(chunk_id=r["chunk_id"], vector=v, payload={"content": r["content"]})
+            for r, v in zip(records, vectors, strict=True)
+        ],
+    )
+
+    yield lexical, dense, embedder, tenant, len(records)
+
+    await dense.delete(
+        tenant_id=tenant.id,
+        vertical="education",
+        chunk_ids=[r["chunk_id"] for r in records],
+    )
+    await qdrant.close()
     for name in RUN_INDEXES.values():
         await client.delete_index_if_exists(name)
     await client.aclose()
@@ -130,7 +178,7 @@ async def corpus(app_engine, engine):
 
 async def test_live_the_education_suite_produces_a_report(corpus, app_engine, capsys):
     """All 17 education cases, real retrieval, real models, both stages."""
-    lexical, tenant, chunk_count = corpus
+    lexical, dense, embedder, tenant, chunk_count = corpus
     providers = {
         "anthropic": AnthropicDirect(
             api_key=key("MOC_ANTHROPIC_API_KEY"), http=ROUTING["http"]
@@ -139,7 +187,12 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
     }
     router = Router(config=ROUTING, providers=providers)
     retriever = FusionRetriever(
-        lexical=lexical, tenant_id=tenant.id, vertical="education", config=RUN_CONFIG
+        lexical=lexical,
+        dense=dense,
+        embedder=embedder,
+        tenant_id=tenant.id,
+        vertical="education",
+        config=RUN_CONFIG,
     )
     runner = CaseRunner(
         orchestrator=Orchestrator(

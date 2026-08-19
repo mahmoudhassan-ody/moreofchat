@@ -46,6 +46,36 @@ class Chunk:
         return len(self.content)
 
 
+def embedding_text(*, title: str | None, content: str) -> str:
+    """The text a chunk is embedded as: its title, then its body.
+
+    One function because there must be exactly one answer. The dense arm can
+    only retrieve what its vector describes, and a chunk embedded on the wrong
+    text fails silently — it simply never comes back, at any k, for any query,
+    and looks like a corpus that does not cover the topic.
+
+    edu-0002 is that failure in full. `sinai_fee_application_initial_ar` is
+    the title "ما قيمة رسوم التقديم المبدئي؟" over the content "2000 جنيه
+    مصري": fourteen characters naming neither the fee nor the word رسوم.
+    Embedded on content alone its vector says "a sum of money in EGP", so
+    "رسوم التقديم كام؟" could not reach it — while the *refund* chunk, whose
+    body repeats رسوم التقديم, came back first in both arms. A Q&A corpus
+    keeps its subject in the title, and a passage that drops the question
+    keeps only the answer to a question nobody can now find.
+
+    The original text, never the normalized form: normalization exists to
+    match spelling variants in the lexical arm, and folding ة to ه before
+    embedding just hands the model a misspelling.
+    """
+    heading = (title or "").strip()
+    if not heading or content.lstrip().startswith(heading):
+        # A heading duplicated into its own body is one passage, not two.
+        # Repeating it raises its term frequency in the embedded text and
+        # tilts the vector toward the heading over the substance.
+        return content
+    return f"{heading}\n{content}"
+
+
 @lru_cache(maxsize=8)
 def _splitter(terminators: str) -> re.Pattern[str]:
     """Split *after* a terminator, but only when whitespace or the end follows.
@@ -131,4 +161,4 @@ def _overlap_tail(sentences: list[str], budget: int) -> list[str]:
     return tail
 
 
-__all__ = ["Chunk", "chunk_text", "split_sentences"]
+__all__ = ["Chunk", "chunk_text", "embedding_text", "split_sentences"]

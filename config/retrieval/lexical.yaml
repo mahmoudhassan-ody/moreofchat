@@ -51,11 +51,22 @@ meilisearch:
   # Both forms are searchable (§7.1). The original carries the tenant's own
   # spelling, the normalized one carries the spelling customers type — a query
   # for القنطره has to reach a chunk written القنطرة.
+  #
+  # Title first, and the order is the ranking. Meilisearch's `attribute` rule
+  # ranks a match in an earlier-listed attribute above one in a later
+  # attribute, so with content first a chunk matching only in its title lost
+  # to any chunk matching in its body — however incidentally.
+  #
+  # This corpus is Q&A shaped: the title is the question, the content is the
+  # answer. "رسوم التقديم كام؟" was answered with the *refund* chunk, whose
+  # body happens to repeat رسوم التقديم, over the chunk titled "ما قيمة رسوم
+  # التقديم المبدئي؟" whose body is the bare figure "2000 جنيه مصري". The
+  # right chunk was outranked structurally rather than on relevance.
   searchable_attributes:
-    - content_normalized
-    - content
     - title_normalized
     - title
+    - content_normalized
+    - content
 
   # Typo tolerance does real work on Franco-Arab and misspelled Arabic (§7.4).
   # Left on deliberately: turning it off makes exact-match recall look better

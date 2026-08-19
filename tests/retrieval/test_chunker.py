@@ -14,7 +14,7 @@ retrieval-quality knob that needs a deploy to turn.
 import pytest
 
 from moc.config_store import load
-from moc.retrieval.chunker import Chunk, chunk_text
+from moc.retrieval.chunker import Chunk, chunk_text, embedding_text
 
 CONFIG = load("retrieval/defaults")
 CHUNKING = CONFIG["chunking"]
@@ -162,3 +162,44 @@ def test_the_chunk_carries_what_the_payload_needs():
     produced = chunk_text(FEE)[0]
     assert isinstance(produced, Chunk)
     assert produced.char_count == len(FEE)
+
+
+# ─────────────────────── what a chunk is embedded as ───────────────────────
+
+
+def test_the_embedded_text_carries_the_title():
+    """edu-0002, and the reason it is a chunking problem rather than a
+    ranking one.
+
+    `sinai_fee_application_initial_ar` is title "ما قيمة رسوم التقديم
+    المبدئي؟" over content "2000 جنيه مصري" — fourteen characters that name
+    neither the fee nor the word رسوم. Embedded on content alone its vector
+    says "a sum of money in EGP" and nothing about application fees, so the
+    dense arm could not retrieve it for "رسوم التقديم كام؟" at any k. The
+    question is in the title; a Q&A corpus keeps its subject there.
+    """
+    text = embedding_text(title="ما قيمة رسوم التقديم المبدئي؟", content="2000 جنيه مصري")
+    assert "رسوم التقديم" in text
+    assert "2000 جنيه مصري" in text
+
+
+def test_the_title_is_not_repeated_when_the_content_already_opens_with_it():
+    """A heading duplicated into its own body is one passage, not two.
+
+    Repetition is not free: it raises the title's term frequency in the
+    embedded text and tilts the vector toward the heading over the substance.
+    """
+    text = embedding_text(title="الخصم", content="الخصم متاح لكل الكليات")
+    assert text == "الخصم متاح لكل الكليات"
+
+
+def test_a_chunk_with_no_title_embeds_as_its_content():
+    assert embedding_text(title=None, content="2000 جنيه مصري") == "2000 جنيه مصري"
+    assert embedding_text(title="   ", content="2000 جنيه مصري") == "2000 جنيه مصري"
+
+
+def test_the_embedded_text_is_the_original_not_the_normalized_form():
+    """Vectors are built from what the tenant wrote. Normalization exists for
+    the lexical arm, where it matches spelling variants; folding ة to ه before
+    embedding just hands the model a misspelling."""
+    assert embedding_text(title="القنطرة", content="فرع القنطرة") == "القنطرة\nفرع القنطرة"
