@@ -333,3 +333,60 @@ class Handoff(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InventoryUnit(Base):
+    """Mirrors migration 0009. Structured inventory (§3.2).
+
+    Deliberately not chunks. A unit's price is answered from this row —
+    filtered on availability, carrying its own `as_of` — and the broker
+    fixture is kept out of `kb_chunks` so there is no second path to the same
+    figure that skips both.
+    """
+
+    __tablename__ = "inventory_units"
+    __table_args__ = (
+        Index("uq_inventory_units_tenant_unit", "tenant_id", "unit_id", unique=True),
+        Index(
+            "ix_inventory_units_search",
+            "tenant_id",
+            "availability",
+            "city",
+            "property_type",
+        ),
+        Index("ix_inventory_units_compound", "tenant_id", "compound"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    unit_id: Mapped[str] = mapped_column(Text)
+    fixture: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A column, not a constant: two tenants ingest on different days, and a
+    #: snapshot date in config would attach one tenant's freshness to another's
+    #: inventory.
+    as_of: Mapped[date] = mapped_column(Date)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    listing_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    property_type: Mapped[str] = mapped_column(Text)
+    compound: Mapped[str | None] = mapped_column(Text, nullable=True)
+    area: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(Text)
+    unit_area_sqm: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    bedrooms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bathrooms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finish: Mapped[str | None] = mapped_column(Text, nullable=True)
+    furnished: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    #: Never read without the connector's predicate. The guarantee is
+    #: structural in `retrieval/inventory.py`, because SQL cannot express
+    #: "these rows are never selected".
+    availability: Mapped[str] = mapped_column(Text)
+    delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    project_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

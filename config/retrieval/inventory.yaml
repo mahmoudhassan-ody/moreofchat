@@ -1,0 +1,30 @@
+# Structured inventory — platform tier (design §19.1), implementing §3.2.
+#
+# The status vocabulary lives here rather than in code because every broker CRM
+# spells it differently ("available" / "vacant" / "free", "reserved" / "on
+# hold"). What is *not* configurable is that a unit which is not available may
+# never be presented as available — §19.3 lists that among the four fixed
+# product guarantees, and `retrieval/inventory.py` enforces it structurally:
+# there is no expression in that module which reads the table without this
+# predicate.
+#
+# `config/evals/inventory.yaml` restates `available_status` for the grading
+# side. The duplication is deliberate — the eval harness must be able to grade
+# a run whose runtime config it does not share — and
+# `test_the_eval_vocabulary_agrees_with_the_runtime_one` fails if they drift.
+
+version: 1
+
+available_status: available
+
+query:
+  # How many units one search returns. A reply naming more than a handful of
+  # units is a reply nobody reads, and the model is given exactly what may be
+  # said — so this bounds the answer, not just the query.
+  default_limit: 5
+  # A ceiling the caller cannot exceed, so a bug upstream cannot turn one
+  # question into a scan of the whole catalogue.
+  max_limit: 50
+  # Cheapest first. A customer who named a budget is shopping under it, and
+  # leading with the most expensive match reads as upselling.
+  order_by: price
