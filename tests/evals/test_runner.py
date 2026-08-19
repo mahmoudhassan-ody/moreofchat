@@ -44,6 +44,23 @@ GROUNDED = "رسوم الساعة المعتمدة لكلية الهندسة 140
 PASSAGE = "رسوم الساعة المعتمدة لكلية الهندسة 1400 جنيه للعام الدراسي 2026"
 
 
+class PerTurnRetriever:
+    """Returns a different chunk id per turn, so which turn was measured is
+    visible in the recall number rather than inferable."""
+
+    def __init__(self, *, by_turn):
+        self._by_turn = list(by_turn)
+        self.queries: list[str] = []
+
+    async def search(self, *, query: str) -> Retrieval:
+        return Retrieval(passages=(PASSAGE,), confidence=0.9)
+
+    async def chunk_ids_for(self, *, query: str) -> tuple[str, ...]:
+        index = min(len(self.queries), len(self._by_turn) - 1)
+        self.queries.append(query)
+        return tuple(self._by_turn[index])
+
+
 class RecordingRetriever:
     """Records every query it is asked, and what it returned.
 
@@ -244,6 +261,66 @@ async def test_multi_turn_case_carries_state_between_turns(session_tenant):
 
 
 # ─────────────────────────── recall ───────────────────────────
+
+
+async def test_recall_is_measured_on_the_turn_that_claims_the_chunk(session_tenant):
+    """Not on the last turn, which is only a proxy for it.
+
+    A multi-turn case ends on whatever the customer said last, and in Masri
+    that is usually a slot answer — "ثانوية عامة، طب أسنان" — which carries
+    none of the vocabulary of the question it is answering. Measuring
+    retrieval there scores the conversation's punctuation rather than its
+    question.
+
+    `expected_facts[].source_chunk` already says which turn was supposed to
+    find what. This asserts the runner reads it: the gold chunk is retrieved
+    on turn 2, which is the turn that claims it, and not on turn 3.
+    """
+    session, _ = session_tenant
+    retriever = PerTurnRetriever(by_turn=[["other"], ["chunk-1"], ["unrelated"]])
+    run, _, _ = build(retriever=retriever)
+    case = a_case(
+        id="edu-claims-turn-2",
+        category="multi_turn_slots",
+        gold_chunks=["chunk-1"],
+        turns=[
+            {"user": "عايز أعرف المصاريف", "expected_action": "clarify"},
+            {
+                "user": "صيدلة",
+                "expected_action": "answer",
+                "expected_facts": [
+                    {"id": "f1", "claim": "the pharmacy fee", "source_chunk": "chunk-1"}
+                ],
+            },
+            {"user": "شكرا", "expected_action": "answer"},
+        ],
+    )
+    outcome = await run.run_case(case, session=session)
+    assert outcome.recall_at_5 == 1.0, (
+        "the gold chunk was retrieved on the turn that claims it; scoring the "
+        "last turn instead reports a miss that did not happen"
+    )
+
+
+async def test_a_gold_chunk_no_turn_claims_may_be_found_on_any_turn(session_tenant):
+    """When the case names gold but no fact traces to it, the conversation as
+    a whole was meant to surface it. Falling back to the last turn would be
+    the same positional guess by another name."""
+    session, _ = session_tenant
+    retriever = PerTurnRetriever(by_turn=[["chunk-1"], ["other"], ["unrelated"]])
+    run, _, _ = build(retriever=retriever)
+    case = a_case(
+        id="edu-claims-nothing",
+        category="multi_turn_slots",
+        gold_chunks=["chunk-1"],
+        turns=[
+            {"user": "عايز أعرف المصاريف", "expected_action": "clarify"},
+            {"user": "صيدلة", "expected_action": "answer"},
+            {"user": "شكرا", "expected_action": "answer"},
+        ],
+    )
+    outcome = await run.run_case(case, session=session)
+    assert outcome.recall_at_5 == 1.0
 
 
 def test_recall_is_measured_against_gold_chunks_not_fed_from_them():

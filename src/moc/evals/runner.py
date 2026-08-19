@@ -220,7 +220,7 @@ class CaseRunner:
             vertical=str(case.vertical),
             category=str(case.category),
             turns=tuple(turns),
-            recall_at_5=_recall_for(case, retrieved),
+            recall_at_5=_recall_for(case, tuple(turns)),
         )
 
     def _stage_one(self, turn: Turn, result: Any) -> list[CheckResult]:
@@ -291,15 +291,55 @@ class CaseRunner:
         return capture(git_sha=git_sha, tasks=tuple(tasks))
 
 
-def _recall_for(case: EvalCase, retrieved: Sequence[str]) -> float | None:
+def _turns_claiming(case: EvalCase, chunk_id: str) -> tuple[int, ...]:
+    """Which turns were supposed to retrieve `chunk_id`.
+
+    `expected_facts[].source_chunk` already records this; nothing else has to
+    be authored. A turn claims a chunk when one of its facts traces to it.
+    """
+    return tuple(
+        index
+        for index, turn in enumerate(case.turns)
+        if any(fact.source_chunk == chunk_id for fact in turn.expected_facts)
+    )
+
+
+def _recall_for(case: EvalCase, turns: Sequence[TurnOutcome]) -> float | None:
     """The only place `gold_chunks` is read.
 
     Enforced by `test_retrieval_is_real_not_injected`. If this attribute is
     touched anywhere else in the module, gold-shaped data has moved one step
     closer to the orchestrator — and the suite stops testing retrieval while
     still reporting a number.
+
+    **Measured on the turn that claims the chunk, not the last one.** A
+    multi-turn conversation ends wherever the customer stopped talking, and in
+    Masri that is usually a slot answer — edu-0007 closes on "ثانوية عامة، طب
+    أسنان", which carries none of the vocabulary of the question it answers.
+    Scoring retrieval there measures the conversation's punctuation rather
+    than its question, and reports a miss for a chunk the run found perfectly
+    well one turn earlier.
+
+    A gold chunk that no fact traces to is looked for across every turn: the
+    case says the conversation should surface it without saying when, and
+    picking the last turn would be the same positional guess wearing a
+    different justification.
     """
-    return recall_at_k(retrieved=retrieved, gold=case.gold_chunks, k=_RECALL_K)
+    if not case.gold_chunks:
+        return None
+    retrieved_by_turn = {turn.turn_index: turn.retrieved_chunk_ids for turn in turns}
+    found = 0.0
+    for chunk_id in case.gold_chunks:
+        claiming = _turns_claiming(case, chunk_id) or tuple(retrieved_by_turn)
+        pooled = tuple(
+            dict.fromkeys(
+                chunk
+                for index in claiming
+                for chunk in retrieved_by_turn.get(index, ())[:_RECALL_K]
+            )
+        )
+        found += recall_at_k(retrieved=pooled, gold=(chunk_id,), k=len(pooled)) or 0.0
+    return found / len(case.gold_chunks)
 
 
 def _provider_of(result: Any) -> str:
