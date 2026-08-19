@@ -229,3 +229,76 @@ jobs:
           # that lands gets an error rather than a job that greens on nothing.
           echo "::error::eval-judge is enabled but the case runner does not exist yet."
           exit 1
+
+  # ── A red run has to arrive somewhere a human looks ──────────────────
+  #
+  # CI went red at Task 17 and stayed red for eight pushes. The rule was
+  # "report CI per job, not just the conclusion", and it was followed once and
+  # then quietly wasn't — which makes it a discipline problem, and discipline
+  # is the wrong mechanism for something that has to happen every time.
+  #
+  # So: a failing run on main opens an issue. GitHub notifies watchers of new
+  # issues and comments by default, which is a channel that already reaches
+  # the repo owner without anyone configuring per-user email preferences for
+  # Actions.
+  #
+  # One issue per streak, not one per push. A red week should be a single
+  # thread that accumulates commits, because eight separate issues is the same
+  # noise the streak already was — and a stream of identical notifications is
+  # a channel people mute.
+  notify-on-red:
+    if: failure() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint, unit, migration-drift, eval-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the CI-red issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title="CI is red on main"
+          # `--search` rather than listing every open issue: the label is what
+          # makes the streak findable, and matching on title alone would
+          # collide with any issue a human names similarly.
+          # Tolerant of the label not existing yet: on the first red run
+          # there is nothing to find, and `gh` treats an unknown label as an
+          # error rather than an empty list.
+          existing=$(gh issue list --repo "$REPO" --state open --label ci-red \
+            --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          body=$(printf '%s\n\n- commit: %s\n- run: %s\n\nFailed jobs are listed in the run. This issue stays open until a push to main goes green.' \
+            "A push to main failed CI." "$SHA" "$RUN_URL")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+          else
+            gh label create ci-red --repo "$REPO" --color B60205 \
+              --description "CI failing on main" 2>/dev/null || true
+            gh issue create --repo "$REPO" --title "$title" --label ci-red --body "$body"
+          fi
+
+  # The other half: a green run closes the streak, so the issue's presence is
+  # a live signal rather than something that needs remembering to tidy up. An
+  # alert nobody clears stops being read.
+  close-when-green:
+    if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint, unit, migration-drift, eval-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Close the CI-red issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for number in $(gh issue list --repo "$REPO" --state open --label ci-red \
+            --json number --jq '.[].number' 2>/dev/null || true); do
+            gh issue close "$number" --repo "$REPO" \
+              --comment "Green again on $SHA."
+          done
