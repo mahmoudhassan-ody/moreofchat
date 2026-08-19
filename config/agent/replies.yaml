@@ -23,6 +23,19 @@
 version: 1
 
 replies:
+  # The script's node says this turn is refused (re-0015: an investment
+  # projection). Distinct from `clarify`, which asks the customer to say more —
+  # here the question was perfectly clear and the answer is that we will not.
+  # Distinct from `handoff` too: a colleague cannot project a return either,
+  # and passing it along implies someone here will.
+  #
+  # Says what *is* knowable, because a refusal that offers nothing reads as
+  # evasion rather than as a limit.
+  refuse:
+    masri: "مش هينفع أتوقّعلك ده، بس أقدر أقولك السعر الحالي وخطة السداد المتاحة."
+    msa: "لا يمكننا تقديم توقعات بهذا الشأن. يمكننا إفادتك بالسعر الحالي وخطة السداد المتاحة."
+    english: "I can't forecast that, but I can tell you the current price and the payment plan."
+
   # The script routed the turn to a human — a handoff node, an explicit
   # request, or three failed clarifications (§9).
   handoff:

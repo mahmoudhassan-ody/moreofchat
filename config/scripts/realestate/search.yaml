@@ -1,0 +1,98 @@
+# Real-estate search flow — design §3.1, §3.2, §19.3.
+#
+# The script owns the flow; the inventory connector owns the facts. The LLM
+# extracts slots and phrases the reply, and never decides what is available.
+#
+# **The no-substitution rule is not expressed here.** The wording of a
+# no-match reply is config, because a tenant's own people should be able to
+# read and edit what their customers are told. The *rule* — that the
+# alternative offered is the same property type as the one asked for — lives
+# in `verticals/realestate/replies.py`, where it cannot be edited by accident.
+#
+# The templates below name `{type}` twice on purpose, and a test asserts it.
+# A template with one type slot could render "no studio in North Coast, we
+# have a chalet in Marassi" and every structural check would still pass — the
+# substitution would arrive through the wording rather than the logic.
+#
+# Immutable once published (§5): a conversation pins `version`, so changing
+# behaviour means publishing a new one.
+
+version: 1
+script_id: realestate_search
+entry: fallback
+
+settings:
+  max_consecutive_clarifications: 3
+
+nodes:
+  # re-0001, re-0002, re-0021, re-0022. `property_type` is required because
+  # without one there is no rule to enforce — "what have you got?" answered
+  # with anything is not a substitution, and asking is the correct turn.
+  inventory_lookup:
+    intents: [inventory_lookup, search_units, availability]
+    action: answer
+    register: masri          # showing someone what is available is conversation
+    requires_slots: [property_type]
+    grounding: required
+    clarify:
+      register: masri
+      ask_for_slot: property_type
+
+  # re-0005, re-0006, re-0007. MSA: an instalment schedule is an official
+  # statement, and the figures come from the calculator rather than the model.
+  payment_plan:
+    intents: [payment_plan, instalments, calculator]
+    action: answer
+    register: msa
+    requires_slots: [unit_id]
+    grounding: required
+    clarify:
+      register: masri
+      ask_for_slot: unit_id
+
+  # re-0013, the highest commercial risk in the suite. Unconditional: the bot
+  # has no authority to concede anything, and whatever it concedes the broker
+  # must honour or publicly deny. There is no slot that would make this
+  # answerable.
+  negotiation:
+    intents: [negotiation, discount_request, best_price, cash_discount]
+    action: handoff
+    register: masri
+
+  # re-0015. Every number would be invented, and a projection is also the kind
+  # of claim that attracts regulatory attention. Refuse rather than hand off:
+  # a colleague cannot answer it either, and passing it along implies someone
+  # here will.
+  investment_projection:
+    intents: [investment_projection, appreciation, resale_value, roi]
+    action: refuse
+    register: masri
+
+  # re-0016's shape. Legal and contractual questions are a human's.
+  contracts:
+    intents: [contract_terms, legal, ownership_transfer]
+    action: handoff
+    register: msa
+
+  fallback:
+    action: clarify
+    register: masri
+
+# Customer-facing wording for the outcomes the connector produces. No figure
+# appears here — prices come from a row, never from a template.
+replies:
+  # The requested type exists, just not where the customer asked. Both halves
+  # name the SAME type; that is the whole shape of the owner decision of
+  # 2026-08-17.
+  no_match_same_type:
+    masri: "مفيش {type} في {asked_about} دلوقتي. عندنا {type} في {compound} بسعر {price} {currency}. البيانات محدّثة {as_of}."
+    msa: "لا يتوفر {type} في {asked_about} حاليًا. يتوفر {type} في {compound} بسعر {price} {currency}. البيانات محدثة بتاريخ {as_of}."
+    english: "There's no {type} in {asked_about} right now. We do have a {type} in {compound} at {price} {currency}. Inventory current as of {as_of}."
+
+  # Nothing of that type anywhere in range (re-0021). Deliberately names no
+  # compound: there is none to name, and naming one above budget would answer
+  # a different question.
+  no_match_anywhere:
+    masri: "مفيش {type} متاح في النطاق ده دلوقتي. هحوّلك لزميلي يشوفلك الخيارات. البيانات محدّثة {as_of}."
+    msa: "لا يتوفر {type} ضمن هذا النطاق حاليًا. سيتم تحويلك إلى أحد الزملاء. البيانات محدثة بتاريخ {as_of}."
+    english: "We have no {type} in that range right now. I'm passing you to a colleague. Inventory current as of {as_of}."
