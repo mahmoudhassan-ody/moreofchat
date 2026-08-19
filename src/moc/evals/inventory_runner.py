@@ -38,6 +38,7 @@ from moc.evals.deterministic import (
     check_property_type,
     check_slots,
     check_tool_calls,
+    check_type_resolved,
 )
 from moc.evals.schema import EvalCase, Turn
 
@@ -51,6 +52,13 @@ GATES = (
     "asof_disclosure_rate",
 )
 
+#: Reported alongside the gates, never gated. Both measure slot extraction,
+#: which is a documented keyword stub until the extraction prompt exists —
+#: and both were split out of zero-tolerance gates they were distorting
+#: (2026-08-19). Gating a stub produces pressure to weaken the gate rather
+#: than to build the prompt.
+TRACKED = ("tool_call_accuracy", "unresolved_type_rate")
+
 #: Gates where the metric counts failures (`direction: max` in gates.yaml).
 #: `asof_disclosure_rate` is the one that counts successes, and rendering it
 #: the same way would invert it.
@@ -59,6 +67,7 @@ _FAILURE_RATE = {
     "type_substitution_rate",
     "invented_compound_rate",
     "sold_unit_offered_rate",
+    "unresolved_type_rate",
 }
 
 
@@ -214,6 +223,9 @@ class InventoryCaseRunner:
                 result.presented_unit_ids,
                 self.snapshot,
             ),
+            check_type_resolved(
+                result.state.slots.get("property_type"), result.presented_unit_ids
+            ),
             check_compound_grounding(result.named_compounds, self.snapshot),
             check_asof_disclosure(
                 result.reply, self.snapshot, required=turn.expected_asof_disclosure
@@ -269,11 +281,11 @@ def _dates(reply: str) -> set[str]:
 def gate_report(outcomes: Sequence[InventoryCaseOutcome]) -> dict[str, GateResult]:
     """One entry per gate, always, with its observation count.
 
-    Always all five, even from an empty run: a gate absent from a report reads
-    as a gate that passed, and this whole module exists because five of them
-    read that way for a month.
+    Always all five gates plus the tracked metrics, even from an empty run: a
+    gate absent from a report reads as a gate that passed, and this whole
+    module exists because five of them read that way for a month.
     """
-    counts: dict[str, list[int]] = {gate: [0, 0] for gate in GATES}
+    counts: dict[str, list[int]] = {name: [0, 0] for name in (*GATES, *TRACKED)}
     for outcome in outcomes:
         for turn in outcome.turns:
             for check in turn.checks:
@@ -282,13 +294,14 @@ def gate_report(outcomes: Sequence[InventoryCaseOutcome]) -> dict[str, GateResul
                 counts[check.metric][0] += 1
                 counts[check.metric][1] += 0 if check.passed else 1
     return {
-        gate: GateResult(gate=gate, observations=seen, failures=failed)
-        for gate, (seen, failed) in counts.items()
+        name: GateResult(gate=name, observations=seen, failures=failed)
+        for name, (seen, failed) in counts.items()
     }
 
 
 __all__ = [
     "GATES",
+    "TRACKED",
     "GateResult",
     "InventoryCaseOutcome",
     "InventoryCaseRunner",

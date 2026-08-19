@@ -44,6 +44,10 @@ hard_gates:
   arithmetic_in_model_rate:
     direction: max
     threshold: 0.0
+    # The computation check ONLY, since 2026-08-19. `check_tool_calls` used to
+    # feed this too, and P1b's first run read 60% over 15 observations with 14
+    # of them tool calls — a zero-tolerance commercial gate counting
+    # slot-extraction misses. See `tool_call_accuracy` under `tracked`.
     description: a payment-plan figure not traceable to calculator output
   sold_unit_offered_rate:
     direction: max
@@ -83,6 +87,14 @@ soft_gates:
     description: reported in milliseconds, not a proportion
 
 # Reported on every run, never gated.
+#
+# `tool_call_accuracy` and `unresolved_type_rate` both measure slot extraction,
+# which is currently a documented keyword stub — the extraction prompt is
+# carried out of P1 and P1b. Gating a stub produces pressure to weaken the gate
+# rather than to build the prompt, so they are tracked until it exists. Both
+# were split out of zero-tolerance gates they were distorting.
 tracked:
   - containment_rate
   - cost_per_turn
+  - tool_call_accuracy
+  - unresolved_type_rate

@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.script_engine import ScriptEngine
+from moc.config_store import load
 from moc.evals.deterministic import InventorySnapshot, ToolCall, check_tool_calls
 from moc.evals.inventory_runner import (
     InventoryCaseRunner,
@@ -236,7 +237,7 @@ async def test_all_five_gates_report_a_number_not_a_skip(runner):
     outcomes = await case_runner.run(cases())
     report = gate_report(outcomes)
 
-    assert set(report) == set(FIVE_GATES), "a gate vanished from the report"
+    assert set(FIVE_GATES) <= set(report), "a gate vanished from the report"
     for gate in FIVE_GATES:
         entry = report[gate]
         assert entry.observations > 0, (
@@ -244,6 +245,42 @@ async def test_all_five_gates_report_a_number_not_a_skip(runner):
             f"task exists to stop, and it is not the same as zero"
         )
         assert entry.rate is not None
+
+
+async def test_the_arithmetic_gate_counts_only_the_computation_check(runner):
+    """The split, asserted end to end.
+
+    Before it, `arithmetic_in_model_rate` read 60% over 15 observations with
+    14 of them tool calls — a zero-tolerance commercial gate reporting slot
+    extraction. A gate whose name does not match what it counts produces
+    pressure to weaken the gate rather than to fix the thing failing.
+    """
+    case_runner, _ = runner
+    outcomes = await case_runner.run(cases())
+    contributing = {
+        check.name
+        for outcome in outcomes
+        for turn in outcome.turns
+        for check in turn.checks
+        if check.metric == "arithmetic_in_model_rate" and not check.skipped
+    }
+    assert contributing == {"computation"}
+
+
+async def test_extraction_misses_are_tracked_not_gated(runner):
+    """They are still reported — skipping them silently would hide a real
+    failure — under metrics no threshold acts on."""
+    case_runner, _ = runner
+    report = gate_report(await case_runner.run(cases()))
+    for metric in ("tool_call_accuracy", "unresolved_type_rate"):
+        assert metric in report
+        assert report[metric].observations > 0
+
+    gates = load("evals/gates")
+    for metric in ("tool_call_accuracy", "unresolved_type_rate"):
+        assert metric not in gates["hard_gates"]
+        assert metric not in gates["soft_gates"]
+        assert metric in gates["tracked"]
 
 
 async def test_a_gate_with_no_observations_says_so_rather_than_zero(runner):

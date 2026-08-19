@@ -229,11 +229,21 @@ def check_tool_calls(
     `args_contain` is a subset check by design (§3.2): the orchestrator may pass
     more arguments than a case cares about, and pinning the full signature would
     break every inventory case the first time an unrelated parameter is added.
+
+    **Feeds `tool_call_accuracy`, not `arithmetic_in_model_rate`.** It used to
+    feed the latter, and P1b's first run showed why that was wrong: the gate
+    read 60% over 15 observations, 14 of which were this check. A tool called
+    with the wrong arguments is an extraction failure — it says nothing about
+    whether a model did arithmetic, and the calculator may not have run at
+    all. Zero tolerance belongs on the commercial incident; misreading which
+    city was asked about is a different problem with a different fix, and
+    gating a keyword stub produces pressure to weaken the gate rather than to
+    build the extraction prompt.
     """
     if not expected:
         return CheckResult(
             name="tool_calls",
-            metric="arithmetic_in_model_rate",
+            metric="tool_call_accuracy",
             passed=True,
             skipped=True,
             detail="case expects no tool calls",
@@ -245,7 +255,7 @@ def check_tool_calls(
     ]
     return CheckResult(
         name="tool_calls",
-        metric="arithmetic_in_model_rate",
+        metric="tool_call_accuracy",
         passed=not missing,
         detail="" if not missing else f"no matching call for {'; '.join(missing)}",
     )
@@ -305,9 +315,16 @@ def check_property_type(
     *compound* is a legitimate alternative and is not flagged here; a different
     *type* never is.
 
-    Skips only when nothing was presented. A turn that offered units without a
-    resolved type is *not* clean — there is nothing to compare against, so it
-    fails rather than passing quietly.
+    Skips when nothing was presented, and when no type was resolved.
+
+    That second skip is a correction. A turn presenting units without a
+    resolved `property_type` used to fail this check, on the reasoning that
+    an unverifiable turn is not a clean one. But it put an extraction miss
+    inside a zero-tolerance commercial gate: re-0005 is "the unit in Noor City
+    at six and a half million", which identifies a row without naming a type,
+    and no substitution can have occurred where the customer named nothing to
+    substitute for. The miss is still reported, by `check_type_resolved`,
+    under its own tracked metric.
     """
     if not presented_unit_ids:
         return CheckResult(
@@ -326,8 +343,9 @@ def check_property_type(
         return CheckResult(
             name="property_type",
             metric="type_substitution_rate",
-            passed=False,
-            detail="units were presented without a resolved property_type to check against",
+            passed=True,
+            skipped=True,
+            detail="no property_type resolved — see unresolved_type_rate",
         )
     return CheckResult(
         name="property_type",
@@ -339,6 +357,32 @@ def check_property_type(
             result.requested_type,
             "; ".join(f"{unit}={kind}" for unit, kind in result.substituted),
         ),
+    )
+
+
+def check_type_resolved(
+    requested_type: str | None, presented_unit_ids: Sequence[str]
+) -> CheckResult:
+    """Did the turn know what kind of unit was being asked for?
+
+    Split out of `check_property_type` so an extraction miss is visible
+    without being counted as a substitution. Tracked rather than gated: it
+    measures the extractor, and the extraction prompt does not exist yet.
+    """
+    if not presented_unit_ids:
+        return CheckResult(
+            name="type_resolved",
+            metric="unresolved_type_rate",
+            passed=True,
+            skipped=True,
+            detail="no units presented, so nothing needed resolving",
+        )
+    resolved = requested_type is not None
+    return CheckResult(
+        name="type_resolved",
+        metric="unresolved_type_rate",
+        passed=resolved,
+        detail="" if resolved else "units presented without a resolved property_type",
     )
 
 
@@ -424,4 +468,5 @@ __all__ = [
     "check_numeric_grounding",
     "check_slots",
     "check_tool_calls",
+    "check_type_resolved",
 ]

@@ -2,6 +2,7 @@
 
 import pytest
 
+from moc.config_store import load
 from moc.evals.deterministic import (
     InventorySnapshot,
     ToolCall,
@@ -9,8 +10,10 @@ from moc.evals.deterministic import (
     check_asof_disclosure,
     check_availability,
     check_language,
+    check_property_type,
     check_slots,
     check_tool_calls,
+    check_type_resolved,
 )
 from moc.evals.schema import Action, ExpectedToolCall
 
@@ -215,3 +218,82 @@ def test_asof_check_skips_when_the_case_does_not_require_it():
     result = check_asof_disclosure("المصاريف 1400 جنيه", BROKER_DEMO, False)
     assert result.passed is True
     assert result.skipped is True
+
+
+# ─────────────────── metrics measure what their name says ───────────────────
+#
+# P1b's first real numbers exposed this: `arithmetic_in_model_rate` read 60%
+# over 15 observations, and 14 of them were `check_tool_calls`. The gate is
+# zero-tolerance and it was counting slot-extraction misses. A gate whose name
+# does not match what it counts is worse than an unmeasured one — it produces
+# pressure to weaken the gate rather than to fix the thing actually failing.
+
+
+def test_tool_calls_feed_their_own_metric_not_the_arithmetic_gate():
+    """A tool called with the wrong arguments is an extraction failure.
+
+    It says nothing about whether the model did arithmetic — the calculator
+    may not have run at all. `arithmetic_in_model_rate` is zero-tolerance
+    because a model computing an instalment is a commercial incident;
+    misreading which city was asked about is a different problem with a
+    different fix.
+    """
+    result = check_tool_calls(
+        [ExpectedToolCall(name="inventory_lookup", args_contain={"city": "New Cairo"})],
+        [ToolCall(name="inventory_lookup", args={"city": "North Coast"})],
+    )
+    assert result.metric == "tool_call_accuracy"
+    assert not result.passed
+
+
+def test_tool_call_accuracy_is_tracked_not_gated():
+    """Gating a keyword stub produces pressure to weaken the gate rather than
+    to build the extraction prompt. Tracked until that prompt exists."""
+    gates = load("evals/gates")
+    assert "tool_call_accuracy" in gates["tracked"]
+    assert "tool_call_accuracy" not in gates["hard_gates"]
+    assert "tool_call_accuracy" not in gates["soft_gates"]
+
+
+def test_an_unresolved_type_is_not_counted_as_a_substitution():
+    """A turn that presented units without a resolved `property_type` never
+    substituted anything — the customer named no type to substitute for.
+
+    re-0005 is the case: "the unit in Noor City at six and a half million"
+    identifies a row without naming a type. Counting it against
+    `type_substitution_rate` put an extraction miss inside a zero-tolerance
+    commercial gate.
+    """
+    snapshot = InventorySnapshot(
+        fixture="f",
+        as_of="2026-08-01",
+        unit_status={"U-1": "available"},
+        unit_type={"U-1": "apartment"},
+    )
+    result = check_property_type(None, ["U-1"], snapshot)
+    assert result.metric == "type_substitution_rate"
+    assert result.skipped, "nothing to compare against is not a violation"
+
+
+def test_the_unresolved_type_is_still_reported_somewhere():
+    """Skipping it silently would hide a real extraction miss. It is counted
+    under its own tracked metric instead."""
+    result = check_type_resolved(None, ["U-1"])
+    assert result.metric == "unresolved_type_rate"
+    assert not result.passed
+
+    assert check_type_resolved("studio", ["U-1"]).passed
+    assert check_type_resolved(None, []).skipped, "no units presented, nothing to resolve"
+
+
+def test_a_real_substitution_still_fails_the_gate():
+    """The split must not soften the gate it was extracted from."""
+    snapshot = InventorySnapshot(
+        fixture="f",
+        as_of="2026-08-01",
+        unit_status={"U-1": "available"},
+        unit_type={"U-1": "chalet"},
+    )
+    result = check_property_type("studio", ["U-1"], snapshot)
+    assert result.metric == "type_substitution_rate"
+    assert not result.passed and not result.skipped

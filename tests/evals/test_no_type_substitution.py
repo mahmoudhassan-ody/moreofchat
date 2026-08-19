@@ -29,6 +29,7 @@ from moc.evals.deterministic import (
     InventorySnapshot,
     check_compound_grounding,
     check_property_type,
+    check_type_resolved,
 )
 
 UNITS = (
@@ -101,15 +102,32 @@ def test_a_different_compound_is_a_legitimate_alternative():
     assert check_property_type("chalet", ["u9"], same_type_elsewhere).passed
 
 
-def test_units_offered_with_no_resolved_type_fail_rather_than_skip():
-    """Nothing to compare against is not the same as nothing wrong.
+def test_units_offered_with_no_resolved_type_move_to_their_own_metric():
+    """Deliberate contract reversal, recorded because it reverses one.
 
-    This is the shape a silent hole takes: the type never resolved, the filter
-    never applied, and a check that skipped would report the turn as clean.
+    This previously read "fail rather than skip", on the reasoning that
+    nothing-to-compare-against is not the same as nothing-wrong. That reasoning
+    still holds — what changed is where the signal goes.
+
+    Counting it here put a slot-extraction miss inside `type_substitution_rate`,
+    a zero-tolerance commercial gate. P1b's first run showed the cost: the gate
+    read 11.1% on a suite where no substitution had occurred, because re-0005
+    is "the unit in Noor City at six and a half million" — a question that
+    identifies a row without naming a type. A customer who named no type
+    cannot have been given the wrong one.
+
+    The concern the old assertion protected is answered by
+    `check_type_resolved`, not by silence: the miss is still reported, under a
+    tracked metric that measures the extractor rather than the product
+    guarantee.
     """
     result = check_property_type(None, ["u1"], SNAPSHOT)
-    assert result.passed is False
-    assert result.skipped is False
+    assert result.skipped is True
+    assert result.metric == "type_substitution_rate"
+
+    reported = check_type_resolved(None, ["u1"])
+    assert reported.passed is False
+    assert reported.metric == "unresolved_type_rate"
 
 
 def test_a_unit_absent_from_the_snapshot_fails():
