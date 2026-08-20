@@ -85,12 +85,32 @@ on the subset that also cleared stage 1. Measured over three runs of the
 education suite: 0/10 deterministic, 0/9 judge-fed. Different denominators, and
 the report says so.
 
-**It is a partial fix and the gap it leaves is the one edu-0012 fell through.**
-Stage 2 runs only on turns that passed stage 1, so a turn that gets the action
-wrong is never graded on anything else — and edu-0012 failed stage 1 on
-`expected_action` precisely because it answered when it should have handed off.
-The turns most likely to carry a bad figure are the turns that should not have
-answered at all, and those are exactly the ones the judge does not see.
+**That gap is now closed, and the closing is what makes the number mean
+something (2026-08-20).** Stage 2 ran only on turns that passed stage 1, so a
+turn that got the action wrong was never graded on anything else — and
+edu-0012 failed stage 1 on `expected_action` precisely because it answered when
+it should have handed off. The turns most likely to carry a bad figure are the
+turns that should not have answered at all, and those were exactly the ones the
+judge did not see. `expected_action_accuracy` is now the one stage-1 failure
+that does not withdraw a reply from grading, and only when it fails alone.
+
+Two things had to happen in that order, because the second without the first
+reports coverage it does not have. A turn expected to clarify, hand off or
+refuse carried `expected_facts: []`, so grading it was vacuous: fact coverage
+over an empty list passes any reply that avoids the forbidden claims. Fifteen
+turns across the two suites now state what a good non-answer contains — a
+clarification names the missing thing, a handoff names the next step, a refusal
+says what is knowable instead — and a loader test fails while any non-answer
+turn pins no required fact.
+
+**Measured after both, three runs:** `hallucinated_figure` 0/10 deterministic,
+`figure_labelling` 0/10 judge-fed. The judged population grew by exactly one
+turn, and that turn is edu-0012 — `expected_action_accuracy` is 94.7% with zero
+spread, so the suite holds one action-only failure and the guard now grades it.
+The judge scored its grounding 3: the reply named its figures as admission
+thresholds and said outright they were not tuition. **The relabelling class has
+zero observations over the population it is about**, which is the number a
+claim-level audit pass has to be worth more than.
 
 ---
 
@@ -179,13 +199,41 @@ comparing two different systems measured by two different harnesses.
 | education | `overall_accuracy` | 58.8% (52.9–64.7) — spread 11.8, **not measurable at 17 cases** |
 | education | `expected_action_accuracy` | 94.7% (94.7–94.7) |
 | education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
-| education | `register_accuracy` | 90.7% (88.9–94.4) — first measurement |
-| education | `forbidden_claim_violations` | 11.1% (5.6–16.7) — first measurement, **not measurable** |
+| education | `register_accuracy` | 91.2% (89.5–94.7) |
+| education | `forbidden_claim_violations` | 14.0% (10.5–15.8) — **not measurable** |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
-| education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
+| education | `hallucinated_figure_rate` | 5.4% (0.0–11.1) — **not measurable** |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
 | education | `errored_rate` | 0.0% (0.0–0.0) |
+
+**The education rows above were re-measured 2026-08-20 after the non-answer
+facts landed, and they are a different assertion, not a later sample of the
+same one.** Five turns that previously passed with nothing to cover now carry
+required facts, and the judge finds four of them missing. `overall_accuracy`
+did not move outside its spread, which is not evidence the change was
+neutral — it is what a suite does when newly-exposed failures replace ones the
+run happens to pass. The comparison worth making is the failure list, not the
+mean, and §2.3's rule holds: a run made before the cases said this is not a
+baseline this one may be compared against.
+
+What the new facts exposed, all four of them real and none of them new
+behaviour:
+
+- **edu-0001** states that tuition is absent and routes the customer nowhere.
+  `f2` (where to ask) missing. The reply is truthful and useless.
+- **edu-0007 turn 2** — a bare slot value, `العريش` — falls to the fallback
+  node and emits the generic `ممكن توضّحلي أكتر`. The branch slot is retained
+  (`slot_retention_accuracy` 100%); the *node* is not, so the clarification has
+  no missing slots to name and §19's "name the missing thing" fix cannot reach
+  it. Judge helpfulness 0.
+- **edu-0009** is the fallback node by design and has no slots to name, so it
+  needs the option-listing behaviour its case note has always asked for, which
+  nothing implements.
+- **edu-0017** sends the `refuse` reply from `replies.yaml`, which offers
+  "السعر الحالي وخطة السداد" — a price and a payment plan, to a student asking
+  which faculty leads to a job. The scripted refusal is vertical-specific in a
+  file shared by both verticals.
 
 **Aliases reach the prompt (2026-08-20).** `slot_vocabulary` injected the
 canonical values of every closed slot and nothing else, so the model had to
