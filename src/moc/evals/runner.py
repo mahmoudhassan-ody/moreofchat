@@ -320,6 +320,15 @@ class CaseRunner:
             question=turn.user,
             reply=result.reply,
             retrieved_passages=list(result.passages),
+            # §3.1: a figure held in a script node is as legitimate a source as
+            # a retrieved chunk, and so is the sentence around it. Passing only
+            # the passages made every scripted reply read as an unsupported
+            # claim — edu-0017 scored grounding 1 with both expected facts
+            # present, for offering something a human had written into config.
+            script_statements=[
+                *(str(c) for c in getattr(result, "script_constants", ()) or ()),
+                *(getattr(result, "authorised", ()) or ()),
+            ],
             expected_facts=list(turn.expected_facts),
             forbidden_claims=list(turn.forbidden_claims),
             expected_register=turn.expected_register,

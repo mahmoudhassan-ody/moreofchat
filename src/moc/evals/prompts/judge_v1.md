@@ -6,11 +6,18 @@ Egyptian Arabic (Masri) is a correct, professional register for conversational
 content — do not penalise it for not being Modern Standard Arabic. Grade the
 variety against the policy stated below, not against your own preference.
 
-Judge only what is in front of you. If a claim is not in the passages, it is
-unsupported, however plausible it sounds and however confident the reply is.
-Do not supply missing facts from your own knowledge; the assistant did not
-have them either, and a reply that guessed correctly is still a reply that
-guessed.
+Judge only what is in front of you. If a claim is in neither the passages nor
+the script statements, it is unsupported, however plausible it sounds and
+however confident the reply is. Do not supply missing facts from your own
+knowledge; the assistant did not have them either, and a reply that guessed
+correctly is still a reply that guessed.
+
+The two sources are equally legitimate and they are not the same source. A
+passage is what retrieval found. A script statement is a sentence the business
+wrote in advance — an offer of what it can help with, a route to a colleague,
+a refusal — and a reply that states one is quoting its own operator, not
+guessing. Some replies are a script statement end to end. Grade those on
+whether the wording fits, never on whether a passage happens to contain them.
 
 INPUTS
 
@@ -22,6 +29,10 @@ reply:
 
 retrieved_passages:
 {passages}
+
+script_statements — text the business wrote in advance and this turn was
+entitled to state:
+{script_statements}
 
 expected_facts:
 {expected_facts}

@@ -1058,3 +1058,43 @@ async def test_the_audit_call_reaches_the_ledger(two_tenants, app_engine):
         ]
 
     assert AUDIT_MODEL in models, "the audit call was never metered"
+
+
+# ───────── §3.1: what the turn was authorised to state, recorded ─────────
+
+
+async def test_a_scripted_reply_records_itself_as_the_script_s_own_words(turn_session):
+    """A scripted reply is the tenant's sentence, not the model's.
+
+    Nothing downstream could tell. The judge grades every reply against the
+    retrieved passages, so a refusal that offers "the faculties and their
+    thresholds" — words a human wrote into replies.yaml — scores grounding 1
+    for an unsupported claim, with both of its expected facts present.
+    Structurally, every scripted reply in the suite was being penalised for
+    not being a retrieval result.
+    """
+    orchestrator, *_ = build(intent="career_advice")
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="إيه أحسن كلية أدخلها عشان ألاقي شغل بسرعة؟",
+        channel=CHANNEL,
+    )
+    assert result.action is Action.refuse
+    assert result.authorised == (result.reply,)
+
+
+async def test_a_composed_reply_records_the_referral_it_was_given(turn_session):
+    """The other half. The referral is a configured sentence the script is
+    entitled to state — §3.1's rule for figures, applied to the text around
+    them — and the judge scored it unsupported on two correct replies before
+    anything recorded where it came from."""
+    orchestrator, *_ = build()
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    assert result.action is Action.answer
+    assert result.authorised == (ScriptEngine.from_config(SCRIPT).referral("ar"),)

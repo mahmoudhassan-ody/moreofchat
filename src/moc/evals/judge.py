@@ -154,6 +154,7 @@ class Judge:
         expected_register: Register | str,
         answer_provider: str,
         judge_provider: str | None = None,
+        script_statements: Sequence[str] = (),
     ) -> JudgeVerdict:
         """Grade one reply with a provider that did not write it.
 
@@ -174,6 +175,7 @@ class Judge:
             expected_facts=expected_facts,
             forbidden_claims=forbidden_claims,
             expected_register=expected_register,
+            script_statements=script_statements,
         )
         completion = await self._router.complete(
             task=Task.eval_grading,
@@ -210,6 +212,7 @@ class Judge:
         expected_facts: Sequence[ExpectedFact],
         forbidden_claims: Sequence[str],
         expected_register: Register | str,
+        script_statements: Sequence[str] = (),
     ) -> str:
         scale = self._config["scale"]
         # str.format is unusable here: the prompt contains a literal JSON
@@ -220,6 +223,7 @@ class Judge:
             "question": question,
             "reply": reply,
             "passages": _numbered(retrieved_passages),
+            "script_statements": _numbered(script_statements),
             "expected_facts": _facts(expected_facts),
             "forbidden_claims": _bulleted(forbidden_claims),
             "expected_register": str(expected_register),

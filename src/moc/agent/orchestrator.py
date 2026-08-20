@@ -140,6 +140,15 @@ class TurnResult:
     #: audit that could not run and an audit that found nothing are the same
     #: verdict with different meanings.
     audit: FigureAudit | None = None
+    #: Text this turn was entitled to state because the tenant wrote it —
+    #: the scripted reply itself, or the referral appended to a composed one.
+    #:
+    #: §3.1 already says a figure held in a script node is as legitimate a
+    #: source as a retrieved chunk. The same is true of the sentence around it,
+    #: and nothing recorded which sentences those were — so the judge, which
+    #: grades against passages, scored every scripted reply as unsupported for
+    #: the crime of not being a retrieval result.
+    authorised: tuple[str, ...] = ()
     #: §3.1's figures the script itself may state. Carried alongside
     #: `passages` because together they are the full source set the delivered
     #: reply is graded against — without them a scripted fee reads as an
@@ -290,6 +299,9 @@ class Orchestrator:
 
         return TurnResult(
             reply=completion.text,
+            # Only the referral. Everything else in a composed reply is the
+            # model's, and must trace to the material like any other claim.
+            authorised=tuple(filter(None, (self._engine.referral(lang),))),
             action=decision.action,
             register=decision.register,
             state=decision.state,
@@ -443,10 +455,13 @@ class Orchestrator:
         let a case assert an answer that never happened.
         """
         failed = key in (_PROVIDER_UNAVAILABLE, _GROUNDING_FAILED)
-        return TurnResult(
-            reply=self._reply_text(
+        reply = self._reply_text(
                 key, decision, redaction.text, lang, titles=tuple(retrieval.titles)
-            ),
+        )
+        return TurnResult(
+            reply=reply,
+            # The whole sentence, because the whole sentence is config.
+            authorised=(reply,),
             action=Action.handoff if failed else decision.action,
             register=decision.register,
             state=decision.state,

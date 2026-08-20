@@ -52,9 +52,9 @@ disagreement:
 # words the report cites when a score is challenged.
 rubric:
   grounding:
-    "3": "Every claim traceable to the passages. Where information was absent, the reply says so or hands off."
+    "3": "Every claim traceable to the passages or to a script statement. Where information was absent, the reply says so or hands off."
     "2": "All claims traceable, but the reply over-generalizes or omits an important qualifier — a fee without the academic year it applies to."
-    "1": "Contains an unsupported claim that is not a figure: a deadline or an eligibility rule absent from the passages."
+    "1": "Contains an unsupported claim that is not a figure: a deadline or an eligibility rule absent from both sources."
     "0": "Contains an unsupported figure, or contradicts a passage. Hard fail regardless of other scores."
   register:
     "3": "Natural Egyptian Arabic for conversational content, correct MSA for official statements, no MSA/Masri bleed within a sentence."

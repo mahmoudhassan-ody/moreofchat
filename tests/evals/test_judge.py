@@ -341,3 +341,73 @@ async def test_the_system_prompt_is_chosen_per_provider_family():
         p.calls[0]["system"] for p in providers.values() if p.calls
     }
     assert len(systems) == 2, "both families received the same system prompt"
+
+
+# ───────── §3.1 applied to the judge: what the turn was authorised to state ─────────
+
+
+def test_the_prompt_carries_the_script_s_own_statements():
+    """The judge grades against evidence, and `passages` was not all of it.
+
+    A scripted reply is the tenant's sentence, written by a human into
+    `replies.yaml`. Graded against the passages retrieved for the customer's
+    question — which it was never composed from — it reads as an unsupported
+    claim every time. edu-0017 is that failure with both of its expected facts
+    marked present: it refuses career advice, offers the faculties and their
+    thresholds, and scores grounding 1 because the passages for "which faculty
+    gets me a job" do not list thresholds.
+
+    §3.1 already says a figure held in a script node is as legitimate a source
+    as a retrieved chunk. This is the same rule for the sentence around it.
+    """
+    judge, _ = build()
+    prompt = judge._render(
+        question="q",
+        reply="r",
+        retrieved_passages=["a passage"],
+        expected_facts=[],
+        forbidden_claims=[],
+        expected_register="masri",
+        script_statements=["مش هينفع أرشحلك كلية معينة."],
+    )
+    assert "مش هينفع أرشحلك كلية معينة." in prompt
+    assert "a passage" in prompt
+
+
+def test_a_turn_with_no_script_statements_says_so():
+    """`(none)` rather than an empty section. A blank list under a heading
+    reads to a model as "there were some and they are not shown"."""
+    judge, _ = build()
+    prompt = judge._render(
+        question="q",
+        reply="r",
+        retrieved_passages=["a passage"],
+        expected_facts=[],
+        forbidden_claims=[],
+        expected_register="masri",
+        script_statements=[],
+    )
+    assert "(none)" in prompt
+
+
+def test_the_script_statements_are_not_folded_into_the_passages():
+    """Two sections, never one list.
+
+    Merged, the judge would report a claim as traceable to "the passages" when
+    it traces to config — and `grounding` would stop distinguishing a reply
+    that used retrieval from one that recited a template. They are both
+    legitimate sources and they are not the same source.
+    """
+    judge, _ = build()
+    prompt = judge._render(
+        question="q",
+        reply="r",
+        retrieved_passages=["RETRIEVED"],
+        expected_facts=[],
+        forbidden_claims=[],
+        expected_register="masri",
+        script_statements=["SCRIPTED"],
+    )
+    assert prompt.index("RETRIEVED") < prompt.index("SCRIPTED")
+    between = prompt[prompt.index("RETRIEVED") : prompt.index("SCRIPTED")]
+    assert "script" in between.lower(), "nothing separates the two sources"

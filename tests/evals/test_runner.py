@@ -819,3 +819,35 @@ async def test_the_outcome_records_the_titles_the_turn_retrieved(session_tenant)
     run, _, _ = build(retriever=RecordingRetriever(titles=("مواعيد الباصات؟",)))
     outcome = await run.run_case(a_case(), session=session)
     assert outcome.turns[0].titles == ("مواعيد الباصات؟",)
+
+
+async def test_the_judge_is_told_what_the_script_was_entitled_to_state(session_tenant):
+    """The runner is the only place that knows both, and it passed one.
+
+    A scripted reply is the tenant's own sentence; graded against the passages
+    retrieved for the customer's question it reads as an unsupported claim
+    every time. edu-0017 is that failure with both expected facts present.
+    Script constants are the same rule for figures, and §3.1 has said so since
+    it was written.
+    """
+    session, _ = session_tenant
+    judge = RecordingJudge()
+    run, _, _ = build(judge=judge)
+    await run.run_case(a_case(), session=session)
+
+    assert "script_statements" in judge.calls[0], (
+        "the judge was given the passages and nothing else"
+    )
+
+
+async def test_the_script_statements_carry_the_constants_and_the_authorised_text(
+    session_tenant,
+):
+    session, _ = session_tenant
+    judge = RecordingJudge()
+    run, _, _ = build(judge=judge, reply=GROUNDED)
+    await run.run_case(a_case(), session=session)
+
+    statements = list(judge.calls[0]["script_statements"])
+    referral = ScriptEngine.from_config(SCRIPT).referral("ar")
+    assert referral in statements, "the configured referral was not offered as a source"
