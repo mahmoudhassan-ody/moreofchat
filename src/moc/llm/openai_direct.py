@@ -69,6 +69,7 @@ class OpenAIDirect:
         max_tokens: int,
         reasoning: str = Reasoning.auto,
         effort: str | None = None,
+        temperature: float | None = None,
     ) -> Completion:
         wire: list[dict[str, str]] = []
         preamble = _system_message(system, cache_blocks)
@@ -85,6 +86,8 @@ class OpenAIDirect:
         reasoning_effort = _reasoning_effort(reasoning, effort)
         if reasoning_effort is not None:
             payload["reasoning_effort"] = reasoning_effort
+        if temperature is not None:
+            payload["temperature"] = temperature
 
         body = await request_with_retries(
             self._client,

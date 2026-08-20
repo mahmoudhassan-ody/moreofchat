@@ -553,3 +553,71 @@ async def test_an_unknown_reasoning_mode_is_rejected():
             max_tokens=16,
             reasoning="sometimes",
         )
+
+
+# ──────────────────── temperature (harness spec §2, §2.4) ────────────────────
+
+
+async def test_anthropic_sends_temperature_only_when_configured():
+    """claude-sonnet-5 answers a request carrying `temperature` with a 400:
+
+        `temperature` is deprecated for this model.
+
+    Measured live 2026-08-20. claude-haiku-4-5 accepts it and returns 200, so
+    the parameter is per-candidate — the adapter must omit the key entirely
+    rather than send a default that breaks composition on every turn.
+    """
+    import json
+
+    captured = []
+    provider = anthropic(responder(ANTHROPIC_OK, capture=captured))
+    await provider.complete(
+        model="claude-sonnet-5",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+    )
+    assert "temperature" not in json.loads(captured[0].content)
+
+    await provider.complete(
+        model="claude-haiku-4-5-20251001",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+        temperature=0.0,
+    )
+    assert json.loads(captured[1].content)["temperature"] == 0.0
+
+
+async def test_openai_sends_temperature_only_when_configured():
+    """gpt-5.6-luna and gpt-5.6-sol both return 200 with temperature 0
+    (measured live 2026-08-20), but the key stays absent unless configured —
+    the failover must not acquire a control the primary does not have."""
+    import json
+
+    captured = []
+    provider = openai(responder(OPENAI_OK, capture=captured))
+    await provider.complete(
+        model="gpt-5.6-luna",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+    )
+    assert "temperature" not in json.loads(captured[0].content)
+
+    await provider.complete(
+        model="gpt-5.6-luna",
+        messages=MESSAGES,
+        system=None,
+        cache_blocks=[],
+        max_tokens=16,
+        reasoning="none",
+        temperature=0.0,
+    )
+    assert json.loads(captured[1].content)["temperature"] == 0.0

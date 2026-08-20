@@ -120,6 +120,7 @@ class LLMProvider(Protocol):
         # share a scale, and claude-haiku-4-5 rejects the parameter outright.
         # Config sets a value valid for that model, or leaves it unset.
         effort: str | None = None,
+        temperature: float | None = None,
     ) -> Completion: ...
 
     async def embed(

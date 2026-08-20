@@ -1,0 +1,30 @@
+# Repeated eval runs — platform tier (design doc §19.1), harness spec §2.4.
+#
+# A suite of 17 or 23 cases graded by a non-deterministic model does not
+# produce a number from one run. Four runs of the real-estate suite over one
+# unchanged commit read 52.2%, 42.9%, 39.1% and 45.5% — a 13-point spread with
+# nothing changing between them. Every one of those was reported at the time as
+# if it were the figure.
+#
+# So the suite runs N times and reports mean with min–max. These two values are
+# config rather than code for the usual §19 reason, and for one specific to
+# them: raising `runs` is the honest response to a metric that will not settle,
+# and it must be an edit with an audit trail rather than a number someone
+# nudges while chasing a green.
+
+version: 1
+
+# How many times each suite runs. Three is the floor at which a spread means
+# anything; the education suite costs roughly 40 model calls per run, so this
+# is a cost decision as much as a statistical one. Raise it before trusting a
+# metric that this many runs leaves wide.
+runs: 3
+
+# A metric whose min–max spread exceeds this many percentage points is reported
+# as not measurable at this suite size. Not as a failure — the code may be
+# perfectly good and the denominator merely too small — but a delta under the
+# spread cannot be read as signal, and treating one as signal is what produced
+# four contradictory real-estate numbers in one afternoon.
+#
+# Ten points is the user's bar (2026-08-20), chosen against the observed 13.1.
+measurable_spread_pp: 10.0

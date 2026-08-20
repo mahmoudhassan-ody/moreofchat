@@ -422,3 +422,47 @@ def test_reasoning_values_survive_yaml_parsing(routing):
                     f"{name}.{role} reasoning parsed as "
                     f"{type(candidate['reasoning']).__name__} — quote it or rename it"
                 )
+
+
+# ──────────────────── temperature (harness spec §2, §2.4) ────────────────────
+
+
+async def test_slot_extraction_runs_at_the_lowest_temperature_the_model_allows(
+    router, routing, anthropic
+):
+    """Extraction reads slots out of a sentence. It should return the same
+    slots for the same sentence, and it did not — the same real-estate case
+    resolved a compound on one run and not the next, and the suite's spread
+    was read as quality. Harness §1 says "run at the lowest available
+    temperature"; this is the task where it matters most."""
+    await router.complete(task=Task.slot_extraction, messages=MESSAGES)
+    assert anthropic.calls[0]["temperature"] == 0.0
+    assert routing["tasks"]["slot_extraction"]["primary"]["temperature"] == 0.0
+
+
+async def test_a_candidate_without_temperature_sends_none(router, anthropic):
+    """answer_composition runs on claude-sonnet-5, which 400s on the key."""
+    await router.complete(task=Task.answer_composition, messages=MESSAGES)
+    assert anthropic.calls[0]["temperature"] is None
+
+
+async def test_the_failover_candidate_carries_its_own_temperature(
+    router, routing, anthropic, openai
+):
+    anthropic.fail_with = ProviderUnavailable("down")
+    await router.complete(task=Task.slot_extraction, messages=MESSAGES)
+    failover = routing["tasks"]["slot_extraction"]["failover"]
+    assert openai.calls[0]["temperature"] == failover["temperature"]
+
+
+def test_no_sonnet_5_entry_carries_a_temperature_key(routing):
+    """Verified live on 2026-08-20: claude-sonnet-5 + temperature is a 400,
+    `temperature is deprecated for this model`. A config edit that adds one
+    would break every answer-composition turn — and it is a
+    ProviderRequestError, so it would not even fail over.
+    """
+    for name, spec in routing["tasks"].items():
+        for role in ("primary", "failover"):
+            candidate = spec.get(role) or {}
+            if "sonnet-5" in candidate.get("model", ""):
+                assert "temperature" not in candidate, f"{name}.{role} would 400"

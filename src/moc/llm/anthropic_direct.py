@@ -68,6 +68,7 @@ class AnthropicDirect:
         max_tokens: int,
         reasoning: str = Reasoning.auto,
         effort: str | None = None,
+        temperature: float | None = None,
     ) -> Completion:
         payload: dict[str, Any] = {
             "model": model,
@@ -83,6 +84,14 @@ class AnthropicDirect:
             # carrying this key with a 400, so a default here would break every
             # slot-extraction turn.
             payload["output_config"] = {"effort": effort}
+        if temperature is not None:
+            # Omitted when unset, for effort's reason from the other
+            # direction: claude-sonnet-5 answers a request carrying this key
+            # with `temperature is deprecated for this model` and a 400, while
+            # claude-haiku-4-5 accepts it and returns 200. Measured
+            # 2026-08-20. Which models take it is config's problem, not this
+            # adapter's.
+            payload["temperature"] = temperature
 
         body = await request_with_retries(
             self._client,

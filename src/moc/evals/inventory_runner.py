@@ -274,6 +274,30 @@ class InventoryCaseRunner:
         )
 
 
+def metrics(outcomes: Sequence[InventoryCaseOutcome]) -> dict[str, float | None]:
+    """One run's contribution to a spread — harness spec §2.4.
+
+    `GateResult.rate` already knows which way each gate counts, so this adds
+    only what sits outside the gate table: accuracy, and the errored count
+    that must stay out of its denominator. An exception is an outage, not a
+    quality signal.
+    """
+    scored = [o for o in outcomes if not o.errored]
+    values: dict[str, float | None] = {
+        name: gate.rate for name, gate in gate_report(outcomes).items()
+    }
+    values["overall_accuracy"] = (
+        sum(o.passed for o in scored) / len(scored) if scored else None
+    )
+    # A rate, not a count: every value here goes through a renderer that
+    # multiplies by 100, and one errored case across three runs printed
+    # `errored_cases 133.3% (100.0-200.0, n=3)`.
+    values["errored_rate"] = (
+        (len(outcomes) - len(scored)) / len(outcomes) if outcomes else None
+    )
+    return values
+
+
 def _dates(reply: str) -> set[str]:
     """A snapshot date is a disclosure, not a computed figure. Excluded so
     `as_of` does not read as arithmetic the model invented."""
@@ -314,5 +338,6 @@ __all__ = [
     "InventoryCaseRunner",
     "InventoryTurnOutcome",
     "gate_report",
+    "metrics",
     "snapshot_from_fixture",
 ]

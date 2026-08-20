@@ -376,6 +376,63 @@ def _provider_of(result: Any) -> str:
     return completions[0].provider if completions else "anthropic"
 
 
+def gate_directions() -> dict[str, str]:
+    """Every gated metric and which way it counts, read from gates.yaml.
+
+    `min` gates report the share of checks that passed, `max` gates the share
+    that failed. Reading one as the other is not a rounding error — a 0.0%
+    hallucination rate and a 0.0% action accuracy are opposite results that
+    print identically.
+    """
+    from moc.config_store import load
+
+    gates = load("evals/gates")
+    return {
+        name: spec["direction"]
+        for group in ("hard_gates", "soft_gates")
+        for name, spec in gates[group].items()
+    }
+
+
+def metrics(outcomes: Sequence[CaseOutcome]) -> dict[str, float | None]:
+    """One run's contribution to a spread: every metric, or None where unfed.
+
+    Always names every gate, including from an empty run. A metric missing
+    from one run's dict and a metric that run measured as nothing are the same
+    fact, but only the second keeps the gate on the report across N runs — and
+    a gate that vanishes from a report reads as a gate that passed.
+    """
+    summary = summarize(outcomes)
+    values: dict[str, float | None] = {}
+
+    seen: dict[str, list[bool]] = {}
+    for outcome in outcomes:
+        for turn in outcome.turns:
+            for check in turn.checks:
+                if check.skipped:
+                    continue
+                seen.setdefault(check.metric, []).append(check.passed)
+
+    for name, direction in gate_directions().items():
+        results = seen.get(name, [])
+        if not results:
+            values[name] = None
+        elif direction == "min":
+            values[name] = sum(results) / len(results)
+        else:
+            values[name] = sum(not r for r in results) / len(results)
+
+    # Overlaid after the gate loop, not before it. `retrieval_recall_at_5` is
+    # a gate name whose value comes from `CaseOutcome.recall_at_5` rather than
+    # from any check, so the loop would otherwise write None over it.
+    values["overall_accuracy"] = summary.accuracy if summary.scored else None
+    values["retrieval_recall_at_5"] = summary.recall_at_5
+    # A rate, not a count. Everything here is rendered as a percentage, and a
+    # count sent through that renderer prints numbers above 100.
+    values["errored_rate"] = summary.errored / summary.total if summary.total else None
+    return values
+
+
 def summarize(outcomes: Sequence[CaseOutcome]) -> RunSummary:
     """Aggregate, keeping errors out of the accuracy denominator."""
     errored = [outcome for outcome in outcomes if outcome.errored]
@@ -397,6 +454,8 @@ __all__ = [
     "CaseRunner",
     "RunSummary",
     "TurnOutcome",
+    "gate_directions",
+    "metrics",
     "recall_at_k",
     "summarize",
 ]

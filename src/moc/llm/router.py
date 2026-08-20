@@ -179,6 +179,7 @@ class Router:
                     # wants the degraded turn produced the same way regardless.
                     reasoning=candidate.get("reasoning", Reasoning.auto),
                     effort=candidate.get("effort"),
+                    temperature=candidate.get("temperature"),
                 )
             except ProviderUnavailable as exc:
                 breaker.record_failure(self._clock())

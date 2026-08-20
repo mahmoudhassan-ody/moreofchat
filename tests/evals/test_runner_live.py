@@ -26,7 +26,8 @@ from moc.agent.script_engine import ScriptEngine
 from moc.config_store import load
 from moc.evals.judge import Judge
 from moc.evals.load import load_cases
-from moc.evals.runner import CaseRunner, summarize
+from moc.evals.repeatability import default_runs, render_all, repeat, unmeasurable
+from moc.evals.runner import CaseRunner, metrics, summarize
 from moc.llm.anthropic_direct import AnthropicDirect
 from moc.llm.openai_direct import OpenAIDirect
 from moc.llm.router import Router
@@ -168,7 +169,15 @@ async def corpus(app_engine, engine):
 
 
 async def test_live_the_education_suite_produces_a_report(corpus, app_engine, capsys):
-    """All 17 education cases, real retrieval, real models, both stages."""
+    """All 17 education cases, real retrieval, real models, both stages — N times.
+
+    N, not once. One run of 17 cases graded partly by a model is a sample: four
+    consecutive runs of the sibling real-estate suite over one unchanged commit
+    read 52.2%, 42.9%, 39.1% and 45.5%. Every metric here therefore reports
+    mean with min-max and its run count, and one whose spread exceeds the
+    configured bar is flagged as not yet measurable at this suite size rather
+    than compared against.
+    """
     lexical, dense, embedder, tenant, chunk_count = corpus
     providers = {
         "anthropic": AnthropicDirect(
@@ -187,78 +196,77 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
     )
     runner = CaseRunner(
         orchestrator=Orchestrator(
-            engine=ScriptEngine.from_config("scripts/education/fees"),
+            engine=ScriptEngine.from_config(SCRIPT_ID),
             router=router,
             retriever=retriever,
             extractor=LlmSlotExtractor(router=router, script=SCRIPT_ID),
         ),
         retriever=retriever,
         judge=Judge.from_config(router=router),
-        script="scripts/education/fees",
+        script=SCRIPT_ID,
     )
 
     cases = load_cases(CASES)
-    async with tenant_session(app_engine, tenant.id) as session:
-        outcomes = await runner.run(cases, session=session)
-    summary = summarize(outcomes)
+    times = default_runs()
+    runs: list[list] = []
+
+    async def once():
+        async with tenant_session(app_engine, tenant.id) as session:
+            outcomes = await runner.run(cases, session=session)
+        runs.append(outcomes)
+        with capsys.disabled():
+            summary = summarize(outcomes)
+            print(
+                f"  run {len(runs)}/{times}: {summary.accuracy:.1%} "
+                f"({summary.passed}/{summary.scored} scored, {summary.errored} errored)"
+            )
+        return metrics(outcomes)
 
     with capsys.disabled():
-        print(f"\n{'=' * 62}")
-        print(f"  EDUCATION SUITE — {len(cases)} cases, {chunk_count} chunks indexed")
-        print(f"{'=' * 62}")
-        print(f"  overall_accuracy      {summary.accuracy:.1%}"
-              f"  ({summary.passed}/{summary.scored} scored)")
-        print(f"  errored               {summary.errored}")
-        recall = (
-            f"{summary.recall_at_5:.1%} over {summary.recall_cases} cases"
-            if summary.recall_at_5 is not None
-            else "unmeasured"
-        )
-        print(f"  retrieval_recall_at_5 {recall}")
-        # §2.1's two hard gates, both at zero in config/evals/gates.yaml.
-        # Printed with their denominators: "0 of 0" is an unmeasured gate, not
-        # a clean one, and the two read identically without the count.
-        #
-        # These measure the reply that was SENT. A composition the runtime
-        # gate rejected never reached anyone, so it cannot count against the
-        # gate — but how often the model tried is a real signal about
-        # composition, so it is reported below rather than lost.
-        for metric in ("hallucinated_figure_rate", "hedged_figure_rate"):
-            fed = [
-                check
-                for outcome in outcomes
-                for turn in outcome.turns
-                for check in turn.checks
-                if check.metric == metric and not check.skipped
-            ]
-            failed = [check for check in fed if not check.passed]
-            rate = f"{len(failed) / len(fed):.1%}" if fed else "unmeasured"
-            print(
-                f"  {metric:21} {rate}"
-                f"  ({len(failed)}/{len(fed)} turns that stated a figure)"
-            )
-        attempted = [
-            turn.grounding
-            for outcome in outcomes
-            for turn in outcome.turns
-            if turn.grounding is not None
-        ]
-        rejected = [g for g in attempted if not g.passed]
-        print(f"{'-' * 62}")
+        print(f"\n{'=' * 68}")
         print(
-            f"  tracked: the runtime gate rejected {len(rejected)} of {len(attempted)} "
-            "compositions"
+            f"  EDUCATION SUITE — {len(cases)} cases, {chunk_count} chunks, "
+            f"{times} runs"
         )
-        print("  (§19.3 discards a reply whose figure has no source and sends a")
-        print("  scripted one instead, so these never reached a customer and do")
-        print("  not count against the gate above — but they are what it is for.)")
-        print(f"{'-' * 62}")
-        for outcome in outcomes:
+        print(f"{'=' * 68}")
+
+    spreads = await repeat(once, times=times)
+
+    with capsys.disabled():
+        print(f"{'-' * 68}")
+        for line in render_all(spreads):
+            print(f"  {line}")
+        print(f"{'-' * 68}")
+        wide = unmeasurable(spreads)
+        if wide:
+            print(
+                f"  Not measurable at {len(cases)} cases over {times} runs: "
+                f"{', '.join(wide)}"
+            )
+            print("  A delta smaller than the spread is not a result.")
+        else:
+            print("  Every measured metric settled within the configured bar.")
+        print(f"{'-' * 68}")
+        # Per-case, from the LAST run only — labelled as such, because a case
+        # that passes twice and fails once is not the same as one that fails
+        # every time, and this table cannot tell them apart.
+        print(f"  Per-case detail, run {times} of {times}:")
+        for outcome in runs[-1]:
             mark = "err " if outcome.errored else ("PASS" if outcome.passed else "fail")
             failed = [c.name for t in outcome.turns for c in t.checks if not c.passed]
             detail = outcome.error[:60] if outcome.errored else (",".join(failed) or "-")
             print(f"  {mark}  {outcome.case_id:12} {outcome.category:22} {detail}")
-        print(f"{'=' * 62}")
+        # Cases that changed verdict between runs are the suite's own
+        # instability, and they are invisible in any single run's table.
+        verdicts: dict[str, set[bool]] = {}
+        for outcomes in runs:
+            for outcome in outcomes:
+                verdicts.setdefault(outcome.case_id, set()).add(outcome.passed)
+        flaky = sorted(cid for cid, seen in verdicts.items() if len(seen) > 1)
+        print(f"{'-' * 68}")
+        print(f"  Cases that changed verdict across runs: {', '.join(flaky) or 'none'}")
+        print(f"{'=' * 68}")
 
-    assert len(outcomes) == len(cases)
-    assert summary.scored + summary.errored == len(cases)
+    assert len(runs) == times
+    assert all(len(outcomes) == len(cases) for outcomes in runs)
+    assert spreads["overall_accuracy"].attempts == times

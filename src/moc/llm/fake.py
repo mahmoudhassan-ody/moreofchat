@@ -72,6 +72,7 @@ class FakeProvider:
         max_tokens: int,
         reasoning: str = Reasoning.auto,
         effort: str | None = None,
+        temperature: float | None = None,
     ) -> Completion:
         # Recorded before the failure check: a call that failed still happened,
         # and the breaker tests count exactly that.
@@ -85,6 +86,7 @@ class FakeProvider:
                 "max_tokens": max_tokens,
                 "reasoning": reasoning,
                 "effort": effort,
+                "temperature": temperature,
             }
         )
         self._maybe_fail("complete")

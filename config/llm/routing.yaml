@@ -95,6 +95,11 @@ tasks:
       model: gpt-5.6-sol
       reasoning: none
       effort: medium
+    # No temperature key here, and none may be added: claude-sonnet-5 answers
+    # a request carrying one with a 400, `temperature is deprecated for this
+    # model` (measured 2026-08-20). It is a ProviderRequestError, so it would
+    # not fail over either — every composition turn would simply stop.
+    #
     # Raised from 1024: with thinking off a short grounded Arabic fee answer
     # measured ~330 output tokens, and a reply carrying an as_of disclosure and
     # a next step runs longer. Arabic also tokenizes less efficiently than
@@ -103,15 +108,26 @@ tasks:
     max_tokens: 2048
 
   # Haiku carries no effort key: the parameter is a 400 on this model.
+  #
+  # temperature 0 on both candidates. Extraction reads slots out of a sentence
+  # — the same sentence should yield the same slots, and it did not: repeated
+  # runs of one unchanged real-estate suite resolved a compound on one run and
+  # returned null on the next, and the suite's spread was being read as
+  # quality. Harness spec §1 asks for the lowest available temperature; 0 is
+  # the floor both providers accept, verified live 2026-08-20 (haiku 200,
+  # gpt-5.6-luna 200). Note this is not the same key sonnet-5 rejects — see
+  # answer_composition.
   slot_extraction:
     primary:
       provider: anthropic
       model: claude-haiku-4-5-20251001
       reasoning: none
+      temperature: 0.0
     failover:
       provider: openai
       model: gpt-5.6-luna
       reasoning: none
+      temperature: 0.0
     max_tokens: 512
 
   query_rewriting:

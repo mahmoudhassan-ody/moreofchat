@@ -77,6 +77,49 @@ Rules:
 - The eval suite loads config from a **pinned fixture directory**, not from live tenant config. Otherwise a tenant editing their synonyms changes your CI results.
 - `config/` changes trigger the full suite in CI, exactly like `agent/prompts/` changes. A lexicon edit can regress retrieval as badly as a prompt edit.
 
+### 2.4 Repeated runs and spreads
+
+**A suite run is a sample, not a measurement.** Both suites are graded partly by a model and driven by a model, over 17 and 23 cases. Four consecutive real-estate runs over one unchanged commit read 52.2%, 42.9%, 39.1% and 45.5%, and two of them were used to argue that a change had helped. Neither conclusion was supportable — the spread between the runs was wider than the change being measured.
+
+Every suite therefore runs `runs` times (`config/evals/repeat.yaml`, default 3) and every metric is reported as **mean with min–max and its run count**:
+
+```
+overall_accuracy           46.2% (45.5–47.6, n=3)
+```
+
+Rules:
+
+- **A single run is never measurable.** One sample has zero spread, and zero spread is exactly what a settled metric looks like. `n=1` is refused rather than rendered.
+- **Unmeasured is not zero.** A metric no run fed reports `not measured (0 of 3 runs)`. Same distinction §5.1's gate results already draw, for the same reason: 0.0% is what four of the five commercial gates print when they pass.
+- A metric measured in only some runs reports `n=2 of 3 runs`, never a mean over a silently smaller denominator.
+- A metric whose min–max spread exceeds `measurable_spread_pp` (default 10) is flagged **not measurable at this suite size**. That is not a failure — the code may be fine and the denominator merely too small — but a delta smaller than the spread is not a result, and must not be reported as one.
+- Cases that change verdict between runs are listed. They are §6.2's flaky set, and they are invisible in any single run's table.
+
+Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extraction`), per §2's "lowest available temperature". Note that this is per candidate rather than per task: `claude-sonnet-5` answers a request carrying `temperature` with a 400 (`temperature is deprecated for this model`, measured 2026-08-20), while `claude-haiku-4-5` accepts it. Dropping extraction to 0 narrowed real-estate `overall_accuracy` from a 13.1-point spread to 2.1.
+
+**Baseline, 2026-08-20** (`2eb7db8` plus this change, n=3 each):
+
+| Suite | Metric | Value |
+|---|---|---|
+| real estate | `overall_accuracy` | 46.2% (45.5–47.6) |
+| real estate | `asof_disclosure_rate` | 82.0% (81.2–82.4) |
+| real estate | `arithmetic_in_model_rate` | 0.0% (0.0–0.0) |
+| real estate | `type_substitution_rate` | 0.0% (0.0–0.0) |
+| real estate | `invented_compound_rate` | 0.0% (0.0–0.0) |
+| real estate | `sold_unit_offered_rate` | 0.0% (0.0–0.0) |
+| real estate | `tool_call_accuracy` (tracked) | 58.6% (57.1–61.5) |
+| real estate | `unresolved_type_rate` (tracked) | 50.0% (50.0–50.0) |
+| real estate | `errored_rate` | 5.8% (4.3–8.7) |
+| education | `overall_accuracy` | 5.9% (0.0–11.8) — **not measurable at 17 cases** |
+| education | `expected_action_accuracy` | 66.7% (63.2–68.4) |
+| education | `language_mirror_accuracy` | 82.5% (78.9–84.2) |
+| education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
+| education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
+| education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
+| education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
+
+Education's accuracy is not comparable against at this suite size. One case is 5.9 points of a 17-case suite, so a two-case swing exceeds the bar on its own; §4.1's 150 cases are what makes that metric readable, not a steadier model. `register_accuracy`, `p95_latency_ms` and `forbidden_claim_violations` fed nothing in any run and are unmeasured, not clean.
+
 ---
 
 ## 3. Case schema
