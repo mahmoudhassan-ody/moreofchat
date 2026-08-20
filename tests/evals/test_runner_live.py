@@ -302,11 +302,23 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             # a second full run every time.
             for turn in outcome.turns:
                 misses = [c for c in turn.checks if not c.passed and not c.skipped]
-                if not misses:
+                judged = turn.verdict is not None and not turn.verdict.meets_rubric
+                if not misses and not judged:
                     continue
-                print(f"        t{turn.turn_index} {turn.action}: {turn.reply[:150]!r}")
+                print(f"        t{turn.turn_index} {turn.action}: {turn.reply[:220]!r}")
                 for check in misses:
                     print(f"          {check.name}: {check.detail[:110]}")
+                # The judge's own words. A case that passes every
+                # deterministic check and fails here failed on answer
+                # quality, and "the judge said no" is not a finding.
+                if judged:
+                    v = turn.verdict
+                    print(f"          judge scores: {v.scores()}")
+                    if v.forbidden_violated:
+                        print(f"          judge forbidden: {list(v.forbidden_violated)}")
+                    if v.fact_coverage:
+                        print(f"          judge facts: {dict(v.fact_coverage)}")
+                    print(f"          judge says: {' '.join(v.reasoning.split())[:400]}")
         # Cases that changed verdict between runs are the suite's own
         # instability, and they are invisible in any single run's table.
         verdicts: dict[str, set[bool]] = {}
