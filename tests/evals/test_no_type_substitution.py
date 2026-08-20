@@ -332,3 +332,71 @@ def test_a_studio_exists_elsewhere_to_offer_as_the_alternative(catalogue):
     ]
     assert len(available) == 8
     assert len(set(available)) == 8, "each studio sits in a distinct compound"
+
+
+# ───────────────────── the wrong compound, not an invented one ─────────────────────
+
+
+def _snapshot():
+    from moc.evals.deterministic import InventorySnapshot
+
+    return InventorySnapshot(
+        fixture="f",
+        as_of="2026-08-01",
+        unit_status={"a": "available", "b": "available"},
+        unit_type={"a": "townhouse", "b": "apartment"},
+        unit_compound={"a": "Jefaira", "b": "Creek Town"},
+    )
+
+
+def test_a_reply_about_a_different_compound_than_the_one_asked_about_fails():
+    """The gap `invented_compound_rate` cannot see.
+
+    re-0010 asked about `كريك تاون`. Creek Town was outside the extractor's
+    vocabulary, the model emitted the nearest value it was allowed to, and the
+    reply described a Jefaira townhouse. Jefaira is real, so the invented-
+    compound gate read 0.0% while the customer was answered about a different
+    development entirely.
+    """
+    from moc.evals.deterministic import check_wrong_compound
+
+    result = check_wrong_compound("Creek Town", ("Jefaira",), _snapshot())
+    assert not result.passed
+    assert result.metric == "wrong_compound_rate"
+    assert "Creek Town" in result.detail and "Jefaira" in result.detail
+
+
+def test_naming_the_compound_asked_about_passes():
+    from moc.evals.deterministic import check_wrong_compound
+
+    assert check_wrong_compound("Creek Town", ("Creek Town",), _snapshot()).passed
+
+
+def test_an_explicit_alternative_that_names_both_compounds_passes():
+    """re-0002's owner decision: "no villa in <asked> — we have one in <other>".
+    Both compounds named is the required shape, so naming a second one is not
+    a substitution. Naming only the second one is."""
+    from moc.evals.deterministic import check_wrong_compound
+
+    result = check_wrong_compound("Creek Town", ("Creek Town", "Jefaira"), _snapshot())
+    assert result.passed, result.detail
+
+
+def test_a_turn_that_pins_no_compound_is_skipped_not_passed():
+    """Most cases name no compound. Counting them as passes would fill a
+    zero-tolerance gate with observations that never tested anything."""
+    from moc.evals.deterministic import check_wrong_compound
+
+    result = check_wrong_compound(None, ("Jefaira",), _snapshot())
+    assert result.skipped
+
+    silent = check_wrong_compound("Creek Town", (), _snapshot())
+    assert silent.skipped, "a reply naming no compound cannot name the wrong one"
+
+
+def test_the_gate_is_declared_zero_tolerance():
+    from moc.config_store import load
+
+    gate = load("evals/gates")["hard_gates"]["wrong_compound_rate"]
+    assert gate["direction"] == "max"
+    assert gate["threshold"] == 0.0

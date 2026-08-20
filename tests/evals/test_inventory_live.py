@@ -94,14 +94,23 @@ async def live_runner(engine, app_engine, tenant_tables):
     from moc.verticals.realestate.agent import InventoryAgent
 
     async with tenant_session(app_engine, tenant_id) as session:
+        repository = InventoryRepository(session=session)
         yield InventoryCaseRunner(
             agent=InventoryAgent(
-                repository=InventoryRepository(session=session),
+                repository=repository,
                 engine=ScriptEngine.from_config(SCRIPT),
                 # The production extractor, not the keyword double. The double
                 # cannot fail the way the real one does, so a suite run on it
                 # measures the connector rather than the agent.
-                extractor=LlmSlotExtractor(router=router, script=SCRIPT),
+                #
+                # The catalogue is this tenant's own rows: the values the model
+                # may emit and the values the connector filters on are one
+                # list, read once.
+                extractor=LlmSlotExtractor(
+                    router=router,
+                    script=SCRIPT,
+                    catalogue=await repository.vocabulary(),
+                ),
             ),
             snapshot=snapshot_from_fixture(FIXTURE),
             script=SCRIPT,

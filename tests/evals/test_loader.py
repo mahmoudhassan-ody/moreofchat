@@ -17,6 +17,9 @@ from moc.evals.schema import (
 REPO_ROOT = Path(__file__).parents[2]
 EDUCATION = REPO_ROOT / "evals" / "cases" / "education.yaml"
 REALESTATE = REPO_ROOT / "evals" / "cases" / "realestate.yaml"
+FIXTURE = (
+    REPO_ROOT / "evals" / "fixtures" / "broker_demo_2026_08_01" / "units.jsonl"
+)
 
 MINIMAL = (
     "- {{id: {id}, vertical: education, source: synthetic, category: ambiguous,\n"
@@ -328,16 +331,32 @@ def test_location_slots_use_the_catalogue_spelling():
     both, so `slot_retention_accuracy` had a ceiling below 100% that no
     prompt work could lift — and the cause looked like a model failure.
 
-    Title case is the form chosen because it is what the extractor's
-    vocabulary emits (built from `locations.yaml`'s canonical values), what
-    `inventory_units.city` and `.compound` hold, and what the tool-call
-    assertions already pinned. The other two would each have needed a
-    translation step somewhere, and a translation step is where the drift
-    comes back.
+    The catalogue's own spelling is the form chosen, because it is what
+    `inventory_units.city` and `.compound` hold, what the extractor's
+    vocabulary is now read from, and what the tool-call assertions already
+    pinned. The other two would each have needed a translation step
+    somewhere, and a translation step is where the drift comes back.
+
+    Checked against the fixture rather than against config: config no longer
+    declares the values, which is the point — see
+    tests/arabic/test_location_coverage.py.
     """
+    import json
+
     from moc.agent.extraction import slot_vocabulary
 
-    vocabulary = slot_vocabulary("scripts/realestate/search")
+    rows = [
+        json.loads(line)
+        for line in FIXTURE.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    vocabulary = slot_vocabulary(
+        "scripts/realestate/search",
+        catalogue={
+            "city": {r["city"] for r in rows if r.get("city")},
+            "compound": {r["compound"] for r in rows if r.get("compound")},
+        },
+    )
     cases = load_cases(REALESTATE)
     seen = 0
     for case in cases:

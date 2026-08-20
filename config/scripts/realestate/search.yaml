@@ -37,12 +37,16 @@ settings:
 slots:
   property_type:
     from: agent/property_types
+  # From the tenant's own inventory, not from a config list. `locations.yaml`
+  # used to declare both, and it declared ten of the catalogue's ninety-four
+  # compounds — so `كريك تاون` was outside what the model could emit and it
+  # answered about Jefaira instead. Which column a value sits in is its kind.
   city:
-    from: arabic/locations
-    kind: city
+    from: catalogue
+    column: city
   compound:
-    from: arabic/locations
-    kind: compound
+    from: catalogue
+    column: compound
   bedrooms:
     type: integer
   budget_max:

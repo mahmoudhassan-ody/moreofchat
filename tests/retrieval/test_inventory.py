@@ -371,6 +371,43 @@ async def test_the_catalogue_of_compounds_is_readable_for_the_reply_rules(repo):
     assert len(compounds) > 20
 
 
+async def test_the_extraction_vocabulary_comes_from_the_catalogue(repo):
+    """The vocabulary the model may emit and the values the connector filters
+    on must be one list, spelled once.
+
+    They were two. `locations.yaml` declared 10 of the catalogue's 94
+    compounds, so `كريك تاون` (Creek Town, three units in the fixture) was
+    outside the closed vocabulary — and the model answered with `Jefaira`
+    rather than omitting the slot. A real compound, the wrong one, and no
+    gate saw it because `invented_compound_rate` only knows invented.
+
+    Spelling matters as much as membership: `SouthMED`, `Stei8ht`, `HAPTown`
+    and `L'Avenir` are catalogue values no title-casing rule produces.
+    """
+    repository, _ = repo
+    vocabulary = await repository.vocabulary()
+
+    assert set(vocabulary) == {"city", "compound"}
+    assert "Creek Town" in vocabulary["compound"]
+    assert "SouthMED" in vocabulary["compound"], "the catalogue's own casing"
+    assert "New Cairo" in vocabulary["city"]
+    assert len(vocabulary["compound"]) > 90
+    assert len(vocabulary["city"]) == 13
+
+
+async def test_the_vocabulary_is_availability_filtered_like_every_other_read(repo):
+    """No unfiltered read, here either. A compound whose every unit is sold
+    drops out of the vocabulary — the fixture has none today, and the
+    alternative is an unfiltered statement in this module, which is the one
+    thing its structure exists to prevent."""
+    import inspect
+
+    from moc.retrieval import inventory
+
+    source = inspect.getsource(inventory.InventoryRepository.vocabulary)
+    assert "_where" in source, "the vocabulary read must share the one predicate"
+
+
 async def _one_with_availability(repository, availability: str) -> str:
     """A unit id with a given availability, read straight from the fixture."""
     import json

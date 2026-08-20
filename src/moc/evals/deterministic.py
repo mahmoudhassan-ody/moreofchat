@@ -425,6 +425,52 @@ def check_compound_grounding(
     )
 
 
+def check_wrong_compound(
+    expected: str | None, named_compounds: Sequence[str], snapshot: InventorySnapshot
+) -> CheckResult:
+    """A reply that answers about a real compound other than the one asked about.
+
+    **The failure `invented_compound_rate` structurally cannot see.** re-0010
+    asked about `كريك تاون`; Creek Town sat outside the extractor's closed
+    vocabulary, so the model emitted the nearest value it was permitted to and
+    the reply described a Jefaira townhouse — right price, right availability,
+    wrong development. Jefaira exists, so the invented-compound gate read 0.0%
+    for as long as the substitution ran.
+
+    Graded against the case's expectation rather than the resolved slot, for
+    the same reason `check_availability` reads the fixture: the slot is what
+    the thing under test decided, and asking it to supply its own answer key
+    is how a substitution grades itself as correct.
+
+    Naming a *second* compound is not a substitution. §19.3's reply shape for
+    no-match is "no villa in <asked> — we have one in <other>", and both
+    compounds must appear. Naming only the other one is the failure.
+    """
+    if not expected or not named_compounds:
+        return CheckResult(
+            name="wrong_compound",
+            metric="wrong_compound_rate",
+            passed=True,
+            skipped=True,
+            detail="the turn pins no compound" if not expected else "reply named none",
+        )
+    if expected in named_compounds:
+        return CheckResult(
+            name="wrong_compound", metric="wrong_compound_rate", passed=True
+        )
+    substituted = [c for c in named_compounds if c in snapshot.compounds()]
+    return CheckResult(
+        name="wrong_compound",
+        metric="wrong_compound_rate",
+        passed=not substituted,
+        detail=(
+            ""
+            if not substituted
+            else f"asked about {expected}, reply named {', '.join(sorted(substituted))}"
+        ),
+    )
+
+
 def check_asof_disclosure(
     reply: str, snapshot: InventorySnapshot, required: bool
 ) -> CheckResult:

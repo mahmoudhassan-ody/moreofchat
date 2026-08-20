@@ -39,6 +39,7 @@ from moc.evals.deterministic import (
     check_slots,
     check_tool_calls,
     check_type_resolved,
+    check_wrong_compound,
 )
 from moc.evals.schema import EvalCase, Turn
 
@@ -46,6 +47,7 @@ from moc.evals.schema import EvalCase, Turn
 #: from the report fails a test rather than vanishing from a summary.
 GATES = (
     "arithmetic_in_model_rate",
+    "wrong_compound_rate",
     "type_substitution_rate",
     "invented_compound_rate",
     "sold_unit_offered_rate",
@@ -64,6 +66,7 @@ TRACKED = ("tool_call_accuracy", "unresolved_type_rate")
 #: the same way would invert it.
 _FAILURE_RATE = {
     "arithmetic_in_model_rate",
+    "wrong_compound_rate",
     "type_substitution_rate",
     "invented_compound_rate",
     "sold_unit_offered_rate",
@@ -234,6 +237,9 @@ class InventoryCaseRunner:
                 result.state.slots.get("property_type"), result.presented_unit_ids
             ),
             check_compound_grounding(result.named_compounds, self.snapshot),
+            check_wrong_compound(
+                _compound_asked_about(turn), result.named_compounds, self.snapshot
+            ),
             check_asof_disclosure(
                 result.reply, self.snapshot, required=turn.expected_asof_disclosure
             ),
@@ -296,6 +302,21 @@ def metrics(outcomes: Sequence[InventoryCaseOutcome]) -> dict[str, float | None]
         (len(outcomes) - len(scored)) / len(outcomes) if outcomes else None
     )
     return values
+
+
+def _compound_asked_about(turn: Turn) -> str | None:
+    """Which compound the case says the customer named.
+
+    From the answer key, never from the resolved slot. The slot is what the
+    extractor decided, and re-0010's extractor decided `Jefaira` for a
+    question about Creek Town — asking it to supply its own answer key is how
+    a substitution grades itself correct.
+    """
+    for call in turn.expected_tool_calls or ():
+        compound = call.args_contain.get("compound")
+        if compound:
+            return str(compound)
+    return (turn.expected_slots or {}).get("compound")
 
 
 def _dates(reply: str) -> set[str]:

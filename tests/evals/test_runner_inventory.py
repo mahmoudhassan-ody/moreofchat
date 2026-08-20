@@ -91,7 +91,7 @@ async def runner(app_engine, stocked):
             agent=InventoryAgent(
                 repository=repository,
                 engine=ScriptEngine.from_config(SCRIPT),
-                extractor=KeywordSlotExtractor(),
+                extractor=KeywordSlotExtractor(catalogue=await repository.vocabulary()),
             ),
             snapshot=snapshot_from_fixture(FIXTURE),
             script=SCRIPT,

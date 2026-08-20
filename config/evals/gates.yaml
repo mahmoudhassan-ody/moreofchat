@@ -61,6 +61,14 @@ hard_gates:
     direction: max
     threshold: 0.0
     description: a compound named in a reply that is not in the catalogue
+  wrong_compound_rate:
+    direction: max
+    threshold: 0.0
+    # Added 2026-08-20. `invented_compound_rate` cannot see this one: asked
+    # about Creek Town, the reply described a Jefaira townhouse, and Jefaira
+    # is real, so the invented gate read 0.0% throughout. A real compound,
+    # the wrong one, is the likelier failure and the harder one to notice.
+    description: a compound named in a reply that exists but is not the one asked about
   asof_disclosure_rate:
     direction: min
     threshold: 0.98

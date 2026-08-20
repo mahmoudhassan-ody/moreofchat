@@ -28,7 +28,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from moc.agent.extraction import catalogue_name
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
 from moc.retrieval.inventory import UnitQuery
@@ -92,6 +91,12 @@ class KeywordSlotExtractor:
     double that ends up in production wiring.
     """
 
+    def __init__(self, *, catalogue: Any = None) -> None:
+        # The same catalogue the real extractor gets. Without it this double
+        # resolves no location at all, which is the honest failure: the values
+        # live in the tenant's rows, not in a config list.
+        self._catalogue = catalogue
+
     INTENTS = (
         ("negotiation", ("أقل سعر", "خصم", "كاش", "تخفيض", "أحسن سعر")),
         ("investment_projection", ("هتزيد", "قيمتها", "استثمار", "بعد سنتين", "عائد")),
@@ -123,10 +128,10 @@ class KeywordSlotExtractor:
             if word in text:
                 slots["property_type"] = value
                 break
-        city = _location_in(text, "city")
+        city = _location_in(text, "city", self._catalogue)
         if city:
             slots["city"] = city
-        compound = _location_in(text, "compound")
+        compound = _location_in(text, "compound", self._catalogue)
         if compound:
             slots["compound"] = compound
         budget = _budget_in(text)
@@ -140,7 +145,7 @@ class KeywordSlotExtractor:
 
 
 def _aliases() -> dict[str, str]:
-    """Arabic surface form -> canonical location, from config (§19).
+    """Arabic surface form -> catalogue value, from config (§19).
 
     Longest first, so `القاهرة الجديدة` is not shadowed by a shorter alias
     that happens to be a substring of it.
@@ -154,21 +159,27 @@ def _aliases() -> dict[str, str]:
     return dict(sorted(pairs, key=lambda pair: -len(pair[0])))
 
 
-def _kinds() -> dict[str, str]:
-    return load(_LOCATIONS)["kind"]
+def _location_in(text: str, column: str, catalogue: Any) -> str | None:
+    """The first alias present in the message whose value sits in `column`.
 
-
-def _location_in(text: str, kind: str) -> str | None:
-    """The first alias of `kind` present in the message.
-
-    City and compound are resolved separately because they filter different
-    columns — `locations.yaml`'s `kind` map exists for exactly this, and
-    filtering `city` with a compound name returns nothing and reads as "no
-    inventory".
+    City and compound resolve separately because they filter different
+    columns, and filtering `city` with a compound name returns nothing and
+    reads as "no inventory". Which column a value belongs to comes from the
+    catalogue rather than from a hand-kept `kind:` map — one fewer thing that
+    can disagree with the rows.
     """
-    for alias, canonical in _aliases().items():
-        if alias and alias in text and _kinds().get(canonical) == kind:
-            return catalogue_name(canonical)
+    known = set((catalogue or {}).get(column, ()))
+    for alias, value in _aliases().items():
+        if alias and alias in text and value in known:
+            return value
+    # A bare catalogue name typed as-is: `Creek Town`, `Mivida`. Most compounds
+    # carry no alias because their catalogue spelling is already what people
+    # type, so matching the value itself is not a shortcut — it is the common
+    # case.
+    lowered = text.lower()
+    for value in sorted(known, key=len, reverse=True):
+        if value.lower() in lowered:
+            return value
     return None
 
 

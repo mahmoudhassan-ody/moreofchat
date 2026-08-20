@@ -146,7 +146,7 @@ def test_bilingual_text_with_a_separator_is_not_flagged(legitimate):
 def test_the_corrected_alamein_aliases_are_present_and_clean():
     """The specific fix, pinned so a re-transcription cannot undo it."""
     aliases = yaml.safe_load((CONFIG / "arabic" / "locations.yaml").read_text("utf-8"))
-    arabic = aliases["aliases"]["new alamein"]["arabic"]
+    arabic = aliases["aliases"]["New Alamein"]["arabic"]
     assert "العلمين" in arabic
     assert "العلمين الجديدة" in arabic
     assert all(not spliced(form) for form in arabic)

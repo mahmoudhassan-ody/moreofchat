@@ -30,6 +30,7 @@ to the baseline it claims to be comparable to (§2.3).
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -56,18 +57,30 @@ class ExtractionFailed(Exception):
     """
 
 
-@lru_cache(maxsize=8)
-def slot_vocabulary(script: str) -> dict[str, Any]:
+#: A slot whose values come from the tenant's own inventory rather than from
+#: config. `column` says which column, and which column also says what kind of
+#: place the value is — a value in `city` filters `city`.
+CATALOGUE = "catalogue"
+
+#: One suite run's view of the catalogue: column -> the values it holds.
+Catalogue = Mapping[str, Sequence[str]]
+
+
+def slot_vocabulary(script: str, *, catalogue: Catalogue | None = None) -> dict[str, Any]:
     """What each slot of `script` may hold.
 
-    Resolved from the script's own `slots:` block, following `from:` into the
-    shared config files rather than restating their values. A second copy of
-    the property types or the location aliases would drift into a value the
-    connector cannot filter on.
+    Closed vocabularies come from the place the value will be used: property
+    types from config, locations from the catalogue itself. A second list is a
+    second thing to keep correct, and the location one was wrong — it declared
+    ten of the catalogue's ninety-four compounds, so `كريك تاون` fell outside
+    what the model was allowed to emit and it answered about Jefaira instead.
+
+    Exact catalogue spelling throughout. There is no normalisation step here
+    and there must not be one: `SouthMED`, `Stei8ht` and `L'Avenir` are values
+    no casing rule produces, and a resolved slot is used as a filter directly.
     """
-    document = load(script).get("slots", {})
     vocabulary: dict[str, Any] = {}
-    for slot, spec in document.items():
+    for slot, spec in _slot_specs(script).items():
         if spec.get("free"):
             vocabulary[slot] = FREE
         elif spec.get("type") == "integer":
@@ -76,57 +89,58 @@ def slot_vocabulary(script: str) -> dict[str, Any]:
             vocabulary[slot] = tuple(spec["values"])
         elif spec.get("from") == "agent/property_types":
             vocabulary[slot] = tuple(load("agent/property_types")["types"])
-        elif spec.get("from") == "arabic/locations":
-            kinds = load("arabic/locations")["kind"]
-            wanted = spec["kind"]
-            vocabulary[slot] = tuple(
-                sorted(
-                    catalogue_name(name)
-                    for name, kind in kinds.items()
-                    if kind == wanted
+        elif spec.get("from") == CATALOGUE:
+            column = spec["column"]
+            if catalogue is None or column not in catalogue:
+                # Not an empty tuple. An empty vocabulary rejects every
+                # extraction as out-of-vocabulary, which reads as a bad model
+                # rather than as plumbing nobody wired up.
+                raise ValueError(
+                    f"{script}: slot {slot!r} reads column {column!r} from the "
+                    f"catalogue and no catalogue was supplied"
                 )
-            )
+            vocabulary[slot] = tuple(sorted(catalogue[column]))
         else:
             raise ValueError(f"{script}: slot {slot!r} declares no vocabulary")
     return vocabulary
 
 
 @lru_cache(maxsize=8)
-def slot_aliases(script: str) -> dict[str, dict[str, tuple[str, ...]]]:
-    """Per slot, the surface forms that map to each canonical value.
+def _slot_specs(script: str) -> dict[str, Any]:
+    return load(script).get("slots", {})
 
-    **The canonical values alone are not a mapping.** The model resolves a
-    surface form only when the two are translations of each other:
-    `الساحل الشمالي` -> `North Coast` and `الشيخ زايد` -> `Sheikh Zayed` both
-    land. `التجمع الخامس` -> `New Cairo` does not — it is local knowledge, not
-    translation — and Haiku put the raw Arabic into `compound`, which is a
-    hard rejection and an errored case. Two of twenty-three real-estate cases
-    died that way, both naming the largest city in the catalogue.
 
-    `locations.yaml` has held that mapping since it was transcribed. It simply
-    never reached the prompt. Reading it here rather than writing the names
-    into the template keeps §3.1 intact: aliases are what the model may READ,
-    the vocabulary is still all it may EMIT.
+def slot_aliases(
+    script: str, *, catalogue: Catalogue | None = None
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Per slot, the surface forms that map to each value.
+
+    **The values alone are not a mapping.** The model resolves a surface form
+    only when the two are translations of each other: `الساحل الشمالي` ->
+    `North Coast` lands, `التجمع الخامس` -> `New Cairo` does not — that is
+    local knowledge — and it put the raw Arabic into `compound`, which is a
+    hard rejection and an errored case.
+
+    `locations.yaml` and `property_types.yaml` have held those mappings all
+    along; neither reached the prompt. Reading them here rather than writing
+    names into the template keeps §3.1 intact: aliases are what the model may
+    READ, the vocabulary is still all it may EMIT.
     """
-    document = load(script).get("slots", {})
     resolved: dict[str, dict[str, tuple[str, ...]]] = {}
-    for slot, spec in document.items():
-        source = spec.get("from")
-        if source == "arabic/locations":
-            locations = load("arabic/locations")
-            wanted = spec["kind"]
+    for slot, spec in _slot_specs(script).items():
+        if spec.get("from") == CATALOGUE:
+            overlay = load("arabic/locations")["aliases"]
+            values = (catalogue or {}).get(spec["column"], ())
+            # Keyed by catalogue value: an alias block for a value this tenant
+            # does not stock simply never matches.
             resolved[slot] = {
-                catalogue_name(name): _forms(forms)
-                for name, forms in locations["aliases"].items()
-                if locations["kind"].get(name) == wanted
+                value: _forms(overlay.get(value, {})) for value in values
             }
-        elif source == "agent/property_types":
+        elif spec.get("from") == "agent/property_types":
             # The same omission as locations, in a file whose own header says
             # it is "injected into the extraction prompt at render time".
-            # Only the canonical keys ever were. `شقة` and `sha22a` have been
-            # sitting here since it was written, and the model never saw
-            # either — which is what re-0001 and re-0016 failed on once their
-            # city resolved.
+            # Only its keys ever were, and `شقة` and `sha22a` have been
+            # sitting in it since it was written.
             resolved[slot] = {
                 name: _forms(forms)
                 for name, forms in load("agent/property_types")["types"].items()
@@ -135,15 +149,9 @@ def slot_aliases(script: str) -> dict[str, dict[str, tuple[str, ...]]]:
 
 
 def _forms(spec: dict[str, Any]) -> tuple[str, ...]:
-    """Arabic first, then Latin. Order is the file's, not sorted: the list is
+    """Arabic first, then Latin. The file's order, not sorted: the lists are
     maintained commonest-first and that is the order worth showing."""
     return tuple(spec.get("arabic", []) + spec.get("latin", []))
-
-
-def catalogue_name(canonical: str) -> str:
-    """`new cairo` -> `New Cairo`. The catalogue's own columns are title case
-    and a resolved slot is used as a filter directly."""
-    return " ".join(word.capitalize() for word in canonical.split())
 
 
 @lru_cache(maxsize=8)
@@ -210,7 +218,13 @@ def _offer(value: str, forms: tuple[str, ...]) -> str:
     return f"{value} ({', '.join(forms)})" if forms else value
 
 
-def render_prompt(*, script: str, message: str, held_slots: dict[str, Any]) -> str:
+def render_prompt(
+    *,
+    script: str,
+    message: str,
+    held_slots: dict[str, Any],
+    catalogue: Catalogue | None = None,
+) -> str:
     """Fill the template with this script's vocabulary and the held state.
 
     `held_slots` travels because multi-turn cases accumulate — re-0018 gathers
@@ -223,7 +237,11 @@ def render_prompt(*, script: str, message: str, held_slots: dict[str, Any]) -> s
         .replace("{held_slots}", json.dumps(held_slots, ensure_ascii=False) or "{}")
         .replace("{intents}", "\n".join(f"- {line}" for line in _intents(script)))
         .replace(
-            "{slots}", _describe(slot_vocabulary(script), slot_aliases(script))
+            "{slots}",
+            _describe(
+                slot_vocabulary(script, catalogue=catalogue),
+                slot_aliases(script, catalogue=catalogue),
+            ),
         )
     )
 
@@ -236,9 +254,21 @@ def _template() -> str:
 class LlmSlotExtractor:
     """§2.6's `slot_extraction` task, behind the orchestrator's extractor port."""
 
-    def __init__(self, *, router: Any, script: str, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        router: Any,
+        script: str,
+        catalogue: Catalogue | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> None:
         self._router = router
         self._script = script
+        # The tenant's own inventory, read once at construction. A script with
+        # no catalogue-backed slot never needs it; one that has them raises at
+        # the first turn rather than rejecting every extraction as
+        # out-of-vocabulary, which is the shape that reads as a bad model.
+        self._catalogue = catalogue
         self._config = config or load(_CONFIG)
 
     @property
@@ -257,7 +287,10 @@ class LlmSlotExtractor:
 
     async def extract(self, *, text: str, state: ConversationState) -> TurnInput:
         prompt = render_prompt(
-            script=self._script, message=text, held_slots=dict(state.slots)
+            script=self._script,
+            message=text,
+            held_slots=dict(state.slots),
+            catalogue=self._catalogue,
         )
         # No `max_tokens` here: `llm/routing.yaml` sets it per task, and a
         # second value in this module would be a second thing to keep in step
@@ -307,7 +340,7 @@ class LlmSlotExtractor:
         turns a model that misread the task into a customer who said less than
         they did, and the reply that follows asks them to repeat themselves.
         """
-        vocabulary = slot_vocabulary(self._script)
+        vocabulary = slot_vocabulary(self._script, catalogue=self._catalogue)
         clean: dict[str, Any] = {}
         for slot, value in raw.items():
             if value is None or (isinstance(value, str) and not value.strip()):
@@ -349,7 +382,8 @@ def _as_int(slot: str, value: Any) -> int:
 __all__ = [
     "ExtractionFailed",
     "LlmSlotExtractor",
-    "catalogue_name",
+    "CATALOGUE",
+    "Catalogue",
     "render_prompt",
     "slot_aliases",
     "slot_vocabulary",

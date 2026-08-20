@@ -91,9 +91,14 @@ def test_no_compound_or_city_is_named_in_the_prompt_text():
     reads as "we have no stock in Mivida", not as a bug.
     """
     text = PROMPT.read_text(encoding="utf-8")
-    catalogue = set(load("arabic/locations")["kind"])
-    named = {name for name in catalogue if name.lower() in text.lower()}
-    assert named == set(), f"the prompt names locations from config: {named}"
+    named = {
+        name
+        for values in CATALOGUE.values()
+        for name in values
+        if name.lower() in text.lower()
+    }
+    named |= {n for n in load("arabic/locations")["aliases"] if n.lower() in text.lower()}
+    assert named == set(), f"the prompt names locations: {named}"
 
     types = set(load("agent/property_types")["types"])
     assert {t for t in types if t in text} == set(), "the prompt names property types"
@@ -119,27 +124,75 @@ def test_slot_vocabulary_is_resolved_from_the_script():
     assert "dentistry" in education["faculty"]
     assert "property_type" not in education, "a vertical sees only its own slots"
 
-    realestate = slot_vocabulary(REALESTATE)
+    realestate = slot_vocabulary(REALESTATE, catalogue=CATALOGUE)
     assert "studio" in realestate["property_type"]
     assert "North Coast" in realestate["city"]
-    assert "Mivida" in realestate["compound"]
+    assert "Creek Town" in realestate["compound"]
     assert realestate["bedrooms"] == "integer"
     assert realestate["unit_id"] == "free"
+
+
+CATALOGUE = {
+    "city": ("New Cairo", "North Coast", "Sheikh Zayed"),
+    "compound": ("Creek Town", "Jefaira", "SouthMED", "Stei8ht"),
+}
+
+
+def test_the_location_vocabulary_is_the_catalogue_not_a_config_list():
+    """The values the model may emit are the values the connector filters on,
+    read from the same place. They were two lists and one held ten of
+    ninety-four compounds — see tests/arabic/test_location_coverage.py."""
+    vocabulary = slot_vocabulary(REALESTATE, catalogue=CATALOGUE)
+    assert vocabulary["compound"] == ("Creek Town", "Jefaira", "SouthMED", "Stei8ht")
+    assert vocabulary["city"] == ("New Cairo", "North Coast", "Sheikh Zayed")
+
+
+def test_a_catalogue_value_keeps_the_catalogue_s_own_spelling():
+    """`SouthMED`, not `Southmed`. The old design title-cased a lower-case
+    config key, which cannot produce `SouthMED`, `Stei8ht` or `L'Avenir` —
+    and a resolved slot is used as a filter directly, so a near-miss spelling
+    matches nothing and reads as absent stock."""
+    vocabulary = slot_vocabulary(REALESTATE, catalogue=CATALOGUE)
+    assert "SouthMED" in vocabulary["compound"]
+    assert "Southmed" not in vocabulary["compound"]
+
+
+def test_a_catalogue_slot_without_a_catalogue_refuses_rather_than_empties():
+    """An empty vocabulary would reject every extraction as out-of-vocabulary,
+    which reads as a bad model rather than as unwired plumbing."""
+    with pytest.raises(ValueError, match="catalogue"):
+        slot_vocabulary(REALESTATE, catalogue=None)
+
+
+def test_a_catalogue_value_with_no_alias_is_offered_bare():
+    """Ninety-four compounds, forty-five aliased. `Creek Town` carries an
+    Arabic name; most compounds are Latin in the catalogue and typed that
+    way, and empty brackets would read as a list to choose from."""
+    prompt = render_prompt(
+        script=REALESTATE, message="x", held_slots={}, catalogue=CATALOGUE
+    )
+    line = next(ln for ln in prompt.splitlines() if ln.startswith("- compound:"))
+    assert "Creek Town (كريك تاون)" in line, "the compound the model substituted for"
+    assert "Jefaira (جفيرة, jefaira)" in line
+    assert "Stei8ht" in line and "Stei8ht (" not in line, "no empty brackets"
 
 
 def test_a_city_is_never_offered_as_a_compound():
     """`locations.yaml`'s `kind` map exists for this. Filtering `city` with a
     compound name returns nothing and reads as "no inventory"."""
-    vocabulary = slot_vocabulary(REALESTATE)
+    vocabulary = slot_vocabulary(REALESTATE, catalogue=CATALOGUE)
     assert "Mivida" not in vocabulary["city"]
     assert "North Coast" not in vocabulary["compound"]
 
 
 def test_the_rendered_prompt_carries_the_vocabulary_and_the_held_slots():
     prompt = render_prompt(
-        script=REALESTATE, message="عايز شقة في ميفيدا", held_slots={"city": "New Cairo"}
+        script=REALESTATE,
+        message="عايز شقة في ميفيدا",
+        held_slots={"city": "New Cairo"},
+        catalogue=CATALOGUE,
     )
-    assert "Mivida" in prompt
+    assert "Creek Town" in prompt
     assert "studio" in prompt
     assert "New Cairo" in prompt, "held slots travel, or multi-turn cannot accumulate"
     assert "inventory_lookup" in prompt, "intents come from the script's nodes"
@@ -161,7 +214,9 @@ def test_a_location_is_offered_with_the_names_customers_use_for_it():
     §3.1 rule is intact: what the model may EMIT is still only what the
     resolver can parse back.
     """
-    prompt = render_prompt(script=REALESTATE, message="x", held_slots={})
+    prompt = render_prompt(
+        script=REALESTATE, message="x", held_slots={}, catalogue=CATALOGUE
+    )
 
     assert "التجمع الخامس" in prompt, "the Arabic name that errored re-0001"
     assert "tagamo3 el 5ames" in prompt.lower(), "the franco name that errored re-0016"
@@ -177,12 +232,9 @@ def test_the_emittable_values_are_still_only_the_canonical_ones():
     """Aliases are input, never output. A prompt that reads as if
     `التجمع الخامس` were an acceptable slot VALUE re-creates the failure it
     was added to fix."""
-    vocabulary = slot_vocabulary(REALESTATE)
+    vocabulary = slot_vocabulary(REALESTATE, catalogue=CATALOGUE)
     assert "التجمع الخامس" not in vocabulary["city"]
-    assert set(vocabulary["city"]) <= {
-        " ".join(w.capitalize() for w in name.split())
-        for name in load("arabic/locations")["kind"]
-    }
+    assert set(vocabulary["city"]) == set(CATALOGUE["city"])
 
 
 def test_a_property_type_is_offered_with_the_names_customers_use_for_it():
@@ -194,7 +246,9 @@ def test_a_property_type_is_offered_with_the_names_customers_use_for_it():
     It is what re-0001 and re-0016 failed on once the location half was
     fixed: both name an apartment, neither writes `apartment`.
     """
-    prompt = render_prompt(script=REALESTATE, message="x", held_slots={})
+    prompt = render_prompt(
+        script=REALESTATE, message="x", held_slots={}, catalogue=CATALOGUE
+    )
     line = next(ln for ln in prompt.splitlines() if ln.startswith("- property_type:"))
     assert "شقة" in line and "sha22a" in line
     assert "apartment (" in line, "the alias must sit beside the value it maps to"
@@ -203,7 +257,9 @@ def test_a_property_type_is_offered_with_the_names_customers_use_for_it():
 def test_a_slot_with_no_alias_file_renders_as_a_plain_list():
     """`listing_kind` declares its values inline and has no surface forms.
     It must not grow empty brackets that read as a list to choose from."""
-    prompt = render_prompt(script=REALESTATE, message="x", held_slots={})
+    prompt = render_prompt(
+        script=REALESTATE, message="x", held_slots={}, catalogue=CATALOGUE
+    )
     line = next(ln for ln in prompt.splitlines() if ln.startswith("- listing_kind:"))
     assert "(" not in line, line
 
@@ -263,7 +319,7 @@ async def test_a_slot_value_outside_the_vocabulary_is_a_failed_turn():
         router=FakeRouter(
             '{"intent": "inventory_lookup", "slots": {"compound": "Mivida Heights"}}'
         ),
-        script=REALESTATE,
+        script=REALESTATE, catalogue=CATALOGUE,
     )
     with pytest.raises(ExtractionFailed, match="Mivida Heights"):
         await extractor.extract(text="عايز شقة", state=state())
@@ -272,7 +328,7 @@ async def test_a_slot_value_outside_the_vocabulary_is_a_failed_turn():
 async def test_an_unknown_slot_key_is_a_failed_turn():
     extractor = LlmSlotExtractor(
         router=FakeRouter('{"intent": "inventory_lookup", "slots": {"colour": "blue"}}'),
-        script=REALESTATE,
+        script=REALESTATE, catalogue=CATALOGUE,
     )
     with pytest.raises(ExtractionFailed, match="colour"):
         await extractor.extract(text="عايز شقة", state=state())
@@ -295,7 +351,7 @@ async def test_numbers_are_parsed_as_integers():
         router=FakeRouter(
             '{"intent": "inventory_lookup", "slots": {"bedrooms": "3", "budget_max": 17000000}}'
         ),
-        script=REALESTATE,
+        script=REALESTATE, catalogue=CATALOGUE,
     )
     turn = await extractor.extract(text="٣ غرف في حدود ١٧ مليون", state=state())
     assert turn.slots == {"bedrooms": 3, "budget_max": 17000000}
@@ -317,7 +373,7 @@ async def test_an_explicit_null_means_the_slot_was_not_said():
             '{"intent": "inventory_lookup", "slots": {"budget_max": null, '
             '"property_type": "apartment"}}'
         ),
-        script=REALESTATE,
+        script=REALESTATE, catalogue=CATALOGUE,
     )
     turn = await extractor.extract(text="مش عايز رقم بالظبط", state=state())
     assert turn.slots == {"property_type": "apartment"}
@@ -327,7 +383,7 @@ async def test_a_non_numeric_number_is_a_failed_turn():
     """A budget that is not a number would be compared against a price."""
     extractor = LlmSlotExtractor(
         router=FakeRouter('{"intent": "inventory_lookup", "slots": {"budget_max": "a lot"}}'),
-        script=REALESTATE,
+        script=REALESTATE, catalogue=CATALOGUE,
     )
     with pytest.raises(ExtractionFailed, match="budget_max"):
         await extractor.extract(text="عايز حاجة رخيصة", state=state())
@@ -370,13 +426,18 @@ async def test_held_slots_survive_a_turn_that_names_none():
     """Multi-turn accumulation. re-0018 gathers over three turns, and a turn
     that reports nothing must not clear what the customer already said."""
     extractor = LlmSlotExtractor(
-        router=FakeRouter('{"intent": "inventory_lookup", "slots": {}}'), script=REALESTATE
+        router=FakeRouter('{"intent": "inventory_lookup", "slots": {}}'),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
     )
     turn = await extractor.extract(text="أيوه", state=state(city="New Cairo"))
     assert turn.slots == {}, "the extractor reports the turn, not the state"
 
     prompt = render_prompt(
-        script=REALESTATE, message="أيوه", held_slots={"city": "New Cairo"}
+        script=REALESTATE,
+        message="أيوه",
+        held_slots={"city": "New Cairo"},
+        catalogue=CATALOGUE,
     )
     assert "New Cairo" in prompt, "but the model is told what is already held"
 

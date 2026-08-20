@@ -232,6 +232,36 @@ class InventoryRepository:
         ).one_or_none()
         return _unit(row) if row is not None else None
 
+    async def vocabulary(self) -> dict[str, frozenset[str]]:
+        """The values a slot may hold, read from the catalogue itself.
+
+        **The extractor's vocabulary and the connector's filter are one list.**
+        They used to be two — `locations.yaml` declared ten of ninety-four
+        compounds — and the gap did not present as a missing alias. It
+        presented as a confident answer about the wrong compound: asked about
+        `كريك تاون`, the model picked the nearest allowed value and the reply
+        described a Jefaira townhouse. Nothing raised, and
+        `invented_compound_rate` stayed at zero because Jefaira is real.
+
+        Exact spelling, not a normalised form. `SouthMED`, `Stei8ht`,
+        `HAPTown` and `L'Avenir` are what the columns hold, and a resolved
+        slot is used as a filter directly.
+
+        Which column a value came from is its kind: a value in `city` filters
+        `city`. That replaces a hand-maintained kind map, which is one more
+        thing that could disagree with the rows.
+        """
+        where, params = _where(UnitQuery())
+        columns = {}
+        for column in ("city", "compound"):
+            sql = (
+                f"SELECT DISTINCT {column} FROM inventory_units "  # noqa: S608
+                f"WHERE {where} AND {column} IS NOT NULL"
+            )
+            rows = (await self._session.execute(text(sql), params)).scalars().all()
+            columns[column] = frozenset(rows)
+        return columns
+
     async def compounds(self) -> frozenset[str]:
         """The catalogue a named compound is checked against (§19.3).
 

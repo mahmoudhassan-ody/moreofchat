@@ -1,59 +1,42 @@
-# Location aliases — Arabic and Latin surface forms to canonical values.
+# Location aliases — the Arabic and franco names customers type.
 #
-# Source: the running MoreofChat real-estate bot (locations.ts:108-173),
-# transcribed 2026-08-17. Canonical values match the `city` and `compound`
-# columns in the catalogue, so a resolved alias can be used as a filter
-# directly — every fixture city has coverage here.
+# **This file is an overlay, not a catalogue.** The values a slot may hold come
+# from `InventoryRepository.vocabulary()`, read off the `city` and `compound`
+# columns of the tenant's own inventory. Which column a value sits in is its
+# kind, so there is no `kind:` map here any more.
 #
-# CORRECTED ON IMPORT: the source had `العLMين` and `العLMين الجديدة` with
-# Latin `LM` spliced into Arabic. Every Arabic El Alamein query missed, and
-# it presented as the bot not covering Alamein. Now `العلمين`.
+# It used to declare the vocabulary as well, and it declared ten of the
+# catalogue's ninety-four compounds. That did not present as a missing alias.
+# Asked about `كريك تاون` — Creek Town, three units in the fixture, one of them
+# the sold unit re-0010 exists to test — the model picked the nearest value it
+# was permitted to emit and answered with a Jefaira townhouse. A real compound,
+# the wrong one, and `invented_compound_rate` read 0.0% throughout because
+# Jefaira exists. `wrong_compound_rate` is the gate added for it.
+#
+# Keys are the catalogue's own spelling, exactly: `SouthMED`, not `Southmed`.
+# The previous design derived a display name by title-casing a lower-case key,
+# which cannot produce `SouthMED`, `Stei8ht`, `HAPTown` or `L'Avenir`, and a
+# resolved slot is used as a filter directly. A key that is not a catalogue
+# value is caught by tests/arabic/test_location_coverage.py.
+#
+# CORRECTED ON IMPORT (2026-08-17): the source had `العLMين` with Latin `LM`
+# spliced into Arabic. Every Arabic El Alamein query missed, and it presented
+# as the bot not covering Alamein. Now `العلمين`.
 #
 # Arabic and Latin are separate lists because they need different matching:
 # Latin is case-folded and word-boundary matched, Arabic runs after the
 # normalizer (alef/ya/ta-marbuta folding), so `القنطره` and `القنطرة` both hit.
+# Franco substitutions used throughout: 7=ح, 3=ع, 5=خ, 2=ء/ق.
 #
-# SWEPT 2026-08-20, after `Tagamoa El Khames` errored a live case. Ten of the
-# twenty-six canonical values carried no `latin:` list at all, which makes them
-# unreachable to a franco customer — and `franco_or_misspelled` is an eval
-# category (§4.2) because that is how Egyptians type. Every value now has both
-# scripts, asserted in tests/arabic/test_location_coverage.py rather than
-# eyeballed. Franco substitutions used throughout: 7=ح, 3=ع, 5=خ, 2=ء/ق.
+# Compounds mostly need no entry: their catalogue names are already Latin and
+# that is how they are typed. An entry earns its place by carrying a name the
+# catalogue spelling does not — an Arabic form, or a franco one that is not
+# the Latin name with the vowels moved.
 
 version: 1
 
-kind:
-  # Which canonical values are cities vs compounds. A city filters `city`,
-  # a compound filters `compound` — conflating them returns the wrong set.
-  'ain sokhna': city
-  'azha': compound
-  'badya': compound
-  'cairo': city
-  'celian': compound
-  'el gouna': compound
-  'hyde park': compound
-  'jefaira': compound
-  'madinaty': compound
-  'makadi heights': compound
-  'marassi': compound
-  'mivida': compound
-  'mokattam': city
-  'mostakbal city': city
-  'new alamein': city
-  'new cairo': city
-  'new capital': city
-  'new zayed': city
-  'noor city': compound
-  'north coast': city
-  'october': city
-  'red sea': city
-  'sheikh zayed': city
-  'southmed': compound
-  'the ark': compound
-  'west cairo': city
-
 aliases:
-  'ain sokhna':
+  'Ain Sokhna':
     arabic:
       - 'العين السخنة'
       - 'عين السخنة'
@@ -64,67 +47,100 @@ aliases:
       - 'ain el sokhna'
       - 'ein sokhna'
       - 'sokhna'
-  'azha':
+  # `ازها` and `هايد بارك` name the principal compound of each. The catalogue
+  # also holds `Madaar Azha`, `Mountain View Hyde Park` and `Tawny Hyde Park`;
+  # a customer meaning one of those types its full name, which needs no alias.
+  'Azha North':
     arabic:
       - 'ازها'
     latin:
       - 'azha'
-  'badya':
+  'Badya':
     arabic:
       - 'باديا'
     latin:
       - 'badya'
-  'cairo':
+  'Bloomfields':
+    arabic:
+      - 'بلوم فيلدز'
+      - 'بلومفيلدز'
+  'Cairo':
     arabic:
       - 'القاهرة'
     latin:
       - 'cairo'
-  'celian':
+  'Cairo Festival City':
+    arabic:
+      - 'كايرو فيستيفال'
+      - 'فيستيفال سيتي'
+  'Celian':
     arabic:
       - 'سيلان'
     latin:
       - 'celian'
-  'el gouna':
+  'Creek Town':
+    arabic:
+      - 'كريك تاون'
+  'El Gouna':
     arabic:
       - 'الجونة'
     latin:
       - 'el gouna'
       - 'elgouna'
       - 'gouna'
-  'hyde park':
+  'Fifth Square':
+    arabic:
+      - 'فيفث سكوير'
+  'Hyde Park New Cairo':
     arabic:
       - 'هايد بارك'
     latin:
       - 'hyde park'
       - 'hydepark'
-  'jefaira':
+  'Il Monte Galala':
+    arabic:
+      - 'مونت جلالة'
+      - 'الجلالة'
+  'Jefaira':
     arabic:
       - 'جفيرة'
     latin:
       - 'jefaira'
-  'madinaty':
+  'Joulz':
+    arabic:
+      - 'جولز'
+  'Kinda':
+    arabic:
+      - 'كيندا'
+  'La Vista City':
+    arabic:
+      - 'لافيستا سيتي'
+  'Madinaty':
     arabic:
       - 'مدينتي'
     latin:
       - 'madinaty'
-  'makadi heights':
+  'Makadi Heights':
     arabic:
       - 'مكادي هايتس'
       - 'مكادي'
     latin:
       - 'makadi heights'
       - 'makadi'
-  'marassi':
+  'Marassi':
     arabic:
       - 'مراسي'
     latin:
       - 'marassi'
-  'mivida':
+  'Mazarine':
+    arabic:
+      - 'مازارين'
+  'Mivida':
     arabic:
       - 'ميفيدا'
     latin:
       - 'mivida'
-  'mokattam':
+  'Mokattam':
     arabic:
       - 'المقطم'
       - 'مدينة المقطم'
@@ -132,7 +148,7 @@ aliases:
       - 'mokattam'
       - 'el mokattam'
       - 'mo2attam'
-  'mostakbal city':
+  'Mostakbal City':
     arabic:
       - 'مدينة المستقبل'
       - 'المستقبل سيتي'
@@ -141,7 +157,7 @@ aliases:
       - 'future city'
       - 'madinet el mostakbal'
       - 'mostakbal'
-  'new alamein':
+  'New Alamein':
     arabic:
       - 'العلمين الجديدة'
       - 'العلمين'
@@ -152,9 +168,8 @@ aliases:
   # The two names that errored re-0001 and re-0016 live (2026-08-20). Almost
   # nobody writes "New Cairo" — `التجمع الخامس` is the everyday Arabic name and
   # `tagamo3 el 5ames` the everyday franco one, and neither is a translation of
-  # the canonical value, so nothing can infer the mapping from the name alone.
-  # This is the largest city in the catalogue.
-  'new cairo':
+  # the catalogue value, so nothing can infer the mapping from the name alone.
+  'New Cairo':
     arabic:
       - 'التجمع الخامس'
       - 'القاهرة الجديدة'
@@ -168,7 +183,7 @@ aliases:
       - 'tagamo3 el 5ames'
       - 'el tagamoa'
       - 'tagamoa'
-  'new capital':
+  'New Capital':
     arabic:
       - 'العاصمة الادارية'
       - 'العاصمة الإدارية'
@@ -179,21 +194,24 @@ aliases:
       - 'new capital city'
       - 'el asema el edarya'
       - 'asema edarya'
-  'new zayed':
+  'New Giza':
+    arabic:
+      - 'نيو جيزة'
+  'New Zayed':
     arabic:
       - 'نيو زايد'
       - 'زايد الجديدة'
     latin:
       - 'new zayed'
       - 'zayed el gedida'
-  'noor city':
+  'Noor City':
     arabic:
       - 'نور سيتي'
       - 'مدينة نور'
     latin:
       - 'noor city'
       - 'madinet noor'
-  'north coast':
+  'North Coast':
     arabic:
       - 'الساحل الشمالي'
       - 'الساحل'
@@ -202,7 +220,10 @@ aliases:
       - 'el sahel'
       - 'sahel'
       - 'sa7el'
-  'october':
+  'O West':
+    arabic:
+      - 'او ويست'
+  'October':
     arabic:
       - 'السادس من أكتوبر'
       - 'مدينة السادس من أكتوبر'
@@ -213,30 +234,47 @@ aliases:
       - '6 october'
       - '6th of october'
       - 'october city'
-  'red sea':
+  'Red Sea':
     arabic:
       - 'البحر الأحمر'
     latin:
       - 'red sea'
       - 'el ba7r el a7mar'
+  'Rivan':
+    arabic:
+      - 'ريفان'
+  'Sarai':
+    arabic:
+      - 'سراي'
+  'Seashore':
+    arabic:
+      - 'سي شور'
   # No bare `زايد` / `zayed`, deliberately. It is the commonest short form and
-  # it is also inside `زايد الجديدة` (New Zayed), a different canonical value
-  # filtering the same column. `_aliases()` resolves overlaps longest-first, so
-  # a bare alias would only ever lose — but it would lose silently, and the two
-  # cities have different stock.
-  'sheikh zayed':
+  # it also sits inside `زايد الجديدة` (New Zayed), a different city filtering
+  # the same column. Overlaps resolve longest-first, so a bare alias would only
+  # ever lose — but it would lose silently, and the two have different stock.
+  'Sheikh Zayed':
     arabic:
       - 'الشيخ زايد'
       - 'شيخ زايد'
     latin:
       - 'sheikh zayed'
       - 'el sheikh zayed'
-  'southmed':
+  'SouthMED':
     arabic:
       - 'ساوث ميد'
     latin:
       - 'southmed'
-  'the ark':
+  'Stone Park':
+    arabic:
+      - 'ستون بارك'
+  'Taj City':
+    arabic:
+      - 'تاج سيتي'
+  'Telal':
+    arabic:
+      - 'تلال'
+  'The Ark':
     arabic:
       - 'ذا ارك'
       - 'الارك'
@@ -244,7 +282,17 @@ aliases:
       - 'ذا آرك'
     latin:
       - 'the ark'
-  'west cairo':
+  'ZED East':
+    arabic:
+      - 'زيد ايست'
+  'Uptown Cairo':
+    arabic:
+      - 'ابتاون كايرو'
+      - 'أب تاون'
+  'Villette':
+    arabic:
+      - 'فيليت'
+  'West Cairo':
     arabic:
       - 'غرب القاهرة'
       - 'القاهرة الغربية'
@@ -280,4 +328,3 @@ anywhere_else:
     - 'أي مشروع'
     - 'في أماكن أخرى'
     - 'مشاريع أخرى'
-
