@@ -58,6 +58,7 @@ def render_composition(
     channel: str,
     passages: Sequence[str] = (),
     lang: str | None = None,
+    referral: str | None = None,
 ) -> str:
     """Fill the template for one turn.
 
@@ -78,6 +79,22 @@ def render_composition(
         .replace("{language}", _LANGUAGES.get(lang or "ar", _LANGUAGES["ar"]))
         .replace("{register}", _REGISTERS.get(speaks, _REGISTERS[Register.masri]))
         .replace("{formatting}", " ".join(formatting_for(channel).split()))
+        .replace("{referral}", _referral_rule(referral))
+    )
+
+
+def _referral_rule(referral: str | None) -> str:
+    """The next-step sentence, or the instruction that stood before it.
+
+    Never the bare placeholder: a script whose author has not decided where
+    unanswerable turns go must get the old behaviour, not `{referral}` in front
+    of a customer.
+    """
+    if not referral:
+        return "Say what is missing and stop there."
+    return (
+        "Say what is missing, then end the reply with exactly this sentence, "
+        f"unchanged: {referral}"
     )
 
 

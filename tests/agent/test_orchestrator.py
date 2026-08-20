@@ -876,3 +876,19 @@ async def test_the_education_refusal_offers_something_a_student_can_use(
     assert result.action is Action.refuse
     assert result.reply == _load("agent/replies")["replies"]["refuse"]["career_advice"]["masri"]
     assert "السعر" not in result.reply, "the real-estate offer, to a student"
+
+
+async def test_the_composition_prompt_carries_the_script_s_referral(turn_session):
+    """The wiring, not the wording. `render_composition` takes a referral and
+    the engine has one; nothing connected them until edu-0001."""
+    orchestrator, anthropic, *_ = build()
+    await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="المصاريف كام لكلية الهندسة؟",
+        channel=CHANNEL,
+    )
+    referral = ScriptEngine.from_config(SCRIPT).referral("ar")
+    assert any(referral in (call.get("system") or "") for call in anthropic.calls), (
+        "the composition call did not carry the script's referral"
+    )

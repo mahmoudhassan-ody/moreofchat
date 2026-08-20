@@ -188,3 +188,73 @@ def test_a_figure_must_be_named_for_what_it_is():
     text = render()
     assert "Say what each figure is" in text
     assert "500" not in text, "the rule is stated, not illustrated with a figure"
+
+
+# ───────── edu-0001: a reply that cannot answer still names a next step ─────────
+
+
+def test_the_prompt_carries_the_script_s_referral():
+    """edu-0001. The reply correctly said the material holds admission
+    thresholds and not tuition — grounded, truthful, and a dead end. The case
+    asks for "where to ask" and the customer was given nowhere.
+
+    The prompt said "say what is missing and stop", which is the reply that
+    was produced. What it may say instead is not the model's to invent: a
+    contact route is tenant data, so the sentence is configured per script and
+    quoted verbatim.
+    """
+    from moc.agent.script_engine import ScriptEngine
+
+    referral = ScriptEngine.from_config("scripts/education/fees").referral("ar")
+    assert referral, "the education script configures no referral"
+
+    system = render_composition(
+        message="المصاريف كام لكلية الهندسة؟",
+        register=Register.msa,
+        channel="whatsapp",
+        referral=referral,
+    )
+    assert referral in system
+
+
+def test_the_referral_mirrors_the_customer_s_language():
+    from moc.agent.script_engine import ScriptEngine
+
+    engine = ScriptEngine.from_config("scripts/education/fees")
+    assert engine.referral("en") != engine.referral("ar")
+
+    system = render_composition(
+        message="how much is engineering tuition?",
+        register=Register.msa,
+        channel="whatsapp",
+        lang="en",
+        referral=engine.referral("en"),
+    )
+    assert engine.referral("en") in system
+    assert engine.referral("ar") not in system
+
+
+def test_a_script_with_no_referral_leaves_the_placeholder_unrendered():
+    """Not the literal `{referral}` in front of a customer. A script that
+    configures none is a script whose author has not decided where those turns
+    go, and the prompt must degrade to the instruction it had before rather
+    than to a template artifact."""
+    system = render_composition(
+        message="المصاريف كام؟", register=Register.msa, channel="whatsapp"
+    )
+    assert "{referral}" not in system
+
+
+def test_every_shipped_script_configures_a_referral():
+    """The same reasoning as the per-node refusals: a script that cannot
+    answer something and says nothing about where to go is a dead end for
+    every unanswerable turn it has, not just the one a case caught."""
+    from moc.agent.script_engine import ScriptEngine
+
+    missing = [
+        name
+        for name in ("scripts/education/fees", "scripts/realestate/search")
+        for lang in ("ar", "en")
+        if not ScriptEngine.from_config(name).referral(lang)
+    ]
+    assert missing == [], f"no referral configured for: {sorted(set(missing))}"

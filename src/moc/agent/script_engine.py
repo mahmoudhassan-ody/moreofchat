@@ -53,6 +53,22 @@ class ScriptEngine:
     def from_config(cls, name: str) -> ScriptEngine:
         return cls(script=load(name), defaults=load(_DEFAULTS))
 
+    def referral(self, lang: str | None) -> str | None:
+        """Where this script sends a turn it cannot answer, in the customer's
+        language.
+
+        edu-0001: a reply that says the material does not hold what was asked
+        is truthful, grounded and a dead end. Which office to name is tenant
+        data, so it is configured and quoted verbatim — a model asked to name
+        one will name a plausible one, and a plausible office is the same class
+        of failure as a plausible fee.
+
+        None when the script configures none, so composition keeps the
+        instruction it had rather than rendering a placeholder at a customer.
+        """
+        entry = (self._script.get("settings") or {}).get("referral") or {}
+        return entry.get(lang or "ar") or entry.get("ar")
+
     def start(self) -> ConversationState:
         return ConversationState(
             script_id=self._script["script_id"],

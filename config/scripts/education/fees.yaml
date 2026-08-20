@@ -22,6 +22,23 @@ settings:
   # settable here — see the note in agent/defaults.yaml and §19.3.
   max_consecutive_clarifications: 3
 
+  # edu-0001. Where a composed reply sends someone it cannot answer.
+  #
+  # The reply the case caught was truthful and grounded — it said the material
+  # holds admission thresholds and not tuition — and it was a dead end. The
+  # composition prompt said "say what is missing and stop", which is exactly
+  # what it did.
+  #
+  # A contact route is tenant data, so it is configured and quoted verbatim
+  # rather than left to the model: a model asked to name an office will name a
+  # plausible one, and a plausible office is the same failure as a plausible
+  # fee. Student affairs is the general front door and the corpus lists it
+  # (`sinai_contact_oss_ar`); a tenant who routes fee questions elsewhere edits
+  # this line.
+  referral:
+    ar: "للاستفسار عن ده، تقدر تتواصل مع شئون الطلبة في فرعك."
+    en: "For that, you can contact the student affairs office at your branch."
+
 # What each slot may hold, injected into the extraction prompt at render time
 # (§19). Written here rather than in the prompt text: a value the model can
 # emit and the script cannot route on is a slot that silently narrows nothing,

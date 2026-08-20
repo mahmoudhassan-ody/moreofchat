@@ -311,6 +311,9 @@ class Orchestrator:
                 channel=channel,
                 passages=retrieval.passages,
                 lang=lang,
+                # Where this script sends a turn it cannot answer. edu-0001's
+                # reply was truthful, grounded and a dead end.
+                referral=self._engine.referral(lang),
             ),
             cache_blocks=list(retrieval.passages),
         )

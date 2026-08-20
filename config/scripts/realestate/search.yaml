@@ -24,6 +24,15 @@ entry: fallback
 settings:
   max_consecutive_clarifications: 3
 
+  # Where a composed reply sends someone it cannot answer. See the note on the
+  # education script: a contact route is tenant data, quoted verbatim rather
+  # than left to the model, because a model asked to name a next step will name
+  # a plausible one and a plausible route is the same failure as a plausible
+  # price.
+  referral:
+    ar: "لو محتاج تفاصيل أكتر عن ده، زميلي في المبيعات يقدر يساعدك."
+    en: "For more detail on that, a colleague on the sales team can help."
+
 # What each slot may hold. `from` pulls the vocabulary out of a shared config
 # file rather than restating it here — the property types are the catalogue's
 # own column and the locations are the alias map's canonical values, and a
