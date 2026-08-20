@@ -71,6 +71,7 @@ JSON only. One object, no code fence, no prose before or after:
   "intent": "<intent or null>",
   "slots": {"<slot>": "<value>"},
   "clear_slots": [],
+  "language": "ar" | "en",
   "explicit_handoff_request": false
 }
 
@@ -87,9 +88,16 @@ is held still applies.
   just stated it, it belongs in `slots` and nowhere else. Do not restate a
   held slot in order to clear another one; leave it out and it survives.
 
+`language` is the language the REPLY should be written in, which is the
+language the customer is speaking — not the script they typed it in.
+**Franco-Arab is Arabic**: `3ayez sha22a`, `fe manh fe kantara`, `ana mesh
+fahem` are all Latin letters and all Arabic, and a customer who writes franco
+reads Arabic. Only a message actually written in English is `en`. A message
+mixing the two takes whichever carries the question.
+
 `explicit_handoff_request` is true only when the customer asks for a person —
 "عايز أكلم حد", "حولني لموظف". Frustration is not a request; asking the same
 question twice is not a request.
 
 Malformed output is a failed turn. There is no partial credit for a nearly
-correct object, so return the four keys and nothing else.
+correct object, so return the five keys and nothing else.

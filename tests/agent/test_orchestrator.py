@@ -47,12 +47,12 @@ class FakeExtractor:
     """
 
     def __init__(self, turn: TurnInput) -> None:
-        self._turn = turn
+        self.turn = turn
         self.seen: list[str] = []
 
     async def extract(self, *, text: str, state: ConversationState) -> TurnInput:
         self.seen.append(text)
-        return self._turn
+        return self.turn
 
 
 class FakeRetriever:
@@ -150,6 +150,20 @@ def start_state() -> ConversationState:
 
 def composition_calls(provider: FakeProvider) -> list[dict]:
     return [c for c in provider.calls if c["kind"] == "complete"]
+
+
+def language_directive(provider: FakeProvider) -> str:
+    """The LANGUAGE line of the last composition prompt, and only that.
+
+    Asserting on the whole prompt is vacuous: its own explanation of the rule
+    contains both language names — "an Arabic question about an English
+    document gets an Arabic answer" — so `"Arabic" in system` is true however
+    the turn resolved. Two tests passed under sabotage before this existed.
+    """
+    system = composition_calls(provider)[-1]["system"] or ""
+    return next(
+        line for line in system.splitlines() if line.startswith("Write the whole reply")
+    )
 
 
 # ─────────────────────────── the happy path ───────────────────────────
@@ -512,7 +526,7 @@ async def test_the_composition_call_carries_the_prompt_and_the_question(turn_ses
     system = call["system"] or ""
     assert system, "the composition prompt travels as the system block"
     assert "رسوم كلية الهندسة كام؟" in system, "and it carries the question"
-    assert "Arabic" in system, "with the language the customer wrote in"
+    assert "Arabic" in language_directive(anthropic), "the language they wrote in"
     assert "emoji" in system.lower(), "and the channel's formatting rules"
 
 
@@ -527,7 +541,7 @@ async def test_an_english_question_is_composed_in_english(turn_session):
         text="How much are the engineering fees?",
         channel="whatsapp",
     )
-    assert "English" in (composition_calls(anthropic)[-1]["system"] or "")
+    assert "English" in language_directive(anthropic)
 
 
 async def test_the_passages_still_travel_as_cache_blocks_not_in_the_prompt(
@@ -616,3 +630,93 @@ async def test_a_clarification_with_no_known_slot_still_falls_back(turn_session)
     )
     assert result.action is Action.clarify
     assert result.reply
+
+
+async def test_the_extractor_s_language_decides_the_reply_language(turn_session):
+    """Option C: the model has read the message and says which language to
+    answer in. The heuristic is the fallback, not the primary.
+
+    `ayzeen nesta3lem` is franco that BOTH heuristics miss — one substituted
+    digit is below the two-hit floor and neither token is a function word — so
+    it is the sentence that separates the two options. If this assertion could
+    be satisfied by the fallback it would not be testing option C at all.
+    """
+    from moc.arabic.script import reply_language
+
+    text = "ayzeen nesta3lem"
+    assert reply_language(text) == "en", (
+        "the discriminator: the heuristic reads this as English, so a passing "
+        "assertion below can only come from the extractor"
+    )
+
+    orchestrator, anthropic, _, extractor, _ = build()
+    extractor.turn = TurnInput(
+        intent="fees", slots={"faculty": "engineering"}, language="ar"
+    )
+
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text=text, channel=CHANNEL
+    )
+    assert "Arabic" in language_directive(anthropic)
+
+
+async def test_the_extractor_can_override_the_heuristic_in_either_direction(
+    turn_session,
+):
+    """Not just "franco is Arabic". A customer writing Arabic script inside an
+    otherwise English conversation is the other direction, and the model is
+    the only thing that can see it."""
+    orchestrator, anthropic, _, extractor, _ = build()
+    extractor.turn = TurnInput(
+        intent="fees", slots={"faculty": "engineering"}, language="en"
+    )
+
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المصاريف كام؟", channel=CHANNEL
+    )
+    assert "English" in language_directive(anthropic)
+
+
+async def test_without_an_extractor_language_the_heuristic_still_decides(turn_session):
+    """The fallback path, which is also the only path when extraction failed
+    and a scripted reply is going out."""
+    orchestrator, anthropic, _, extractor, _ = build()
+    extractor.turn = TurnInput(intent="fees", slots={"faculty": "engineering"})
+
+    await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="3ayez a3raf el masareef",
+        channel=CHANNEL,
+    )
+    assert "Arabic" in language_directive(anthropic)
+
+
+async def test_the_fallback_is_load_bearing_when_extraction_reports_nothing(
+    turn_session,
+):
+    """Option A on its own, with option C removed.
+
+    A turn whose extraction failed still has to send something, and what it
+    sends is a scripted reply in some language. `fe manh fe kantara?` carries
+    no digit substitution, so the pattern rule alone would answer it in
+    English — which is exactly what shipped.
+    """
+    from moc.agent.replies import Voice
+    from moc.arabic.script import is_franco
+
+    assert is_franco("fe manh fe kantara?"), "the function-word rule, alone"
+
+    orchestrator, _, _, extractor, _ = build(intent=None)
+    extractor.turn = TurnInput(intent=None, slots={})  # no language reported
+
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="fe manh fe kantara?",
+        channel=CHANNEL,
+    )
+    assert result.action is Action.clarify
+    assert result.reply == Voice(result.register, "ar").say(
+        load("agent/replies")["replies"]["clarify"]
+    )

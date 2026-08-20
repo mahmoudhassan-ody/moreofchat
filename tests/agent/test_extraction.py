@@ -675,3 +675,49 @@ def test_the_prompt_says_how_to_clear_a_slot():
     text = PROMPT.read_text(encoding="utf-8")
     assert "clear_slots" in text
     assert "any other" in text.lower()
+
+
+# ─────────────────── the model reports the language (option C) ───────────────────
+
+
+async def test_the_extractor_reports_the_language_it_read():
+    """It has already read the message on a model that handles Egyptian
+    Arabic. Asking it one more thing is cheaper and far more general than any
+    word list — the heuristic is the fallback, not the primary."""
+    extractor = LlmSlotExtractor(
+        router=FakeRouter('{"intent": "inventory_lookup", "slots": {}, "language": "ar"}'),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    turn = await extractor.extract(text="fe manh fe kantara?", state=state())
+    assert turn.language == "ar"
+
+
+async def test_an_absent_language_is_absent_not_a_guess():
+    """None, so the caller falls back to the heuristic. Defaulting to either
+    value here would make a silent omission look like a decision."""
+    extractor = LlmSlotExtractor(
+        router=FakeRouter('{"intent": "inventory_lookup", "slots": {}}'),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    assert (await extractor.extract(text="x", state=state())).language is None
+
+
+async def test_a_language_outside_the_two_the_product_ships_is_a_failed_turn():
+    """Same rule as a slot value outside the vocabulary. `fr` is not a reply
+    the composition prompt can ask for, and swallowing it would silently pick
+    one of the two."""
+    extractor = LlmSlotExtractor(
+        router=FakeRouter('{"intent": "inventory_lookup", "slots": {}, "language": "fr"}'),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    with pytest.raises(ExtractionFailed, match="fr"):
+        await extractor.extract(text="x", state=state())
+
+
+def test_the_prompt_asks_for_the_language_and_says_franco_is_arabic():
+    text = PROMPT.read_text(encoding="utf-8")
+    assert "language" in text
+    assert "franco" in text.lower()

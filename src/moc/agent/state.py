@@ -69,6 +69,17 @@ class TurnInput:
     #: thing it means. The held city survived a sentence whose entire content
     #: was dropping it, and the search ran against New Cairo again.
     cleared: tuple[str, ...] = ()
+    #: Which language the reply should be written in, as the model read it.
+    #:
+    #: The model has already read the message on a model that handles Egyptian
+    #: Arabic, so asking it costs nothing extra and generalises further than
+    #: any word list — franco with no digit substitutions defeated the
+    #: heuristic and got edu-0015 answered in English.
+    #:
+    #: None when the extraction did not say, so the caller falls back to
+    #: `moc.arabic.script.reply_language`. Defaulting to either value here
+    #: would make a silent omission look like a decision.
+    language: str | None = None
 
 
 @dataclass(frozen=True)

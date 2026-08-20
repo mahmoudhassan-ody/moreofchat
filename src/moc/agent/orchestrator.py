@@ -51,6 +51,7 @@ from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding
 from moc.agent.replies import Voice
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
+from moc.arabic.script import reply_language
 from moc.config_store import load
 from moc.llm.base import AllProvidersUnavailable, Completion, Message, Role, Task
 from moc.llm.router import Router
@@ -189,7 +190,15 @@ class Orchestrator:
         )
 
         decision = self._engine.advance(state, turn)
-        result = await self._resolve(session, decision, retrieval, redaction, channel)
+        # The model's reading wins; the heuristic is the fallback. Franco with
+        # no digit substitution — `fe manh fe kantara?` — defeats the pattern
+        # rule, and the extractor has already read the sentence on a model
+        # that handles Egyptian Arabic. The fallback still matters: it is the
+        # only signal on a turn whose extraction failed.
+        lang = turn.language or reply_language(redaction.text)
+        result = await self._resolve(
+            session, decision, retrieval, redaction, channel, lang
+        )
 
         await record_usage(session, kind=UsageKind.message_out, channel=channel)
         return result
@@ -203,13 +212,16 @@ class Orchestrator:
         retrieval: Retrieval,
         redaction: Redaction,
         channel: str,
+        lang: str | None,
     ) -> TurnResult:
         if decision.action is not Action.answer:
-            return self._scripted(decision, redaction, retrieval, self._non_answer_key(decision))
+            return self._scripted(
+                decision, redaction, retrieval, self._non_answer_key(decision), lang=lang
+            )
 
         try:
             completion = await self._compose(
-                session, decision, retrieval, channel, redaction.text
+                session, decision, retrieval, channel, redaction.text, lang
             )
         except AllProvidersUnavailable:
             # §2.6: the customer gets a sentence and a human, not an error. The
@@ -270,6 +282,7 @@ class Orchestrator:
         retrieval: Retrieval,
         channel: str,
         message: str,
+        lang: str | None,
     ) -> Completion:
         """Ask the model for words, having already decided the facts.
 
@@ -292,6 +305,7 @@ class Orchestrator:
                 register=decision.register,
                 channel=channel,
                 passages=retrieval.passages,
+                lang=lang,
             ),
             cache_blocks=list(retrieval.passages),
         )
@@ -342,6 +356,7 @@ class Orchestrator:
         retrieval: Retrieval,
         key: str,
         *,
+        lang: str | None = None,
         degraded: bool = False,
         grounding: GroundingResult | None = None,
         completions: list[Completion] | None = None,
@@ -355,7 +370,7 @@ class Orchestrator:
         """
         failed = key in (_PROVIDER_UNAVAILABLE, _GROUNDING_FAILED)
         return TurnResult(
-            reply=self._reply_text(key, decision, redaction.text),
+            reply=self._reply_text(key, decision, redaction.text, lang),
             action=Action.handoff if failed else decision.action,
             register=decision.register,
             state=decision.state,
@@ -369,11 +384,13 @@ class Orchestrator:
         )
 
     @staticmethod
-    def _reply_text(key: str, decision: Decision, message: str) -> str:
+    def _reply_text(
+        key: str, decision: Decision, message: str, lang: str | None = None
+    ) -> str:
         # Register is the node's policy; language mirrors the customer. Both,
         # because passing only the register is F6: it renders cleanly and
         # answers an English question in Arabic.
-        voice = Voice.of(decision.register, message)
+        voice = Voice(decision.register, lang or reply_language(message))
         document = load(_REPLIES)
         if key is _CLARIFY:
             asked = _ask_for(document, decision, voice)

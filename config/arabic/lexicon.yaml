@@ -263,3 +263,77 @@ franco_transliteration:
   "7": "ح"
   "8": "غ"
   "9": "ص"
+
+# ─────────────────────────────────────────────────────────────
+# Franco-Arab function words — the grammatical skeleton of Arabic typed on a
+# Latin keyboard.
+#
+# The digit-substitution rule above catches `3ayez` and `sha22a`, and misses
+# franco that happens to contain none of ع ح خ ء — which is roughly a third of
+# it. `fe manh fe kantara?` has no substituted digit anywhere, and edu-0015
+# was answered in English because of that.
+#
+# A word list is what cost us eighty-four compounds, and this one is
+# defensible where that one was not: function words are a CLOSED set. Place
+# names grow every time a tenant loads inventory; `fe`, `ana`, `msh` and
+# `ezay` do not, and forty entries is most of the language's connective
+# tissue.
+#
+# Two hits minimum, always. One `fe` or one `el` inside an English sentence is
+# a coincidence; franco carries its skeleton throughout.
+# ─────────────────────────────────────────────────────────────
+franco_markers:
+  - "ana"
+  - "enta"
+  - "enti"
+  - "e7na"
+  - "howa"
+  - "heya"
+  - "fe"
+  - "fi"
+  - "fee"
+  - "men"
+  - "3ala"
+  - "3and"
+  - "3andokom"
+  - "3andak"
+  - "3ayez"
+  - "3awez"
+  - "ayez"
+  - "awez"
+  - "3aiza"
+  - "msh"
+  - "mesh"
+  - "mish"
+  - "wala"
+  - "aywa"
+  - "la2"
+  - "kam"
+  - "bekam"
+  - "ezay"
+  - "ezayy"
+  - "feen"
+  - "fein"
+  - "emta"
+  - "leh"
+  - "eh"
+  - "da"
+  - "di"
+  - "dol"
+  - "bta3"
+  - "beta3"
+  - "3ashan"
+  - "3shan"
+  - "momken"
+  - "mumken"
+  - "lw"
+  - "law"
+  - "kda"
+  - "keda"
+  - "shwaya"
+  - "khalas"
+  - "5alas"
+  - "tany"
+  - "kaman"
+  - "mawgod"
+  - "mawgoud"

@@ -47,6 +47,10 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 #: a number; `free` is passed through for a downstream resolver to judge.
 INTEGER, FREE = "integer", "free"
 
+#: The two languages the product ships. A third would need a lexicon, a
+#: register vocabulary and a corpus, not an extra string here.
+LANGUAGES = ("ar", "en")
+
 
 class ExtractionFailed(Exception):
     """The model's output could not be trusted as an extraction.
@@ -356,6 +360,7 @@ class LlmSlotExtractor:
             grounded=True,
             explicit_handoff_request=bool(document.get("explicit_handoff_request")),
             cleared=self._cleared(document.get("clear_slots"), slots),
+            language=_language(document.get("language")),
         )
 
     def _cleared(self, raw: Any, slots: dict[str, Any]) -> tuple[str, ...]:
@@ -422,6 +427,24 @@ class LlmSlotExtractor:
                 _require_known(slot, value, allowed)
                 clean[slot] = value
         return clean
+
+
+def _language(value: Any) -> str | None:
+    """Which language to reply in, as the model read it.
+
+    Absent is absent — the caller falls back to the script heuristic, and
+    defaulting here would make a silent omission look like a decision. A value
+    outside the two the product ships is a failed turn for the same reason a
+    slot value outside its vocabulary is: swallowing it silently picks one.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if value not in LANGUAGES:
+        raise ExtractionFailed(
+            f"language={value!r} is not one of {', '.join(LANGUAGES)}; the reply "
+            f"has to be written in one of them and guessing which is not a fallback"
+        )
+    return str(value)
 
 
 def _require_known(slot: str, value: Any, allowed: tuple[str, ...]) -> None:

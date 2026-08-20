@@ -57,6 +57,7 @@ def render_composition(
     register: Register,
     channel: str,
     passages: Sequence[str] = (),
+    lang: str | None = None,
 ) -> str:
     """Fill the template for one turn.
 
@@ -66,7 +67,10 @@ def render_composition(
     having to know that.
     """
     del passages
-    lang = reply_language(message)
+    # The extractor's reading when it gave one — it read the sentence on a
+    # model that handles Egyptian Arabic, and the heuristic misses franco that
+    # carries no digit substitutions.
+    lang = lang or reply_language(message)
     speaks = resolve(register, lang)
     return (
         _template()

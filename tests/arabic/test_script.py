@@ -136,3 +136,66 @@ def test_a_message_with_no_letters_has_no_reply_language():
     from moc.arabic.script import reply_language
 
     assert reply_language("١٢٣ ؟!") is None
+
+
+# ─────────── franco without substitutions (the edu-0015 gap) ───────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "fe manh fe kantara?",
+        "ana ayez sha2a fe masr",
+        "3andokom eh",
+        "el mawad di kam?",
+    ],
+)
+def test_franco_without_digit_substitutions_is_still_franco(text):
+    """`fe manh fe kantara?` has no substituted digit anywhere, and edu-0015
+    was answered in English because of it.
+
+    Roughly a third of real franco carries no substitutions: the digits stand
+    in for ع ح خ ء, and a sentence without those letters produces none. The
+    grammatical skeleton is the other signal, and unlike place names it is a
+    closed set — about forty function words covers nearly everything.
+    """
+    from moc.arabic.script import is_franco
+
+    assert is_franco(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Please confirm the fe number on the invoice",
+        "Is housing available at the Arish branch?",
+        "In any other location",
+        "Can I see unit A3 please",
+        "El Gouna is lovely",
+    ],
+)
+def test_english_containing_a_franco_word_is_still_english(text):
+    """A two-hit minimum is what buys this. One `fe` or one `el` inside an
+    English sentence is a coincidence — franco carries its skeleton
+    throughout, and a one-hit rule would read half of English as Arabic."""
+    from moc.arabic.script import is_franco, reply_language
+
+    assert not is_franco(text)
+    assert reply_language(text) == "en"
+
+
+def test_the_franco_markers_are_config_not_a_literal():
+    """§19, and the reason this list is defensible where the location one was
+    not: function words are a CLOSED set. Place names grow with the catalogue
+    and that list was ten of ninety-four; this one is nearly complete at forty
+    and does not grow when a tenant adds inventory."""
+    import inspect
+
+    from moc.arabic import script
+    from moc.config_store import load
+
+    markers = load("arabic/lexicon")["franco_markers"]
+    assert len(markers) >= 20
+    source = inspect.getsource(script)
+    for marker in markers:
+        assert f'"{marker}"' not in source, f"{marker} is a literal in the module"

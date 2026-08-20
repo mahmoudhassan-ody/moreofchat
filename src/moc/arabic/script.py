@@ -76,16 +76,36 @@ _FRANCO_TOKENS = 2
 def is_franco(text: str) -> bool:
     """Arabic typed on a Latin keyboard.
 
-    Detected by digits standing in for consonants *inside* words: `3ayez`,
-    `sha22a`, `tagamo3`, `5ames`. Not by vocabulary — a franco lexicon would
-    have the same coverage problem the location aliases had, and the
-    substitution pattern is the thing that generalises.
+    Two signals, either of which is enough, both needing two hits.
+
+    **Digit substitution** — digits standing in for consonants inside words:
+    `3ayez`, `sha22a`, `tagamo3`, `5ames`. General, and it was the only rule
+    at first because a word list is what had just cost us eighty-four
+    compounds.
+
+    **Function words** — `fe`, `ana`, `msh`, `ezay`. Added after
+    `fe manh fe kantara?` was answered in English: the substituted digits
+    stand in for four consonants only, and a sentence containing none of
+    those letters produces none of the digits — roughly a third of real
+    franco.
+
+    The list is defensible where the location one was not, and the difference
+    is worth being explicit about: function words are a CLOSED set. Place
+    names grow every time a tenant loads inventory; these do not.
+
+    Two hits either way. One `fe` or one `el` in an English sentence is a
+    coincidence, and a one-hit rule reads half of English as Arabic.
     """
     if detect_language(text) != "en":
         return False
+    tokens = [t for t in re.split(r"[^0-9A-Za-z]+", text) if t]
+    return _substituted(tokens) >= _FRANCO_TOKENS or _markers(tokens) >= _FRANCO_TOKENS
+
+
+def _substituted(tokens: list[str]) -> int:
     marked = 0
-    for token in re.split(r"[^0-9A-Za-z]+", text):
-        if len(token) < 2 or not any(c.isalpha() for c in token):
+    for token in tokens:
+        if len(token) < _FRANCO_TOKENS or not any(c.isalpha() for c in token):
             continue
         if any(
             char in _FRANCO_DIGITS
@@ -93,7 +113,17 @@ def is_franco(text: str) -> bool:
             for index, char in enumerate(token)
         ):
             marked += 1
-    return marked >= _FRANCO_TOKENS
+    return marked
+
+
+def _markers(tokens: list[str]) -> int:
+    known = _franco_markers()
+    return sum(1 for token in tokens if token.lower() in known)
+
+
+@lru_cache(maxsize=1)
+def _franco_markers() -> frozenset[str]:
+    return frozenset(word.lower() for word in load(_LEXICON)["franco_markers"])
 
 
 def _neighbours(token: str, index: int) -> tuple[str, ...]:
