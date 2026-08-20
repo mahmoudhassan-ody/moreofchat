@@ -97,8 +97,14 @@ Rules:
 
 Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extraction`), per §2's "lowest available temperature". Note that this is per candidate rather than per task: `claude-sonnet-5` answers a request carrying `temperature` with a 400 (`temperature is deprecated for this model`, measured 2026-08-20), while `claude-haiku-4-5` accepts it. Dropping extraction to 0 narrowed real-estate `overall_accuracy` from a 13.1-point spread to 2.1.
 
-**Baseline, 2026-08-20**, n=3 each. Real estate on 20 cases, all passing;
-education re-measured on 17.
+**Baseline, 2026-08-20**, n=3 each. Real estate on 20 cases, all passing.
+
+Education is a **fresh baseline, not a delta**. Six fixes landed between it and
+the previous figure — the composition prompt, the grounding gate's two halves,
+clarifications naming their missing slots, register/language resolution, the
+extractor reporting the language, and two case defects — and two of its gates
+have observations for the first time. Comparing 58.8% against 49.0% would be
+comparing two different systems measured by two different harnesses.
 
 > **Every education figure recorded before this line is void, not merely
 > superseded.** The composition prompt did not exist — `_compose` sent
@@ -122,9 +128,11 @@ education re-measured on 17.
 | real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
 | real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
-| education | `overall_accuracy` | 49.0% (47.1–52.9) |
-| education | `expected_action_accuracy` | 89.5% (89.5–89.5) |
-| education | `language_mirror_accuracy` | 94.7% (94.7–94.7) |
+| education | `overall_accuracy` | 58.8% (52.9–64.7) — spread 11.8, **not measurable at 17 cases** |
+| education | `expected_action_accuracy` | 94.7% (94.7–94.7) |
+| education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
+| education | `register_accuracy` | 90.7% (88.9–94.4) — first measurement |
+| education | `forbidden_claim_violations` | 11.1% (5.6–16.7) — first measurement, **not measurable** |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
 | education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
