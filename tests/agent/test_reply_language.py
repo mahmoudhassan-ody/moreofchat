@@ -68,3 +68,15 @@ def test_a_franco_message_is_answered_in_arabic():
     voice = Voice.of(Register.masri, "3ayez sha22a fel tagamo3 el 5ames b 6 melion")
     assert voice.lang == "ar"
     assert voice.say(ENTRY) == "أهلاً"
+
+
+def test_a_node_pinned_to_english_still_answers_an_arabic_customer_in_arabic():
+    """The same resolution the composition prompt needed, in the scripted
+    path. `scripted` picked the register's entry directly, so a node whose
+    author chose English answered an Arabic customer in English — F6 through
+    the other door."""
+    assert scripted(ENTRY, Register.english, lang="ar") == "أهلاً"
+
+
+def test_an_msa_node_answering_an_english_customer_uses_the_english_wording():
+    assert scripted(ENTRY, Register.msa, lang="en") == "Hello"

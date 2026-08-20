@@ -124,3 +124,52 @@ def test_the_prompt_does_not_itself_demonstrate_what_it_bans(marker):
         if not line.strip().startswith("- ") and "never" not in line.lower()
     )
     assert marker not in body
+
+
+# ─────────────── language and register resolve together ───────────────
+
+
+def test_an_english_reply_is_never_in_modern_standard_arabic():
+    """edu-0015's rendered prompt said "Write the whole reply in English" and
+    two paragraphs later "Modern Standard Arabic (MSA)". The model resolved
+    the contradiction by ignoring the register, which is the best of the
+    available bad outcomes.
+
+    Register is the node's policy (§8.2) and language is the customer's, but
+    they are not independent: MSA is a variety OF Arabic. An English turn on
+    an MSA node gets the English register — the formality survives, the
+    language does not."""
+    prompt = render_composition(
+        message="How much are the fees?", register=Register.msa, channel="whatsapp"
+    )
+    assert "English" in prompt
+    assert "Arabic" not in prompt.split("REGISTER")[1].split("FORMATTING")[0]
+
+
+def test_an_english_turn_on_a_masri_node_is_also_english():
+    prompt = render_composition(
+        message="Is housing available?", register=Register.masri, channel="whatsapp"
+    )
+    assert "Masri" not in prompt.split("REGISTER")[1].split("FORMATTING")[0]
+
+
+def test_an_arabic_turn_keeps_the_node_s_arabic_register():
+    """The resolution runs one way only. An Arabic customer on an MSA node
+    gets MSA, and one on a Masri node gets Masri — that is §8.2 and it must
+    not be softened by this."""
+    assert "MSA" in render(message="المصاريف كام؟", register=Register.msa)
+    assert "Masri" in render(message="عامل إيه؟", register=Register.masri)
+
+
+def test_an_english_register_on_an_arabic_turn_becomes_arabic():
+    """The other direction, which is just as wrong: a node pinned to English
+    must not answer an Arabic customer in English.
+
+    Masri, not MSA. A node whose author chose plain English chose the
+    conversational end of the scale, and Masri is where that lands in Arabic.
+    """
+    prompt = render_composition(
+        message="السكن متاح؟", register=Register.english, channel="whatsapp"
+    )
+    assert "Arabic" in prompt
+    assert "Masri" in prompt.split("REGISTER")[1].split("FORMATTING")[0]

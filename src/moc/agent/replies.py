@@ -26,6 +26,32 @@ from moc.arabic.script import reply_language
 _ENGLISH = "english"
 
 
+def resolve(register: Register, lang: str | None) -> Register:
+    """Make the register speak the language the reply will be written in.
+
+    They are separate decisions and they are not independent: MSA is a variety
+    OF Arabic, so "write in English" and "write in MSA" contradict — edu-0015's
+    prompt said both, two paragraphs apart, and the model resolved it by
+    ignoring the register.
+
+    Language wins, because language mirrors the customer (F6) and register is
+    a house style. What survives is the formality, mapped across:
+
+    - English turn, Arabic register -> English. There is no English MSA.
+    - Arabic turn, English register -> Masri. A node whose author chose plain
+      English chose the conversational end of the scale, and that is Masri.
+
+    The Arabic-to-Arabic case is untouched, which is the point: §8.2 says a
+    fee is MSA whatever variety the customer typed, and this must not soften
+    that.
+    """
+    if lang == "en" and register is not Register.english:
+        return Register.english
+    if lang == "ar" and register is Register.english:
+        return Register.masri
+    return register
+
+
 def scripted(entry: dict[str, Any], register: Register, *, lang: str | None) -> str:
     """One reply's wording for this turn.
 
@@ -39,9 +65,8 @@ def scripted(entry: dict[str, Any], register: Register, *, lang: str | None) -> 
     A missing English string falls back rather than raising. An English
     customer reading Arabic is a bad turn; a KeyError is a lost one.
     """
-    if lang == "en" and entry.get(_ENGLISH):
-        return entry[_ENGLISH]
-    return entry.get(str(register)) or entry[str(Register.masri)]
+    speaks = resolve(register, lang)
+    return entry.get(str(speaks)) or entry[str(Register.masri)]
 
 
 @dataclass(frozen=True)
@@ -67,4 +92,4 @@ class Voice:
         return scripted(entry, self.register, lang=self.lang)
 
 
-__all__ = ["Voice", "scripted"]
+__all__ = ["Voice", "resolve", "scripted"]

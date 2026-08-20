@@ -23,6 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from moc.agent.replies import resolve
 from moc.agent.state import Register
 from moc.arabic.script import reply_language
 from moc.config_store import load
@@ -65,22 +66,15 @@ def render_composition(
     having to know that.
     """
     del passages
+    lang = reply_language(message)
+    speaks = resolve(register, lang)
     return (
         _template()
         .replace("{message}", message)
-        .replace("{language}", _language_for(message))
-        .replace("{register}", _REGISTERS.get(register, _REGISTERS[Register.masri]))
+        .replace("{language}", _LANGUAGES.get(lang or "ar", _LANGUAGES["ar"]))
+        .replace("{register}", _REGISTERS.get(speaks, _REGISTERS[Register.masri]))
         .replace("{formatting}", " ".join(formatting_for(channel).split()))
     )
-
-
-def _language_for(message: str) -> str:
-    """Mirror the customer, not the corpus.
-
-    `reply_language` rather than `detect_language`: franco is Latin script and
-    Arabic language, and a franco customer reads Arabic.
-    """
-    return _LANGUAGES.get(reply_language(message) or "ar", _LANGUAGES["ar"])
 
 
 def formatting_for(channel: str) -> str:
@@ -117,4 +111,9 @@ def settings() -> dict[str, Any]:
     return load(_CONFIG)
 
 
-__all__ = ["formatting_for", "prompt_version", "render_composition", "settings"]
+__all__ = [
+    "formatting_for",
+    "prompt_version",
+    "render_composition",
+    "settings",
+]
