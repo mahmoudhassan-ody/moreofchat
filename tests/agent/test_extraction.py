@@ -146,6 +146,68 @@ def test_the_rendered_prompt_carries_the_vocabulary_and_the_held_slots():
     assert "{message}" not in prompt and "{slots}" not in prompt
 
 
+def test_a_location_is_offered_with_the_names_customers_use_for_it():
+    """Canonical values alone are not enough, and this cost two live cases.
+
+    The model maps a surface form to a canonical value only when the two are
+    translations of each other: `الساحل الشمالي` -> `North Coast` resolves,
+    `الشيخ زايد` -> `Sheikh Zayed` resolves. `التجمع الخامس` -> `New Cairo` is
+    not a translation, it is local knowledge, and Haiku does not have it — it
+    put the raw Arabic into `compound`, which is a hard rejection and an
+    errored case (measured 2026-08-20).
+
+    `locations.yaml` already holds that mapping. It simply never reached the
+    prompt. The aliases come from config like the canonical values do, so the
+    §3.1 rule is intact: what the model may EMIT is still only what the
+    resolver can parse back.
+    """
+    prompt = render_prompt(script=REALESTATE, message="x", held_slots={})
+
+    assert "التجمع الخامس" in prompt, "the Arabic name that errored re-0001"
+    assert "tagamo3 el 5ames" in prompt.lower(), "the franco name that errored re-0016"
+
+    line = next(ln for ln in prompt.splitlines() if ln.startswith("- city:"))
+    assert "New Cairo" in line and "التجمع الخامس" in line, (
+        "an alias must sit beside the canonical value it maps to, or the "
+        "model has a list of names and no mapping"
+    )
+
+
+def test_the_emittable_values_are_still_only_the_canonical_ones():
+    """Aliases are input, never output. A prompt that reads as if
+    `التجمع الخامس` were an acceptable slot VALUE re-creates the failure it
+    was added to fix."""
+    vocabulary = slot_vocabulary(REALESTATE)
+    assert "التجمع الخامس" not in vocabulary["city"]
+    assert set(vocabulary["city"]) <= {
+        " ".join(w.capitalize() for w in name.split())
+        for name in load("arabic/locations")["kind"]
+    }
+
+
+def test_a_property_type_is_offered_with_the_names_customers_use_for_it():
+    """The same gap as locations, in a file that already documents itself as
+    "injected into the extraction prompt at render time". Only the canonical
+    keys ever were — `property_types.yaml` has carried `شقة` and `sha22a`
+    since it was written, and neither reached the model.
+
+    It is what re-0001 and re-0016 failed on once the location half was
+    fixed: both name an apartment, neither writes `apartment`.
+    """
+    prompt = render_prompt(script=REALESTATE, message="x", held_slots={})
+    line = next(ln for ln in prompt.splitlines() if ln.startswith("- property_type:"))
+    assert "شقة" in line and "sha22a" in line
+    assert "apartment (" in line, "the alias must sit beside the value it maps to"
+
+
+def test_a_slot_with_no_alias_file_renders_as_a_plain_list():
+    """`listing_kind` declares its values inline and has no surface forms.
+    It must not grow empty brackets that read as a list to choose from."""
+    prompt = render_prompt(script=REALESTATE, message="x", held_slots={})
+    line = next(ln for ln in prompt.splitlines() if ln.startswith("- listing_kind:"))
+    assert "(" not in line, line
+
+
 def test_only_intents_the_engine_can_route_are_offered():
     """An intent the script has no node for routes to the fallback, so
     offering it produces a clarification the customer cannot resolve."""

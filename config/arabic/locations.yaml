@@ -12,6 +12,13 @@
 # Arabic and Latin are separate lists because they need different matching:
 # Latin is case-folded and word-boundary matched, Arabic runs after the
 # normalizer (alef/ya/ta-marbuta folding), so `القنطره` and `القنطرة` both hit.
+#
+# SWEPT 2026-08-20, after `Tagamoa El Khames` errored a live case. Ten of the
+# twenty-six canonical values carried no `latin:` list at all, which makes them
+# unreachable to a franco customer — and `franco_or_misspelled` is an eval
+# category (§4.2) because that is how Egyptians type. Every value now has both
+# scripts, asserted in tests/arabic/test_location_coverage.py rather than
+# eyeballed. Franco substitutions used throughout: 7=ح, 3=ع, 5=خ, 2=ء/ق.
 
 version: 1
 
@@ -51,28 +58,45 @@ aliases:
       - 'العين السخنة'
       - 'عين السخنة'
       - 'عين سخنة'
+      - 'السخنة'
+    latin:
+      - 'ain sokhna'
+      - 'ain el sokhna'
+      - 'ein sokhna'
+      - 'sokhna'
   'azha':
     arabic:
       - 'ازها'
+    latin:
+      - 'azha'
   'badya':
     arabic:
       - 'باديا'
+    latin:
+      - 'badya'
   'cairo':
     arabic:
       - 'القاهرة'
+    latin:
+      - 'cairo'
   'celian':
     arabic:
       - 'سيلان'
+    latin:
+      - 'celian'
   'el gouna':
     arabic:
       - 'الجونة'
     latin:
       - 'el gouna'
+      - 'elgouna'
+      - 'gouna'
   'hyde park':
     arabic:
       - 'هايد بارك'
     latin:
       - 'hyde park'
+      - 'hydepark'
   'jefaira':
     arabic:
       - 'جفيرة'
@@ -89,6 +113,7 @@ aliases:
       - 'مكادي'
     latin:
       - 'makadi heights'
+      - 'makadi'
   'marassi':
     arabic:
       - 'مراسي'
@@ -97,10 +122,16 @@ aliases:
   'mivida':
     arabic:
       - 'ميفيدا'
+    latin:
+      - 'mivida'
   'mokattam':
     arabic:
       - 'المقطم'
       - 'مدينة المقطم'
+    latin:
+      - 'mokattam'
+      - 'el mokattam'
+      - 'mo2attam'
   'mostakbal city':
     arabic:
       - 'مدينة المستقبل'
@@ -108,20 +139,35 @@ aliases:
     latin:
       - 'mostakbal city'
       - 'future city'
+      - 'madinet el mostakbal'
+      - 'mostakbal'
   'new alamein':
     arabic:
       - 'العلمين الجديدة'
       - 'العلمين'
     latin:
       - 'new alamein'
+      - 'el alamein'
+      - 'alamein'
+  # The two names that errored re-0001 and re-0016 live (2026-08-20). Almost
+  # nobody writes "New Cairo" — `التجمع الخامس` is the everyday Arabic name and
+  # `tagamo3 el 5ames` the everyday franco one, and neither is a translation of
+  # the canonical value, so nothing can infer the mapping from the name alone.
+  # This is the largest city in the catalogue.
   'new cairo':
     arabic:
       - 'التجمع الخامس'
       - 'القاهرة الجديدة'
+      - 'التجمع'
+      - 'تجمع خامس'
     latin:
       - 'fifth settlement'
       - '5th settlement'
       - 'new cairo fifth settlement'
+      - 'tagamoa el khames'
+      - 'tagamo3 el 5ames'
+      - 'el tagamoa'
+      - 'tagamoa'
   'new capital':
     arabic:
       - 'العاصمة الادارية'
@@ -131,36 +177,60 @@ aliases:
       - 'new administrative capital'
       - 'administrative capital'
       - 'new capital city'
+      - 'el asema el edarya'
+      - 'asema edarya'
   'new zayed':
     arabic:
       - 'نيو زايد'
       - 'زايد الجديدة'
     latin:
       - 'new zayed'
+      - 'zayed el gedida'
   'noor city':
     arabic:
       - 'نور سيتي'
+      - 'مدينة نور'
+    latin:
+      - 'noor city'
+      - 'madinet noor'
   'north coast':
     arabic:
       - 'الساحل الشمالي'
+      - 'الساحل'
     latin:
       - 'north coast'
+      - 'el sahel'
+      - 'sahel'
+      - 'sa7el'
   'october':
     arabic:
       - 'السادس من أكتوبر'
+      - 'مدينة السادس من أكتوبر'
       - 'أكتوبر'
     latin:
       - 'sixth of october'
       - '6 of october'
       - '6 october'
+      - '6th of october'
+      - 'october city'
   'red sea':
     arabic:
       - 'البحر الأحمر'
+    latin:
+      - 'red sea'
+      - 'el ba7r el a7mar'
+  # No bare `زايد` / `zayed`, deliberately. It is the commonest short form and
+  # it is also inside `زايد الجديدة` (New Zayed), a different canonical value
+  # filtering the same column. `_aliases()` resolves overlaps longest-first, so
+  # a bare alias would only ever lose — but it would lose silently, and the two
+  # cities have different stock.
   'sheikh zayed':
     arabic:
       - 'الشيخ زايد'
+      - 'شيخ زايد'
     latin:
       - 'sheikh zayed'
+      - 'el sheikh zayed'
   'southmed':
     arabic:
       - 'ساوث ميد'
@@ -178,6 +248,8 @@ aliases:
     arabic:
       - 'غرب القاهرة'
       - 'القاهرة الغربية'
+    latin:
+      - 'west cairo'
 
 anywhere_else:
   # "somewhere else" — the customer rejecting the area just offered. Must not

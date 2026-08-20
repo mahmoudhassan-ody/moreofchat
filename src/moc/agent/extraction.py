@@ -79,11 +79,9 @@ def slot_vocabulary(script: str) -> dict[str, Any]:
         elif spec.get("from") == "arabic/locations":
             kinds = load("arabic/locations")["kind"]
             wanted = spec["kind"]
-            # Title case, because the catalogue's own columns are title case
-            # and a resolved slot is used as a filter directly.
             vocabulary[slot] = tuple(
                 sorted(
-                    " ".join(word.capitalize() for word in name.split())
+                    catalogue_name(name)
                     for name, kind in kinds.items()
                     if kind == wanted
                 )
@@ -91,6 +89,61 @@ def slot_vocabulary(script: str) -> dict[str, Any]:
         else:
             raise ValueError(f"{script}: slot {slot!r} declares no vocabulary")
     return vocabulary
+
+
+@lru_cache(maxsize=8)
+def slot_aliases(script: str) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Per slot, the surface forms that map to each canonical value.
+
+    **The canonical values alone are not a mapping.** The model resolves a
+    surface form only when the two are translations of each other:
+    `الساحل الشمالي` -> `North Coast` and `الشيخ زايد` -> `Sheikh Zayed` both
+    land. `التجمع الخامس` -> `New Cairo` does not — it is local knowledge, not
+    translation — and Haiku put the raw Arabic into `compound`, which is a
+    hard rejection and an errored case. Two of twenty-three real-estate cases
+    died that way, both naming the largest city in the catalogue.
+
+    `locations.yaml` has held that mapping since it was transcribed. It simply
+    never reached the prompt. Reading it here rather than writing the names
+    into the template keeps §3.1 intact: aliases are what the model may READ,
+    the vocabulary is still all it may EMIT.
+    """
+    document = load(script).get("slots", {})
+    resolved: dict[str, dict[str, tuple[str, ...]]] = {}
+    for slot, spec in document.items():
+        source = spec.get("from")
+        if source == "arabic/locations":
+            locations = load("arabic/locations")
+            wanted = spec["kind"]
+            resolved[slot] = {
+                catalogue_name(name): _forms(forms)
+                for name, forms in locations["aliases"].items()
+                if locations["kind"].get(name) == wanted
+            }
+        elif source == "agent/property_types":
+            # The same omission as locations, in a file whose own header says
+            # it is "injected into the extraction prompt at render time".
+            # Only the canonical keys ever were. `شقة` and `sha22a` have been
+            # sitting here since it was written, and the model never saw
+            # either — which is what re-0001 and re-0016 failed on once their
+            # city resolved.
+            resolved[slot] = {
+                name: _forms(forms)
+                for name, forms in load("agent/property_types")["types"].items()
+            }
+    return resolved
+
+
+def _forms(spec: dict[str, Any]) -> tuple[str, ...]:
+    """Arabic first, then Latin. Order is the file's, not sorted: the list is
+    maintained commonest-first and that is the order worth showing."""
+    return tuple(spec.get("arabic", []) + spec.get("latin", []))
+
+
+def catalogue_name(canonical: str) -> str:
+    """`new cairo` -> `New Cairo`. The catalogue's own columns are title case
+    and a resolved slot is used as a filter directly."""
+    return " ".join(word.capitalize() for word in canonical.split())
 
 
 @lru_cache(maxsize=8)
@@ -128,7 +181,9 @@ def _intents(script: str) -> tuple[str, ...]:
     return tuple(sorted(lines))
 
 
-def _describe(vocabulary: dict[str, Any]) -> str:
+def _describe(
+    vocabulary: dict[str, Any], aliases: dict[str, dict[str, tuple[str, ...]]]
+) -> str:
     lines = []
     for slot, allowed in sorted(vocabulary.items()):
         if allowed is INTEGER:
@@ -136,8 +191,23 @@ def _describe(vocabulary: dict[str, Any]) -> str:
         elif allowed is FREE:
             lines.append(f"- {slot}: exactly as the customer wrote it")
         else:
-            lines.append(f"- {slot}: one of {', '.join(allowed)}")
+            known = aliases.get(slot, {})
+            lines.append(
+                f"- {slot}: one of "
+                + ", ".join(_offer(value, known.get(value, ())) for value in allowed)
+            )
     return "\n".join(lines)
+
+
+def _offer(value: str, forms: tuple[str, ...]) -> str:
+    """`New Cairo (التجمع الخامس, tagamo3 el 5ames)`.
+
+    The parenthesis is what the customer may write; the value outside it is
+    the only thing that may come back. A slot with no alias file — property
+    types — renders as the bare value, with no empty brackets to read as a
+    list the model must choose from.
+    """
+    return f"{value} ({', '.join(forms)})" if forms else value
 
 
 def render_prompt(*, script: str, message: str, held_slots: dict[str, Any]) -> str:
@@ -152,7 +222,9 @@ def render_prompt(*, script: str, message: str, held_slots: dict[str, Any]) -> s
         template.replace("{message}", message)
         .replace("{held_slots}", json.dumps(held_slots, ensure_ascii=False) or "{}")
         .replace("{intents}", "\n".join(f"- {line}" for line in _intents(script)))
-        .replace("{slots}", _describe(slot_vocabulary(script)))
+        .replace(
+            "{slots}", _describe(slot_vocabulary(script), slot_aliases(script))
+        )
     )
 
 
@@ -277,6 +349,8 @@ def _as_int(slot: str, value: Any) -> int:
 __all__ = [
     "ExtractionFailed",
     "LlmSlotExtractor",
+    "catalogue_name",
     "render_prompt",
+    "slot_aliases",
     "slot_vocabulary",
 ]

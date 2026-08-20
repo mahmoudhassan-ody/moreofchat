@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from moc.agent.extraction import catalogue_name
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
 from moc.retrieval.inventory import UnitQuery
@@ -184,15 +185,6 @@ def _budget_in(text: str) -> int | None:
     millions = float(match.group(1)) + (0.5 if match.group(2) else 0)
     return int(millions * 1_000_000)
 
-
-def catalogue_name(canonical: str) -> str:
-    """`new cairo` -> `New Cairo`.
-
-    The alias map is lower-case and the catalogue's `city` column is title
-    case. Converted here rather than duplicating the catalogue's spelling into
-    config, which would be a second place for it to drift.
-    """
-    return " ".join(part.capitalize() for part in canonical.split())
 
 
 class InventoryAgent:

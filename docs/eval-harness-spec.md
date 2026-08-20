@@ -97,19 +97,20 @@ Rules:
 
 Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extraction`), per §2's "lowest available temperature". Note that this is per candidate rather than per task: `claude-sonnet-5` answers a request carrying `temperature` with a 400 (`temperature is deprecated for this model`, measured 2026-08-20), while `claude-haiku-4-5` accepts it. Dropping extraction to 0 narrowed real-estate `overall_accuracy` from a 13.1-point spread to 2.1.
 
-**Baseline, 2026-08-20** (`2eb7db8` plus this change, n=3 each):
+**Baseline, 2026-08-20**, n=3 each. Real estate re-measured after the alias fix
+below; education unchanged since `2eb7db8`.
 
 | Suite | Metric | Value |
 |---|---|---|
-| real estate | `overall_accuracy` | 46.2% (45.5–47.6) |
-| real estate | `asof_disclosure_rate` | 82.0% (81.2–82.4) |
+| real estate | `overall_accuracy` | 56.5% (56.5–56.5) |
+| real estate | `asof_disclosure_rate` | 83.3% (83.3–83.3) |
 | real estate | `arithmetic_in_model_rate` | 0.0% (0.0–0.0) |
 | real estate | `type_substitution_rate` | 0.0% (0.0–0.0) |
 | real estate | `invented_compound_rate` | 0.0% (0.0–0.0) |
 | real estate | `sold_unit_offered_rate` | 0.0% (0.0–0.0) |
-| real estate | `tool_call_accuracy` (tracked) | 58.6% (57.1–61.5) |
-| real estate | `unresolved_type_rate` (tracked) | 50.0% (50.0–50.0) |
-| real estate | `errored_rate` | 5.8% (4.3–8.7) |
+| real estate | `tool_call_accuracy` (tracked) | 73.3% (73.3–73.3) |
+| real estate | `unresolved_type_rate` (tracked) | 48.9% (46.7–50.0) |
+| real estate | `errored_rate` | 0.0% (0.0–0.0) |
 | education | `overall_accuracy` | 5.9% (0.0–11.8) — **not measurable at 17 cases** |
 | education | `expected_action_accuracy` | 66.7% (63.2–68.4) |
 | education | `language_mirror_accuracy` | 82.5% (78.9–84.2) |
@@ -117,6 +118,19 @@ Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extracti
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
 | education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
+
+**Aliases reach the prompt (2026-08-20).** `slot_vocabulary` injected the
+canonical values of every closed slot and nothing else, so the model had to
+infer each surface form. It manages that only where the two are translations:
+`الساحل الشمالي` -> `North Coast` resolves, `التجمع الخامس` -> `New Cairo` does
+not. Both of the suite's errored cases named New Cairo, the largest city in the
+catalogue, by the name everyone actually uses. `locations.yaml` and
+`property_types.yaml` had held those mappings all along — `property_types.yaml`
+even documents itself as injected at render time, and only its keys were. Both
+now render as `New Cairo (التجمع الخامس, tagamo3 el 5ames, …)`: aliases are
+what the model may read, the canonical value is still all it may emit. That
+moved `overall_accuracy` 46.2% -> 56.5%, `tool_call_accuracy` 58.6% -> 73.3%,
+and `errored_rate` to zero, with zero spread across three runs.
 
 Education's accuracy is not comparable against at this suite size. One case is 5.9 points of a 17-case suite, so a two-case swing exceeds the bar on its own; §4.1's 150 cases are what makes that metric readable, not a steadier model. `register_accuracy`, `p95_latency_ms` and `forbidden_claim_violations` fed nothing in any run and are unmeasured, not clean.
 

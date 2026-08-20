@@ -43,6 +43,11 @@ Rules that matter more than they look:
   the customer's own wording. A value outside the list cannot be used as a
   filter, and it fails silently — the search returns nothing and reads as "we
   have no stock", not as an extraction error.
+- **The names in brackets are what the customer may write; the value before
+  them is what you return.** They are the same place. A customer who names one
+  of them has named that value, even when the two look nothing alike, and even
+  when the bracketed name looks like it might belong to a different slot.
+  Never return a bracketed name.
 - **Omit what was not said.** An absent key means the customer did not say it.
   Do not guess, do not carry a default, and do not infer a value from what
   would be typical.
