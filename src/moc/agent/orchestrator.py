@@ -63,7 +63,12 @@ _REPLIES = "agent/replies"
 _HANDOFF = "handoff"
 _CLARIFY = "clarify"
 _LOW_CONFIDENCE = "low_confidence"
+_REFUSE = "refuse"
 _GROUNDING_FAILED = "grounding_failed"
+
+#: Naming one missing slot of three is worse than naming none — it reads as
+#: the whole answer, and the customer supplies one thing and waits.
+_AT_LEAST_TWO = 2
 _PROVIDER_UNAVAILABLE = "provider_unavailable"
 
 
@@ -320,6 +325,12 @@ class Orchestrator:
         """
         if decision.action is Action.handoff:
             return _HANDOFF
+        if decision.action is Action.refuse:
+            # edu-0017. This branch did not exist, so a `refuse` node emitted
+            # the clarification text — "could you tell me more about what you
+            # need?" to a question asked perfectly clearly. The real-estate
+            # agent's equivalent has handled refuse since it was written.
+            return _REFUSE
         if decision.gate_closed:
             return _LOW_CONFIDENCE
         return _CLARIFY
@@ -364,11 +375,38 @@ class Orchestrator:
         # answers an English question in Arabic.
         voice = Voice.of(decision.register, message)
         document = load(_REPLIES)
-        if key is _CLARIFY and decision.ask_for_slot:
-            slot = document["ask_for_slot"].get(decision.ask_for_slot)
-            if slot:
-                return voice.say(slot)
+        if key is _CLARIFY:
+            asked = _ask_for(document, decision, voice)
+            if asked:
+                return asked
         return voice.say(document["replies"][key])
+
+
+def _ask_for(document: dict, decision: Decision, voice: Voice) -> str | None:
+    """Name what is missing, or say nothing and let the generic reply stand.
+
+    Every slot the engine knows about, not the one the script happened to
+    name. `admission_thresholds` needs a branch, a certificate and a faculty;
+    it asked for one, by a key with no entry, so every such turn fell through
+    to "what exactly do you need?" — which the judge failed four times in one
+    run, with the same sentence of reasoning each time.
+
+    One missing slot keeps its own question: a list of one reads worse than
+    the sentence written for it.
+    """
+    missing = decision.missing_slots or (
+        (decision.ask_for_slot,) if decision.ask_for_slot else ()
+    )
+    if len(missing) == 1:
+        entry = document["ask_for_slot"].get(missing[0])
+        return voice.say(entry) if entry else None
+
+    plural = document["ask_for_slots"]
+    nouns = [plural["nouns"][slot] for slot in missing if slot in plural["nouns"]]
+    if len(nouns) < _AT_LEAST_TWO:
+        return None
+    joined = voice.say(plural["join"]).join(voice.say(noun) for noun in nouns)
+    return voice.say(plural["template"]).replace("{items}", joined)
 
 
 __all__ = ["Extractor", "Orchestrator", "Retrieval", "Retriever", "TurnResult"]

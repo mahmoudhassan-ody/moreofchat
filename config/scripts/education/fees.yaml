@@ -44,6 +44,9 @@ slots:
       - biotechnology
   branch:
     values: [arish, qantara]
+  student_status:
+    values: [egyptian, international]
+
   certificate:
     values: [general_secondary, azhari, arab_equivalent, foreign_equivalent]
 
@@ -170,6 +173,24 @@ nodes:
   # off — a colleague cannot answer it either, and the KB states no
   # employment outcomes, so every number would be invented. Refusing names
   # what is knowable instead.
+  # edu-0008. Two chunks answer this — Egyptian and international — with
+  # different content, so the turn must ask which before choosing. It used to
+  # reach the fallback and clarify generically, and the judge failed it on
+  # exactly that: "ولم يحدد المعلومة الحاسمة المطلوبة، وهي ما إذا كان الطالب
+  # مصريًا أم دوليًا". The decisive question is a slot, so the engine can name
+  # it.
+  documents:
+    intents: [documents, required_papers, admission_documents]
+    describe: >
+      which papers are needed to apply. الأوراق المطلوبة، المستندات، الورق اللي محتاجه.
+    action: answer
+    register: msa
+    requires_slots: [student_status]
+    grounding: required
+    clarify:
+      register: masri
+      ask_for_slot: student_status
+
   career_advice:
     intents: [career_advice, job_prospects, best_faculty]
     describe: >

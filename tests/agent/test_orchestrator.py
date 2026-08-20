@@ -543,3 +543,76 @@ async def test_the_passages_still_travel_as_cache_blocks_not_in_the_prompt(
     call = composition_calls(anthropic)[-1]
     assert PASSAGE in call["cache_blocks"]
     assert PASSAGE not in (call["system"] or "")
+
+
+# ────────────────── a clarification names what it needs ──────────────────
+
+
+async def test_a_refuse_node_does_not_emit_the_clarify_text(turn_session):
+    """edu-0017: `career_advice` is `action: refuse` and the customer got
+    "could you tell me more about what you need?" — for a question they had
+    asked perfectly clearly.
+
+    `_non_answer_key` branched on handoff and on the confidence gate and fell
+    through to clarify for everything else, so refuse had no branch at all.
+    The real-estate agent's equivalent has handled it since it was written.
+    """
+    from moc.config_store import load
+
+    orchestrator, *_ = build(intent="career_advice")
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="إيه أحسن كلية أدخلها عشان ألاقي شغل بسرعة؟",
+        channel=CHANNEL,
+    )
+
+    assert result.action is Action.refuse
+    assert result.reply == load("agent/replies")["replies"]["refuse"]["masri"]
+
+
+async def test_a_clarification_names_every_slot_it_is_missing(turn_session):
+    """edu-0004, edu-0007 and edu-0008 all failed the judge on the same
+    sentence: "طلب التوضيح عام، ولم يحدد أن المطلوب هو معرفة الفرع ونوع
+    الشهادة" — a clarification that does not name the missing thing makes the
+    customer guess twice.
+
+    `admission_thresholds` needs three slots and asked for one, by a key with
+    no entry, so every one of them fell through to the generic sentence.
+    """
+    orchestrator, *_ = build(intent="admission_thresholds", slots={"faculty": "pharmacy"})
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="الحد الأدنى للقبول في الصيدلة كام؟",
+        channel=CHANNEL,
+    )
+
+    assert result.action is Action.clarify
+    reply = result.reply
+    assert "الفرع" in reply, "the branch is missing and must be named"
+    assert "الشهادة" in reply, "so is the certificate type"
+    assert "بالظبط" not in reply, "not the generic fallback"
+
+
+async def test_one_missing_slot_keeps_its_own_question(turn_session):
+    """A single missing slot has a better sentence than a list of one."""
+    from moc.config_store import load
+
+    orchestrator, *_ = build(intent="fees", slots={})
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المصاريف كام؟", channel=CHANNEL
+    )
+    assert result.reply == load("agent/replies")["ask_for_slot"]["faculty"]["masri"]
+
+
+async def test_a_clarification_with_no_known_slot_still_falls_back(turn_session):
+    """The fallback node knows nothing about what is missing. The generic
+    sentence is the honest reply there — and the fix for a case landing on it
+    is a node, not better wording."""
+    orchestrator, *_ = build(intent=None)
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="؟؟", channel=CHANNEL
+    )
+    assert result.action is Action.clarify
+    assert result.reply

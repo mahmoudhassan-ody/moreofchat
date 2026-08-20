@@ -100,6 +100,41 @@ replies:
     msa: "لا تتوفر {type} ضمن النطاق المطلوب حاليًا. سيتم تحويلك إلى أحد الزملاء."
     english: "There's no {type} available in that range right now — passing you to a colleague."
 
+# Several slots missing at once. One question per slot would be an
+# interrogation, and the generic "what exactly do you need?" is what the judge
+# kept failing: "طلب التوضيح عام، ولم يحدد أن المطلوب هو معرفة الفرع ونوع
+# الشهادة" — a clarification that does not name the missing thing makes the
+# customer guess twice, and they usually guess wrong.
+#
+# Nouns rather than questions, joined into one sentence. `admission_thresholds`
+# needs three of these at once.
+ask_for_slots:
+  template:
+    masri: "عشان أعرف أجاوبك صح، محتاج أعرف {items}."
+    msa: "لتقديم الإفادة الصحيحة، يرجى تحديد {items}."
+    english: "To answer that accurately I need to know {items}."
+  join:
+    masri: " و"
+    msa: " و"
+    english: " and "
+  nouns:
+    faculty:
+      masri: "الكلية"
+      msa: "الكلية"
+      english: "the faculty"
+    branch:
+      masri: "الفرع"
+      msa: "الفرع"
+      english: "the branch"
+    certificate:
+      masri: "نوع الشهادة"
+      msa: "نوع الشهادة"
+      english: "the certificate type"
+    student_status:
+      masri: "إنت طالب مصري ولا دولي"
+      msa: "ما إذا كان الطالب مصريًا أم دوليًا"
+      english: "whether the student is Egyptian or international"
+
 # Slot questions, keyed by the slot the script asked for. Masri by default:
 # asking which faculty is conversation, even when the answer will be regulation.
 ask_for_slot:
@@ -115,6 +150,21 @@ ask_for_slot:
     masri: "بتسأل عن أنهي وحدة بالظبط؟ قوللي الكمبوند و نوع الوحدة و هجيبلك التفاصيل."
     msa: "عن أي وحدة تستفسر؟ يرجى تحديد الكمبوند ونوع الوحدة."
     english: "Which unit do you mean? Tell me the compound and the unit type and I'll pull the details."
+
+  branch:
+    masri: "حضرتك بتسأل عن أنهي فرع، العريش ولا القنطرة؟"
+    msa: "عن أي فرع تستفسر، العريش أم القنطرة؟"
+    english: "Which branch are you asking about — Arish or Qantara?"
+
+  certificate:
+    masri: "شهادة إيه؟ ثانوية عامة، أزهرية، ولا شهادة معادلة؟"
+    msa: "ما نوع الشهادة: الثانوية العامة، الأزهرية، أم شهادة معادلة؟"
+    english: "Which certificate — general secondary, Azhari, or an equivalent?"
+
+  student_status:
+    masri: "حضرتك طالب مصري ولا دولي؟ المطلوب بيختلف."
+    msa: "هل الطالب مصري أم دولي؟ تختلف المستندات المطلوبة."
+    english: "Is the student Egyptian or international? The documents differ."
 
   # A browse question that narrowed nothing — see `requires_any_slot`.
   property_type:
