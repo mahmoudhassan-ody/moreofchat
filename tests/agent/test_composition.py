@@ -173,3 +173,18 @@ def test_an_english_register_on_an_arabic_turn_becomes_arabic():
     )
     assert "Arabic" in prompt
     assert "Masri" in prompt.split("REGISTER")[1].split("FORMATTING")[0]
+
+
+def test_a_figure_must_be_named_for_what_it_is():
+    """Reply quality, and explicitly NOT protection.
+
+    edu-0012 stated the 500 EGP track-change fee as engineering tuition. A
+    reply that says what a figure is, in the retrieved material's own words,
+    is a better reply and makes the mismatch visible to a reader — but the
+    model is being asked, not constrained, and this session has twice shown
+    what happens when a prompt is treated as a guarantee. The guarantee, if we
+    build one, is a verified citation pass.
+    """
+    text = render()
+    assert "Say what each figure is" in text
+    assert "500" not in text, "the rule is stated, not illustrated with a figure"

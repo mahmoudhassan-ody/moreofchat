@@ -31,15 +31,21 @@ _GATES = "evals/gates"
 #: the suite has. Stated in the artifact rather than in a docstring: a reader
 #: comparing a register rate against overall accuracy is comparing two
 #: different populations, and nothing in the table says so.
-_STAGE_TWO_GATES = ("register_accuracy", "forbidden_claim_violations")
+_STAGE_TWO_GATES = (
+    "register_accuracy",
+    "forbidden_claim_violations",
+    "hallucinated_figure_rate",
+)
 
 _STAGE_TWO_NOTE = (
     "> **Coverage:** `"
     + "` and `".join(_STAGE_TWO_GATES)
-    + "` are graded by the judge, which runs only on turns that passed stage 1."
+    + "` draw on the judge, which runs only on turns that passed stage 1."
     " Their observation counts are therefore smaller than the suite's, and a"
     " turn that failed a deterministic check contributes nothing to them"
-    " rather than a pass.",
+    " rather than a pass. `hallucinated_figure_rate` has two producers over"
+    " two populations: the deterministic check on every turn that stated a"
+    " figure, and the judge on the subset that also cleared stage 1.",
     "",
 )
 _PERCENT = 100.0

@@ -224,7 +224,7 @@ class CaseRunner:
             retrieved = await self._retriever.chunk_ids_for(query=turn.user)
             checks = self._stage_one(turn, result)
             verdict = await self._stage_two(turn, result, checks)
-            checks.extend(checks_from_verdict(verdict))
+            checks.extend(checks_from_verdict(verdict, reply=result.reply))
             turns.append(
                 TurnOutcome(
                     turn_index=index,
@@ -408,7 +408,9 @@ def _recall_for(case: EvalCase, turns: Sequence[TurnOutcome]) -> float | None:
     return found / len(case.gold_chunks)
 
 
-def checks_from_verdict(verdict: JudgeVerdict | None) -> list[CheckResult]:
+def checks_from_verdict(
+    verdict: JudgeVerdict | None, reply: str = ""
+) -> list[CheckResult]:
     """The two §2.1 metrics the judge computes and the report used to discard.
 
     `register_accuracy` and `forbidden_claim_violations` were declared in
@@ -417,11 +419,19 @@ def checks_from_verdict(verdict: JudgeVerdict | None) -> list[CheckResult]:
     `forbidden_violated` non-empty twice in the same run that reported the
     gate as unmeasured.
 
+    Three metrics now: `hallucinated_figure_rate` gains a second producer.
+    The deterministic check compares a reply's figures against a SET of
+    numbers, so a figure lifted from one passage and relabelled as something
+    else passes it — edu-0012 stated the 500 EGP track-change fee as
+    engineering tuition and stage 1 returned clean. The judge can see the
+    mismatch and its rubric already covered it; nothing read the score.
+
     **Coverage limit, stated here because it belongs with the numbers:** stage
-    2 runs only on turns that passed stage 1, so these two are observed on a
+    2 runs only on turns that passed stage 1, so these are observed on a
     subset of turns and their denominators are smaller than the suite's. A
     turn that failed an action or language check has no verdict, and an absent
-    verdict contributes nothing rather than a pass.
+    verdict contributes nothing rather than a pass. That is exactly why no
+    judge ever saw edu-0012: it failed stage 1 on `expected_action`.
     """
     if verdict is None:
         return []
@@ -439,11 +449,20 @@ def checks_from_verdict(verdict: JudgeVerdict | None) -> list[CheckResult]:
                 detail,
                 skipped=True,
             ),
+            CheckResult(
+                "figure_labelling",
+                "hallucinated_figure_rate",
+                True,
+                detail,
+                skipped=True,
+            ),
         ]
 
-    floor = load("evals/judge")["pass_thresholds"]["register"]
+    judge = load("evals/judge")
+    floor = judge["pass_thresholds"]["register"]
     violated = verdict.forbidden_violated
     return [
+        _figure_labelling(verdict, reply, floor=judge["scale"]["min"]),
         CheckResult(
             name="register",
             metric="register_accuracy",
@@ -461,6 +480,38 @@ def checks_from_verdict(verdict: JudgeVerdict | None) -> list[CheckResult]:
             detail="" if not violated else "; ".join(violated),
         ),
     ]
+
+
+def _figure_labelling(verdict: JudgeVerdict, reply: str, *, floor: int) -> CheckResult:
+    """Did the reply say a figure was something the passages did not say it was?
+
+    Grounding 0 in the rubric is "contains an unsupported figure, or
+    contradicts a passage". Only the first half is a figure failure, so this
+    skips when the reply states no figure at all — otherwise a contradiction
+    with no number in it would move a rate whose name is about numbers.
+
+    Feeds `hallucinated_figure_rate` rather than a metric of its own, because
+    a relabelled figure IS a hallucinated figure and the gate's name should
+    finally mean what it says. The two producers see different populations,
+    which the report states.
+    """
+    from moc.arabic.numerals import extract_numbers
+
+    if not extract_numbers(reply):
+        return CheckResult(
+            name="figure_labelling",
+            metric="hallucinated_figure_rate",
+            passed=True,
+            detail="reply states no figure",
+            skipped=True,
+        )
+    failed = verdict.grounding == floor
+    return CheckResult(
+        name="figure_labelling",
+        metric="hallucinated_figure_rate",
+        passed=not failed,
+        detail="" if not failed else f"judge scored grounding {verdict.grounding}",
+    )
 
 
 def _composed(result: Any) -> str:

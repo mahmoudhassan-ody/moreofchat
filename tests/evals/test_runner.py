@@ -687,3 +687,66 @@ def test_a_turn_the_judge_never_saw_contributes_nothing():
     from moc.evals.runner import checks_from_verdict
 
     assert checks_from_verdict(None) == []
+
+
+def test_the_judge_catches_a_figure_the_deterministic_check_cannot():
+    """The edu-0012 class: a figure lifted from a passage and relabelled.
+
+    `check_numeric_grounding` compares against a SET of numbers, so 500 —
+    the track-change fee, and the only 500 in 51 facts — passes as engineering
+    tuition. The judge can see the mismatch and its rubric already covers it:
+    grounding 0 is "contains an unsupported figure, or contradicts a passage".
+    It was scoring that all along and nothing read the score.
+    """
+    from moc.evals.runner import checks_from_verdict
+
+    checks = {
+        c.metric: c
+        for c in checks_from_verdict(
+            _verdict(grounding=0, meets_rubric=False), reply="الرسوم 500 جنيه"
+        )
+    }
+    assert not checks["hallucinated_figure_rate"].passed
+    assert checks["hallucinated_figure_rate"].name == "figure_labelling"
+
+
+def test_a_grounding_zero_on_a_reply_with_no_figure_is_not_a_figure_failure():
+    """Grounding 0 is also "contradicts a passage", which needs no number.
+    Counting that under a figure metric would make the rate mean two things.
+    """
+    from moc.evals.runner import checks_from_verdict
+
+    checks = {
+        c.metric: c
+        for c in checks_from_verdict(
+            _verdict(grounding=0, meets_rubric=False), reply="لا تتوفر لدينا هذه البيانات"
+        )
+    }
+    assert checks["hallucinated_figure_rate"].skipped
+
+
+def test_a_grounded_reply_with_a_figure_feeds_the_gate_as_a_pass():
+    """The denominator has to include the turns that got it right, or the
+    rate is a count of failures wearing a percentage sign."""
+    from moc.evals.runner import checks_from_verdict
+
+    checks = {
+        c.metric: c
+        for c in checks_from_verdict(_verdict(grounding=3), reply="الرسوم 2000 جنيه")
+    }
+    assert checks["hallucinated_figure_rate"].passed
+    assert not checks["hallucinated_figure_rate"].skipped
+
+
+def test_a_partially_grounded_reply_is_not_a_figure_failure():
+    """Grounding 1 is an unsupported claim that is NOT a figure — the rubric
+    says so. Only 0 reaches this gate."""
+    from moc.evals.runner import checks_from_verdict
+
+    checks = {
+        c.metric: c
+        for c in checks_from_verdict(
+            _verdict(grounding=1, meets_rubric=False), reply="الرسوم 2000 جنيه"
+        )
+    }
+    assert checks["hallucinated_figure_rate"].passed

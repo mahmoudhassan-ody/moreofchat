@@ -257,6 +257,25 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         else:
             print("  Every measured metric settled within the configured bar.")
         print(f"{'-' * 68}")
+        # The two producers of `hallucinated_figure_rate`, split. The
+        # deterministic one sees every turn that stated a figure; the judge
+        # sees the subset that also cleared stage 1, and only it can catch a
+        # figure lifted from a passage and relabelled. How often that fires is
+        # what decides whether a runtime claim-citation pass is worth its
+        # latency.
+        for name in ("hallucinated_figure", "figure_labelling"):
+            fed = [
+                c
+                for o in runs[-1]
+                for t in o.turns
+                for c in t.checks
+                if c.name == name and not c.skipped
+            ]
+            failed = [c for c in fed if not c.passed]
+            print(
+                f"  {name:20} {len(failed)}/{len(fed)} failed, run {times} of {times}"
+            )
+        print(f"{'-' * 68}")
         # Compositions the RUNTIME gate discarded (§19.3). These never reached
         # a customer, so they cannot count against `hallucinated_figure_rate`
         # — but how often the model tried, and on which figure, is the signal
