@@ -45,7 +45,7 @@ from typing import Any, Protocol
 
 from moc.arabic.numerals import extract_quantities, normalize_digits
 from moc.config_store import load
-from moc.llm.base import Message, Role, Task
+from moc.llm.base import Completion, Message, Role, Task
 
 _CONFIG = "agent/figure_audit"
 _PROMPTS = Path(__file__).parent / "prompts"
@@ -83,6 +83,12 @@ class FigureAudit:
     #: tells those apart, and without it a skipped guard reads as a clean one.
     checked: int = 0
     degraded: bool = False
+    #: The call that produced this verdict, for the ledger. None when no call
+    #: was made — a reply with no figure, or a provider that never answered.
+    #: Carried rather than metered here because this module has no session and
+    #: no tenant, and a ledger write outside the caller's transaction would
+    #: survive a turn that rolled back.
+    completion: Completion | None = None
 
 
 async def audit_figures(
@@ -119,12 +125,15 @@ async def audit_figures(
     if claims is None:
         # An auditor that returned prose has not audited anything. Same class
         # as an outage: a harness fault, not a finding.
-        return FigureAudit(passed=True, degraded=True)
+        return FigureAudit(passed=True, degraded=True, completion=completion)
 
     haystack = normalize_digits("\n\n".join(material))
     unsupported = [claim for claim in claims if not _supported(claim, haystack)]
     return FigureAudit(
-        passed=not unsupported, unsupported=unsupported, checked=len(claims)
+        passed=not unsupported,
+        unsupported=unsupported,
+        checked=len(claims),
+        completion=completion,
     )
 
 

@@ -47,6 +47,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.composition import render_composition
+from moc.agent.figure_audit import FigureAudit, audit_figures
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
 from moc.agent.replies import Voice, refusal
 from moc.agent.script_engine import ScriptEngine
@@ -134,6 +135,11 @@ class TurnResult:
     #: clarification that had nothing to offer from one that had options and
     #: did not use them — the reply text says the same thing either way.
     titles: tuple[str, ...] = ()
+    #: §19.3's claim-level verdict. None on a turn that never composed. Kept
+    #: even when it passed, and `degraded` on it is the part that matters: an
+    #: audit that could not run and an audit that found nothing are the same
+    #: verdict with different meanings.
+    audit: FigureAudit | None = None
     #: §3.1's figures the script itself may state. Carried alongside
     #: `passages` because together they are the full source set the delivered
     #: reply is graded against — without them a scripted fee reads as an
@@ -256,7 +262,17 @@ class Orchestrator:
         grounding = check_numeric_grounding(
             completion.text, list(retrieval.passages), retrieval.script_constants
         )
-        if not grounding.passed:
+        # §19.3's second half. The first asks whether a number appeared in the
+        # material; this asks whether the material says that number is what the
+        # reply says it is. edu-0002 passed the first and failed the second:
+        # 1000 was in the retrieved set, as the fee for something else.
+        #
+        # It runs before the orphan branch so an audited turn is audited
+        # whatever else was wrong with it — but it cannot rescue one, and the
+        # `or` below is ordered so the deterministic verdict is reported when
+        # both fail. A figure with no source at all is the larger finding.
+        audit = await self._audit(session, completion, retrieval, channel)
+        if not grounding.passed or not audit.passed:
             # §19.3. The reply is discarded whole rather than edited: a sentence
             # containing one ungrounded figure is a sentence built around a fact
             # nobody can source, and stripping the number leaves a claim without
@@ -266,8 +282,9 @@ class Orchestrator:
                 redaction,
                 retrieval,
                 _GROUNDING_FAILED,
-                degraded=completion.degraded,
+                degraded=completion.degraded or audit.degraded,
                 grounding=grounding,
+                audit=audit,
                 completions=[completion],
             )
 
@@ -282,6 +299,7 @@ class Orchestrator:
             titles=tuple(retrieval.titles),
             script_constants=tuple(str(c) for c in retrieval.script_constants),
             grounding=grounding,
+            audit=audit,
             completions=[completion],
         )
 
@@ -339,6 +357,48 @@ class Orchestrator:
         )
         return completion
 
+    async def _audit(
+        self,
+        session: AsyncSession,
+        completion: Completion,
+        retrieval: Retrieval,
+        channel: str,
+    ) -> FigureAudit:
+        """§19.3's claim-level gate, metered.
+
+        The first figure gate asks whether a number appeared in the material;
+        this asks whether the material says that number is what the reply says
+        it is. edu-0002 passed the first and failed the second: 1000 was in the
+        retrieved set, as the fee for something else.
+        """
+        audit = await audit_figures(
+            router=self._router,
+            reply=completion.text,
+            # Script constants are material (§3.1). Auditing against passages
+            # alone would refuse every calculator result the real-estate agent
+            # produces, none of which sits in a chunk.
+            material=[
+                *retrieval.passages,
+                *(str(c) for c in retrieval.script_constants),
+            ],
+        )
+        # Metered here for the same reason composition is: an unmetered
+        # provider call is a cost that appears in no report, and this one runs
+        # on roughly two turns in three.
+        if audit.completion is not None:
+            await record_usage(
+                session,
+                kind=UsageKind.llm_call,
+                channel=channel,
+                model=audit.completion.model,
+                provider=audit.completion.provider,
+                input_tokens=audit.completion.input_tokens,
+                output_tokens=audit.completion.output_tokens,
+                cached_tokens=audit.completion.cached_tokens,
+                degraded=audit.completion.degraded,
+            )
+        return audit
+
     # ─────────────────────────── scripted replies ───────────────────────────
 
     @staticmethod
@@ -372,6 +432,7 @@ class Orchestrator:
         lang: str | None = None,
         degraded: bool = False,
         grounding: GroundingResult | None = None,
+        audit: FigureAudit | None = None,
         completions: list[Completion] | None = None,
         provider_unavailable: bool = False,
     ) -> TurnResult:
@@ -395,6 +456,7 @@ class Orchestrator:
             titles=tuple(retrieval.titles),
             script_constants=tuple(str(c) for c in retrieval.script_constants),
             grounding=grounding,
+            audit=audit,
             completions=completions or [],
             provider_unavailable=provider_unavailable,
         )

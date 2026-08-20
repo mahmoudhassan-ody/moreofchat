@@ -11,6 +11,7 @@ neutralizes the gate and proves the orphan figure would otherwise ship. A gate
 nobody has watched fail is a gate nobody knows is wired up.
 """
 
+import json
 from uuid import UUID
 
 import pytest
@@ -82,12 +83,18 @@ def build(
     slots: dict | None = None,
     passages: tuple[str, ...] = (PASSAGE,),
     titles: tuple[str, ...] = (),
+    constants: tuple[str, ...] = (),
+    audit: dict | None = None,
     fail_with: Exception | None = None,
     fail_primary: Exception | None = None,
 ) -> tuple[Orchestrator, FakeProvider, FakeProvider, FakeExtractor, FakeRetriever]:
+    # §19.3's claim-level audit is a second completion in the same turn, on a
+    # different model. Keyed by model rather than mocked away, so the wiring —
+    # which task, which material — is exercised rather than assumed.
     anthropic = FakeProvider(
         "anthropic",
         text=reply,
+        text_by_model={AUDIT_MODEL: json.dumps(audit or {"figures": []})},
         fail_with=fail_with or fail_primary,
         input_tokens=120,
         output_tokens=40,
@@ -111,7 +118,13 @@ def build(
         TurnInput(intent=intent, slots={"faculty": "engineering"} if slots is None else slots)
     )
     retriever = FakeRetriever(
-        router, Retrieval(passages=passages, titles=titles, confidence=confidence)
+        router,
+        Retrieval(
+            passages=passages,
+            titles=titles,
+            confidence=confidence,
+            script_constants=constants,
+        ),
     )
     orchestrator = Orchestrator(
         engine=ScriptEngine.from_config(SCRIPT),
@@ -151,8 +164,39 @@ def start_state() -> ConversationState:
     return ScriptEngine.from_config(SCRIPT).start()
 
 
+def _models_for(task: str) -> set[str]:
+    """Every model a task can land on, primary and failover.
+
+    Both, because a degraded turn runs on the other vendor and a helper that
+    knew only the primary would report "the composition never happened" for
+    exactly the turns failover exists to serve.
+    """
+    entry = load("llm/routing")["tasks"][task]
+    return {
+        entry[role]["model"] for role in ("primary", "failover") if entry.get(role)
+    }
+
+
+#: A turn now makes two completion calls on different models, and every test
+#: that reached for "the completion" started reading the figure audit instead.
+#: Selecting by task is what keeps each of them about what it says it is.
+COMPOSITION_MODELS = _models_for("answer_composition")
+AUDIT_MODELS = _models_for("figure_audit")
+AUDIT_MODEL = load("llm/routing")["tasks"]["figure_audit"]["primary"]["model"]
+
+
 def composition_calls(provider: FakeProvider) -> list[dict]:
-    return [c for c in provider.calls if c["kind"] == "complete"]
+    return [
+        c
+        for c in provider.calls
+        if c["kind"] == "complete" and c["model"] in COMPOSITION_MODELS
+    ]
+
+
+def audit_calls(provider: FakeProvider) -> list[dict]:
+    return [
+        c for c in provider.calls if c["kind"] == "complete" and c["model"] in AUDIT_MODELS
+    ]
 
 
 def language_directive(provider: FakeProvider) -> str:
@@ -411,7 +455,11 @@ async def test_a_failover_turn_is_logged_degraded_on_the_ledger(app_engine, two_
     assert result.action is Action.answer, "the customer still gets an answer"
     assert result.reply == GROUNDED_REPLY
     assert result.degraded is True
-    assert rows == [("openai", True)]
+    # Both provider calls the turn made — composition and the §19.3 audit —
+    # and both on the failover, both flagged. A row per call, because "which
+    # calls degraded" is the question the flag exists to answer, and one row
+    # standing for two would hide a turn where only half failed over.
+    assert rows == [("openai", True), ("openai", True)]
     assert composition_calls(anthropic), "the primary must have been tried first"
     assert composition_calls(openai)
 
@@ -889,6 +937,124 @@ async def test_the_composition_prompt_carries_the_script_s_referral(turn_session
         channel=CHANNEL,
     )
     referral = ScriptEngine.from_config(SCRIPT).referral("ar")
-    assert any(referral in (call.get("system") or "") for call in anthropic.calls), (
+    assert any(
+        referral in (call.get("system") or "") for call in composition_calls(anthropic)
+    ), (
         "the composition call did not carry the script's referral"
     )
+
+
+# ───────── §19.3's second figure gate, on the turn path ─────────
+
+
+async def test_a_relabelled_figure_is_not_sent(turn_session):
+    """edu-0002's shape. The figure IS in the retrieved set, so the
+    deterministic gate passes it; what the material never says is that this
+    number is what the reply calls it.
+
+    The outcome is the same as an orphan figure — the composition is discarded
+    whole and a human takes the turn — because the customer-visible difference
+    between "a fee we invented" and "a fee for something else" is nothing.
+    """
+    from moc.config_store import load as _load
+
+    orchestrator, *_ = build(
+        reply="رسوم التقديم 500 جنيه مصري",
+        passages=("رسوم تغيير المسار 500 جنيه مصري",),
+        audit={"figures": [{"figure": "500", "claim": "رسوم التقديم", "span": None}]},
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="رسوم التقديم كام؟",
+        channel=CHANNEL,
+    )
+
+    assert result.action is Action.handoff
+    assert result.reply == _load("agent/replies")["replies"]["grounding_failed"]["msa"]
+    assert "500" not in result.reply
+
+
+async def test_a_correctly_labelled_figure_is_sent(turn_session):
+    """The control. A gate that refuses everything is not a gate."""
+    orchestrator, *_ = build(
+        reply="رسوم التقديم 2000 جنيه مصري",
+        passages=("رسوم التقديم 2000 جنيه مصري",),
+        audit={
+            "figures": [
+                {
+                    "figure": "2000",
+                    "claim": "رسوم التقديم",
+                    "span": "رسوم التقديم 2000 جنيه مصري",
+                }
+            ]
+        },
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="رسوم التقديم كام؟",
+        channel=CHANNEL,
+    )
+    assert result.action is Action.answer
+    assert "2000" in result.reply
+
+
+async def test_the_audit_sees_the_script_constants_too(turn_session):
+    """§3.1: a figure the script states is as sourced as a retrieved one, and
+    more directly. Auditing against passages alone would refuse every
+    calculator result the real-estate agent produces."""
+    orchestrator, anthropic, *_ = build(
+        reply="القسط 302343 جنيه",
+        passages=(),
+        constants=("302343",),
+        audit={"figures": []},
+    )
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text="القسط كام؟", channel=CHANNEL,
+    )
+    audited = audit_calls(anthropic)
+    assert audited, "the audit did not run on a composed reply stating a figure"
+    prompt = audited[0]["messages"][0].content
+    # Before the reply, not anywhere in the prompt. The reply states the same
+    # figure, so "302343 is in the prompt" is true whether or not the constant
+    # was passed as material — the first version of this assertion survived
+    # deleting the constants entirely.
+    material = prompt.split("القسط 302343 جنيه")[0]
+    assert "302343" in material, "the calculator output was not offered as material"
+
+
+async def test_the_audit_call_reaches_the_ledger(two_tenants, app_engine):
+    """A provider call nobody meters is a cost that appears in no report.
+
+    The audit is one extra completion per composed figure turn, on the
+    customer-facing path — roughly 12 of 19 turns in the education suite. At
+    $0.00069 each it is small and it is not nothing, and the reason to record
+    it is not the money: an unmetered call is invisible when someone asks why
+    a tenant's bill moved.
+    """
+    tenant, _ = two_tenants
+    orchestrator, *_ = build(
+        reply="رسوم التقديم 2000 جنيه مصري",
+        passages=("رسوم التقديم 2000 جنيه مصري",),
+        audit={
+            "figures": [
+                {
+                    "figure": "2000",
+                    "claim": "رسوم التقديم",
+                    "span": "رسوم التقديم 2000 جنيه مصري",
+                }
+            ]
+        },
+    )
+    async with tenant_session(app_engine, tenant.id) as s:
+        await orchestrator.handle(
+            session=s, state=start_state(), text="رسوم التقديم كام؟", channel=CHANNEL
+        )
+        await s.commit()
+        models = [
+            row[0]
+            for row in (
+                await s.execute(
+                    sql("SELECT model FROM usage_ledger WHERE kind = 'llm_call'")
+                )
+            ).all()
+        ]
+
+    assert AUDIT_MODEL in models, "the audit call was never metered"

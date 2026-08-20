@@ -32,9 +32,15 @@ class FakeProvider:
         output_tokens: int = 0,
         cached_tokens: int = 0,
         stop_reason: str | None = None,
+        text_by_model: dict[str, str] | None = None,
     ) -> None:
         self.name = name
         self.text = text
+        #: Per-model overrides, for a turn that makes more than one completion
+        #: call. Keyed by model because that is what a provider is actually
+        #: told — a task is a routing concept and never reaches this layer, so
+        #: keying on one here would test a mapping the provider cannot see.
+        self.text_by_model = text_by_model or {}
         #: Raised instead of answering. Set to a ProviderUnavailable to exercise
         #: failover; set to anything else to prove failover does *not* happen.
         self.fail_with = fail_with
@@ -91,7 +97,7 @@ class FakeProvider:
         )
         self._maybe_fail("complete")
         return Completion(
-            text=self.text,
+            text=self.text_by_model.get(model, self.text),
             provider=self.name,
             model=model,
             input_tokens=self.input_tokens,
