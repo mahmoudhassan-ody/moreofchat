@@ -443,7 +443,13 @@ class InventoryAgent:
         """
         known = slots.get("unit_id") or quoted
         if known:
-            return await self._repository.get(str(known))
+            unit = await self._repository.get(str(known))
+            if unit is not None:
+                return unit
+            # An id that matches nothing is an extraction slip, not a dead end.
+            # re-0007 gave `unit_id: 95` — the area in square metres — and
+            # returning None here handed off a question whose compound was
+            # sitting in the same turn.
         if not slots.get("compound"):
             return None
         units = await self._repository.search(

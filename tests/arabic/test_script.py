@@ -80,3 +80,59 @@ def test_script_counts_exposes_the_tally():
     counts = script_counts("مرحبا hello")
     assert counts["ar"] == len("مرحبا")
     assert counts["en"] == len("hello")
+
+
+# ─────────────────────────── franco is not English ───────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "3ayez sha22a fel tagamo3 el 5ames b 6 melion",
+        "ana 3ayez sha22a fe el sa7el",
+        "3andokom eh fe el sa7el?",
+    ],
+)
+def test_franco_arabic_is_detected_as_arabic_not_english(text):
+    """Franco is Arabic typed on a Latin keyboard, and mirroring it as English
+    is worse than not mirroring at all.
+
+    re-0016 is `3ayez sha22a fel tagamo3 el 5ames b 6 melion`. The reply came
+    back "We have a apartment in HDP North…" because the message is
+    Latin-script and the scripted-reply path had just learned to mirror
+    language. A customer writing franco reads Arabic.
+    """
+    from moc.arabic.script import is_franco, reply_language
+
+    assert is_franco(text)
+    assert reply_language(text) == "ar"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "In any other location",
+        "Is the unit registered and does the developer have a valid licence?",
+        "Can I see unit A3 please",
+    ],
+)
+def test_english_stays_english(text):
+    """Including one with a letter-adjacent digit. A single `A3` is a unit
+    reference, not franco — the signal is several such tokens, because franco
+    substitutes digits for consonants throughout rather than once."""
+    from moc.arabic.script import is_franco, reply_language
+
+    assert not is_franco(text)
+    assert reply_language(text) == "en"
+
+
+def test_arabic_script_is_arabic():
+    from moc.arabic.script import reply_language
+
+    assert reply_language("عايز شقة في التجمع") == "ar"
+
+
+def test_a_message_with_no_letters_has_no_reply_language():
+    from moc.arabic.script import reply_language
+
+    assert reply_language("١٢٣ ؟!") is None

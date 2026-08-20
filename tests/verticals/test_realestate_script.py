@@ -366,3 +366,26 @@ def test_find_same_type_elsewhere_offers_no_way_to_change_the_type():
         "include_other_types",
         "relax",
     }
+
+
+async def test_a_unit_id_that_matches_nothing_falls_back_to_the_compound(repo):
+    """An extraction slip must degrade, not hand off.
+
+    re-0007 gave `unit_id: 95` — the area in square metres — and the id lookup
+    missed, so a question the catalogue could answer went to a human. The
+    compound was right there in the same turn.
+    """
+    from moc.verticals.realestate.agent import InventoryAgent
+
+    agent = InventoryAgent(repository=repo, engine=None, extractor=None)
+    unit = await agent._resolve_unit({"unit_id": "95", "compound": "Madinaty"})
+
+    assert unit is not None
+    assert unit.compound == "Madinaty"
+
+
+async def test_a_unit_id_that_matches_nothing_and_no_compound_is_still_none(repo):
+    from moc.verticals.realestate.agent import InventoryAgent
+
+    agent = InventoryAgent(repository=repo, engine=None, extractor=None)
+    assert await agent._resolve_unit({"unit_id": "95"}) is None

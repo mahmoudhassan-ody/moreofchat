@@ -177,6 +177,66 @@ def test_a_catalogue_value_with_no_alias_is_offered_bare():
     assert "Stei8ht" in line and "Stei8ht (" not in line, "no empty brackets"
 
 
+async def test_a_slot_may_hold_two_values_when_the_customer_named_two():
+    """re-0018 turn 3: `الشيخ زايد أو أكتوبر`.
+
+    The prompt now tells the model that `أو` means both, so it returns a list
+    — and validation rejected the list *as a value*, which turned a correct
+    extraction into an errored case. Every element is checked; the list is
+    kept.
+    """
+    extractor = LlmSlotExtractor(
+        router=FakeRouter(
+            '{"intent": "inventory_lookup", '
+            '"slots": {"city": ["Sheikh Zayed", "New Cairo"]}}'
+        ),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    turn = await extractor.extract(text="x", state=state())
+    assert turn.slots == {"city": ["Sheikh Zayed", "New Cairo"]}
+
+
+async def test_one_bad_value_in_a_list_still_fails_the_turn():
+    """A list is not a way past the vocabulary."""
+    extractor = LlmSlotExtractor(
+        router=FakeRouter(
+            '{"intent": "inventory_lookup", "slots": {"city": ["Sheikh Zayed", "Zamalek"]}}'
+        ),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    with pytest.raises(ExtractionFailed, match="Zamalek"):
+        await extractor.extract(text="x", state=state())
+
+
+async def test_an_empty_list_is_not_said_rather_than_malformed():
+    extractor = LlmSlotExtractor(
+        router=FakeRouter('{"intent": "inventory_lookup", "slots": {"city": []}}'),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    turn = await extractor.extract(text="x", state=state())
+    assert turn.slots == {}
+
+
+def test_a_free_slot_says_what_it_is_for():
+    """`unit_id` rendered as "exactly as the customer wrote it" and nothing
+    else, so the model filled it with the first number in the sentence:
+    `شقة مدينتي 95 متر` gave `unit_id: '95'` — 95 square metres. The lookup
+    then missed and the turn handed off a question the catalogue could answer.
+
+    The description is config, next to the slot, because what a free slot
+    holds is a vertical's business.
+    """
+    prompt = render_prompt(
+        script=REALESTATE, message="x", held_slots={}, catalogue=CATALOGUE
+    )
+    line = next(ln for ln in prompt.splitlines() if ln.startswith("- unit_id:"))
+    assert "catalogue reference" in line
+    assert "area" in line or "size" in line
+
+
 def test_a_city_is_never_offered_as_a_compound():
     """`locations.yaml`'s `kind` map exists for this. Filtering `city` with a
     compound name returns nothing and reads as "no inventory"."""

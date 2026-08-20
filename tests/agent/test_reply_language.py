@@ -58,3 +58,13 @@ def test_every_scripted_reply_carries_an_english_form(document):
         if isinstance(entry, dict) and not entry.get("english")
     ]
     assert missing == [], f"no English wording for: {missing}"
+
+
+def test_a_franco_message_is_answered_in_arabic():
+    """re-0016. Franco is Latin script and Arabic language, so mirroring the
+    script is the wrong mirror — the reply came back in English."""
+    from moc.agent.replies import Voice
+
+    voice = Voice.of(Register.masri, "3ayez sha22a fel tagamo3 el 5ames b 6 melion")
+    assert voice.lang == "ar"
+    assert voice.say(ENTRY) == "أهلاً"

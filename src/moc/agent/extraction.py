@@ -148,6 +148,15 @@ def slot_aliases(
     return resolved
 
 
+def slot_descriptions(script: str) -> dict[str, str]:
+    """A slot's own `describe:`, where the script gives one."""
+    return {
+        slot: " ".join(spec["describe"].split())
+        for slot, spec in _slot_specs(script).items()
+        if spec.get("describe")
+    }
+
+
 def _forms(spec: dict[str, Any]) -> tuple[str, ...]:
     """Arabic first, then Latin. The file's order, not sorted: the lists are
     maintained commonest-first and that is the order worth showing."""
@@ -190,14 +199,22 @@ def _intents(script: str) -> tuple[str, ...]:
 
 
 def _describe(
-    vocabulary: dict[str, Any], aliases: dict[str, dict[str, tuple[str, ...]]]
+    vocabulary: dict[str, Any],
+    aliases: dict[str, dict[str, tuple[str, ...]]],
+    describe: dict[str, str] | None = None,
 ) -> str:
+    describe = describe or {}
     lines = []
     for slot, allowed in sorted(vocabulary.items()):
         if allowed is INTEGER:
             lines.append(f"- {slot}: an integer, no separators or units")
         elif allowed is FREE:
-            lines.append(f"- {slot}: exactly as the customer wrote it")
+            # The script's own description, because "exactly as the customer
+            # wrote it" says nothing about *what* — and the model filled
+            # `unit_id` with the first number in the sentence, which was an
+            # area in square metres.
+            gloss = describe.get(slot) or "exactly as the customer wrote it"
+            lines.append(f"- {slot}: {gloss}")
         else:
             known = aliases.get(slot, {})
             lines.append(
@@ -241,6 +258,7 @@ def render_prompt(
             _describe(
                 slot_vocabulary(script, catalogue=catalogue),
                 slot_aliases(script, catalogue=catalogue),
+                slot_descriptions(script),
             ),
         )
     )
@@ -343,7 +361,7 @@ class LlmSlotExtractor:
         vocabulary = slot_vocabulary(self._script, catalogue=self._catalogue)
         clean: dict[str, Any] = {}
         for slot, value in raw.items():
-            if value is None or (isinstance(value, str) and not value.strip()):
+            if value == [] or value is None or (isinstance(value, str) and not value.strip()):
                 # An explicit null or an empty string is "not said", reported
                 # the JSON way rather than by omission. Well-formed, and not
                 # the same thing as a response that cannot be read — only the
@@ -359,15 +377,28 @@ class LlmSlotExtractor:
                 clean[slot] = _as_int(slot, value)
             elif allowed is FREE:
                 clean[slot] = str(value)
-            elif value in allowed:
+            elif isinstance(value, list):
+                # A customer naming two cities with `أو` is widening the
+                # search, not correcting themselves — see the prompt's
+                # correction rule. Every element is checked, so a list is not
+                # a way past the vocabulary.
+                for one in value:
+                    _require_known(slot, one, allowed)
                 clean[slot] = value
             else:
-                raise ExtractionFailed(
-                    f"{slot}={value!r} is outside the configured vocabulary; a value "
-                    f"the resolver cannot parse back filters nothing and reads as "
-                    f"absent stock rather than as an error"
-                )
+                _require_known(slot, value, allowed)
+                clean[slot] = value
         return clean
+
+
+def _require_known(slot: str, value: Any, allowed: tuple[str, ...]) -> None:
+    if value in allowed:
+        return
+    raise ExtractionFailed(
+        f"{slot}={value!r} is outside the configured vocabulary; a value the "
+        f"resolver cannot parse back filters nothing and reads as absent stock "
+        f"rather than as an error"
+    )
 
 
 def _as_int(slot: str, value: Any) -> int:

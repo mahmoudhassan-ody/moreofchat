@@ -15,6 +15,7 @@ Design doc §19 applies here as it does to numerals.py: the codepoint ranges are
 lexicon data, not literals. Two tests in tests/arabic/test_script.py enforce it.
 """
 
+import re
 from functools import lru_cache
 
 from moc.config_store import load
@@ -56,3 +57,54 @@ def detect_language(text: str) -> str | None:
     counts = script_counts(text)
     best = max(counts, key=lambda language: counts[language])
     return best if counts[best] else None
+
+
+#: Digits franco substitutes for Arabic consonants — hamza/qaf, ain, kha, ha,
+#: ghain, sad. Named rather than written, because §19 keeps Arabic literals
+#: out of this module and the lexicon is where letters live.
+#:
+#: They are also ordinary digits, which is why the rule below needs one to sit
+#: against a letter *inside* a word: `sha22a` is franco, `6 melion` is a price.
+_FRANCO_DIGITS = "2345789"
+
+#: How many franco-marked tokens a message needs before it reads as franco.
+#: One is a unit reference — `A3`, `B2` — and franco substitutes throughout
+#: rather than once, so two is the honest floor.
+_FRANCO_TOKENS = 2
+
+
+def is_franco(text: str) -> bool:
+    """Arabic typed on a Latin keyboard.
+
+    Detected by digits standing in for consonants *inside* words: `3ayez`,
+    `sha22a`, `tagamo3`, `5ames`. Not by vocabulary — a franco lexicon would
+    have the same coverage problem the location aliases had, and the
+    substitution pattern is the thing that generalises.
+    """
+    if detect_language(text) != "en":
+        return False
+    marked = 0
+    for token in re.split(r"[^0-9A-Za-z]+", text):
+        if len(token) < 2 or not any(c.isalpha() for c in token):
+            continue
+        if any(
+            char in _FRANCO_DIGITS
+            and any(neighbour.isalpha() for neighbour in _neighbours(token, index))
+            for index, char in enumerate(token)
+        ):
+            marked += 1
+    return marked >= _FRANCO_TOKENS
+
+
+def _neighbours(token: str, index: int) -> tuple[str, ...]:
+    return tuple(token[i] for i in (index - 1, index + 1) if 0 <= i < len(token))
+
+
+def reply_language(text: str) -> str | None:
+    """Which language a reply to `text` should be written in.
+
+    Not the same question as `detect_language`, and conflating them cost
+    re-0016 its language check: franco is Latin script and Arabic language,
+    so the script the customer typed in is the wrong thing to mirror.
+    """
+    return "ar" if is_franco(text) else detect_language(text)

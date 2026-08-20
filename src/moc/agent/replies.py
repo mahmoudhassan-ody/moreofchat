@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from moc.agent.state import Register
-from moc.arabic.script import detect_language
+from moc.arabic.script import reply_language
 
 #: The wording key an English turn takes, whatever register the node declares.
 _ENGLISH = "english"
@@ -58,7 +58,10 @@ class Voice:
 
     @classmethod
     def of(cls, register: Register, message: str) -> Voice:
-        return cls(register=register, lang=detect_language(message))
+        # `reply_language`, not `detect_language`: franco is Latin script and
+        # Arabic language, and mirroring the script answers a franco customer
+        # in English.
+        return cls(register=register, lang=reply_language(message))
 
     def say(self, entry: dict[str, Any]) -> str:
         return scripted(entry, self.register, lang=self.lang)

@@ -55,6 +55,13 @@ slots:
     values: [sale, rent]
   unit_id:
     free: true
+    # Described, because "exactly as the customer wrote it" says nothing about
+    # what. Without this the model put the first number in the sentence here —
+    # `شقة مدينتي 95 متر` gave `unit_id: 95`, which is an area — the lookup
+    # missed, and a question the catalogue could answer handed off.
+    describe: >
+      a catalogue reference the customer is quoting back, like NOOR-CIT-002-02.
+      Never an area, a size in metres, a price, a floor or a count.
 
 nodes:
   # re-0001, re-0002, re-0021, re-0022, re-0023.
