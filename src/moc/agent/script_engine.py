@@ -66,6 +66,14 @@ class ScriptEngine:
         # connector both see the state the customer actually left behind.
         state = state.with_slots(turn.slots, turn.cleared)
         node_name = self._by_intent.get(turn.intent or "", _FALLBACK_NODE)
+        if turn.intent is None and turn.cleared and state.node in self._script["nodes"]:
+            # "In any other location" carries no intent of its own — it is the
+            # previous request minus a filter, which is why the model reports
+            # null. Falling back on it asks the customer to clarify a question
+            # they narrowed one word ago. Only a clearing turn continues: an
+            # unreadable message must still fall back, or every one of them
+            # would silently re-run the last search.
+            node_name = state.node
         node = self._script["nodes"][node_name]
 
         if turn.explicit_handoff_request:

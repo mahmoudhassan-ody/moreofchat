@@ -142,7 +142,18 @@ def _where(query: UnitQuery) -> tuple[str, dict[str, Any]]:
         ("property_type", query.property_type),
         ("bedrooms", query.bedrooms),
     ):
-        if value is not None:
+        if value is None or value == []:
+            # An empty list is the absence of a filter, not a filter on
+            # nothing. A slot the extractor cleared must not turn into zero
+            # rows, which reads as "we have no stock".
+            continue
+        if isinstance(value, list | tuple):
+            # `أو` means either — re-0018 asks for Sheikh Zayed or October.
+            # `= ANY` rather than an expanded IN list so the parameter stays
+            # one bind and nothing here builds SQL out of values.
+            clauses.append(f"{column} = ANY(:{column})")
+            params[column] = list(value)
+        else:
             clauses.append(f"{column} = :{column}")
             params[column] = value
 

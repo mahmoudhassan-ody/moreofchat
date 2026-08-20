@@ -571,3 +571,36 @@ def test_clearing_a_slot_that_was_never_held_is_not_an_error():
         turn(intent="inventory_lookup", slots={"compound": "Mivida"}, cleared=("city",)),
     )
     assert decision.action is Action.answer
+
+
+def test_clearing_a_slot_continues_the_turn_it_is_clearing_from():
+    """re-0001 turn 3. "In any other location" carries no intent of its own —
+    it is the previous request minus a filter, and the model reports
+    `intent: null` for exactly that reason.
+
+    Falling back on it asks the customer to clarify a question they narrowed
+    one word ago. Clearing a slot IS a continuation; there is nothing else it
+    could be.
+    """
+    engine = realestate()
+    state = engine.advance(
+        engine.start(),
+        turn(intent="inventory_lookup", slots={"city": "New Cairo", "property_type": "villa"}),
+    ).state
+
+    decision = engine.advance(state, turn(intent=None, slots={}, cleared=("city",)))
+    assert decision.node == "inventory_lookup"
+    assert decision.action is Action.answer
+
+
+def test_a_bare_null_intent_still_falls_back():
+    """Only a clearing turn continues. A message the model could not read at
+    all is a fallback, or every unreadable turn would re-run the last search.
+    """
+    engine = realestate()
+    state = engine.advance(
+        engine.start(), turn(intent="inventory_lookup", slots={"city": "New Cairo"})
+    ).state
+
+    decision = engine.advance(state, turn(intent=None, slots={}))
+    assert decision.node == "fallback"

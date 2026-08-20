@@ -76,10 +76,16 @@ JSON only. One object, no code fence, no prose before or after:
 
 `clear_slots` names slots the customer has moved OFF. It is not the same as
 leaving a slot out: an absent slot means they did not mention it and whatever
-is held still applies. "In any other location", "somewhere else", "في مكان
-تاني", "مشروع تاني" all mean the held location no longer applies — clear
-`city` and `compound` and keep everything else. Never name a slot in both
-`slots` and `clear_slots`.
+is held still applies.
+
+- "In any other location", "somewhere else", "في مكان تاني", "مشروع تاني" mean
+  the held location no longer applies. Clear `city` and `compound`. **Clear
+  nothing else** — they still want the same kind of unit, the same number of
+  bedrooms and the same budget, and dropping those turns a narrowed search
+  into a blank one.
+- A slot must never appear in both `slots` and `clear_slots`. If the customer
+  just stated it, it belongs in `slots` and nowhere else. Do not restate a
+  held slot in order to clear another one; leave it out and it survives.
 
 `explicit_handoff_request` is true only when the customer asks for a person —
 "عايز أكلم حد", "حولني لموظف". Frustration is not a request; asking the same

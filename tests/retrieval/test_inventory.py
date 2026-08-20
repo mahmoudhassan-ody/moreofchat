@@ -408,6 +408,39 @@ async def test_the_vocabulary_is_availability_filtered_like_every_other_read(rep
     assert "_where" in source, "the vocabulary read must share the one predicate"
 
 
+async def test_a_slot_holding_two_values_filters_on_either(repo):
+    """re-0018: `الشيخ زايد أو أكتوبر`.
+
+    The "or" rule makes the extractor return a list, and the list reached this
+    module as a scalar bind — asyncpg rejected it outright, so a correct
+    extraction became an errored case. Two cities means either city.
+    """
+    repository, _ = repo
+    units = await repository.search(
+        UnitQuery(city=["Sheikh Zayed", "October"], limit=50)
+    )
+
+    assert units, "both cities are stocked"
+    assert {u.city for u in units} <= {"Sheikh Zayed", "October"}
+    assert len({u.city for u in units}) == 2, "not just the first one"
+
+
+async def test_a_one_element_list_behaves_like_the_scalar(repo):
+    repository, _ = repo
+    listed = await repository.search(UnitQuery(city=["October"], limit=50))
+    scalar = await repository.search(UnitQuery(city="October", limit=50))
+    assert {u.unit_id for u in listed} == {u.unit_id for u in scalar}
+
+
+async def test_an_empty_list_is_not_a_filter_that_matches_nothing(repo):
+    """An empty list is the absence of a filter, not a filter on nothing —
+    otherwise a slot the extractor cleared would return zero units and read as
+    "we have no stock"."""
+    repository, _ = repo
+    units = await repository.search(UnitQuery(city=[], limit=5))
+    assert units
+
+
 async def _one_with_availability(repository, availability: str) -> str:
     """A unit id with a given availability, read straight from the fixture."""
     import json
