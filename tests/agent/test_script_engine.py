@@ -503,6 +503,7 @@ def test_the_narrowing_slots_are_config_not_a_literal():
         "property_type",
         "bedrooms",
         "budget_max",
+        "near_price",
     ]
     import inspect
 

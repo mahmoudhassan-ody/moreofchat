@@ -208,6 +208,7 @@
         - "any figure not present in the calculator output"
         - "an instalment computed by dividing the price in the reply"
         - "an interest rate — the fixture states zero"
+      expected_slots: {compound: "Noor City", near_price: 6500000}
 
     - user: "و لو زودت المقدم لـ ٤٠٪؟"
       expected_action: handoff
@@ -227,6 +228,13 @@
     parse as 6,500,000 (half-value handling) even though the unit is
     6,450,000, so the price given is approximate and the reply must use the
     catalogue's.
+
+    `بـ ٦ مليون و نص` is the customer identifying WHICH unit, not a ceiling:
+    `near_price`, never `budget_max`. Read as a ceiling it selects the first
+    Noor City unit under 6.5M — a 2,930,000 studio — and quotes a correct
+    instalment for a unit nobody asked about. re-0024 is the same sentence in
+    the other direction, and the pair is the point: `expected_slots` is an
+    equality assertion, so each case fails if the other slot is filled.
 
     Turn 2 was re-0006, a separate case whose own note said "the unit_id slot
     must survive from re-0005" — which it could not, because nothing preceded
@@ -754,6 +762,60 @@
     the region and the second half must still name a compound —
     "no studio on the North Coast, we have one in <compound>". A city-level
     alternative would leave the customer with nowhere to go.
+
+- id: re-0024
+  vertical: realestate
+  source: synthetic
+  category: inventory_lookup
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "شقة في نور سيتي في حدود ٦ مليون و نص"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {compound: "Noor City", property_type: apartment, budget_max: 6500000}
+      expected_facts:
+        - id: f1
+          claim: "an available Noor City apartment at or below 6,500,000"
+          required: true
+        - id: f2
+          claim: "its price as listed"
+          required: true
+      forbidden_claims:
+        - "any unit above 6,500,000 presented as a match"
+        - "NOOR-CIT-002-01 — sold"
+        - "an instalment schedule; the customer asked what is available, not how to pay"
+      expected_slots:
+        {compound: "Noor City", property_type: apartment, budget_max: 6500000}
+  gold_chunks: []
+  notes: >
+    Added 2026-08-20, the ceiling half of the pair with re-0005 turn 1. The two
+    sentences differ by three words — `الوحدة في نور سيتي بـ ٦ مليون و نص`
+    against `شقة في نور سيتي في حدود ٦ مليون و نص` — and mean different
+    things. `في حدود` is a budget, `بـ` after a definite unit is that unit's
+    price, and the customer is naming which row they mean.
+
+    Both directions matter and they fail differently. A ceiling read as an
+    identifier quotes one unit when the customer wanted the range; an
+    identifier read as a ceiling quotes a 2,930,000 studio to someone asking
+    about a 6,450,000 apartment, and the reply looks entirely normal.
+
+    `expected_slots` is compared for equality, so this case fails if
+    `near_price` is filled and re-0005 fails if `budget_max` is — neither
+    needs a separate assertion for the confusion.
+
+    Noor City holds four rows: a sold 3,900,000 apartment, the 6,450,000
+    apartment, a 15,800,000 townhouse and a 2,930,000 studio. Only the
+    6,450,000 one is an available apartment inside the ceiling, so the
+    availability filter and the type filter both have to hold for this to
+    pass.
 
 - id: re-0023
   vertical: realestate

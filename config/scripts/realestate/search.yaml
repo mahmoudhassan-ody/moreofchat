@@ -49,8 +49,25 @@ slots:
     column: compound
   bedrooms:
     type: integer
+  # Two price slots, one preposition apart in Masri, meaning different things.
+  # `في حدود ٦ مليون` is a ceiling; `الوحدة بـ ٦ مليون` is the customer naming
+  # which row they mean. Read the second as the first and the agent quotes a
+  # 2,930,000 studio to someone asking about a 6,450,000 apartment — with a
+  # correct instalment, so the reply looks entirely normal.
   budget_max:
     type: integer
+    describe: >
+      the most the customer will pay — a ceiling that filters. Marked by
+      في حدود، لحد، ميزانيتي، تحت, or "up to", "my budget is", "under".
+      Not the price of a unit they are already asking about; that is near_price.
+  near_price:
+    type: integer
+    describe: >
+      the price the customer quotes for a unit they are already discussing, to
+      say WHICH one they mean. Marked by naming the unit and then its price —
+      الوحدة بـ، الشقة بـ، اللي بـ, or "the unit at", "the one at". It filters
+      nothing. If they are stating a budget rather than pointing at a unit,
+      that is budget_max.
   listing_kind:
     values: [sale, rent]
   unit_id:
@@ -93,7 +110,7 @@ nodes:
     # out of 305 units. re-0023 names only a compound and is still answered;
     # `listing_kind: sale` alone narrows to everything the broker sells, and
     # asks.
-    requires_any_slot: [city, compound, property_type, bedrooms, budget_max]
+    requires_any_slot: [city, compound, property_type, bedrooms, budget_max, near_price]
     grounding: required
     clarify:
       register: masri

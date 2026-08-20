@@ -134,7 +134,7 @@ def test_slot_vocabulary_is_resolved_from_the_script():
 
 CATALOGUE = {
     "city": ("New Cairo", "North Coast", "Sheikh Zayed"),
-    "compound": ("Creek Town", "Jefaira", "SouthMED", "Stei8ht"),
+    "compound": ("Creek Town", "Jefaira", "Noor City", "SouthMED", "Stei8ht"),
 }
 
 
@@ -143,7 +143,13 @@ def test_the_location_vocabulary_is_the_catalogue_not_a_config_list():
     read from the same place. They were two lists and one held ten of
     ninety-four compounds — see tests/arabic/test_location_coverage.py."""
     vocabulary = slot_vocabulary(REALESTATE, catalogue=CATALOGUE)
-    assert vocabulary["compound"] == ("Creek Town", "Jefaira", "SouthMED", "Stei8ht")
+    assert vocabulary["compound"] == (
+        "Creek Town",
+        "Jefaira",
+        "Noor City",
+        "SouthMED",
+        "Stei8ht",
+    )
     assert vocabulary["city"] == ("New Cairo", "North Coast", "Sheikh Zayed")
 
 
@@ -218,6 +224,42 @@ async def test_an_empty_list_is_not_said_rather_than_malformed():
     )
     turn = await extractor.extract(text="x", state=state())
     assert turn.slots == {}
+
+
+async def test_a_stated_unit_price_is_a_different_slot_from_a_budget():
+    """`near_price` identifies WHICH unit; `budget_max` filters.
+
+    `الوحدة في نور سيتي بـ ٦ مليون و نص` read as a ceiling picks the first
+    Noor City unit under it — a 2,930,000 studio — and quotes a correct
+    instalment for a unit nobody asked about. The connector has resolved by
+    nearest stated price since the calculator landed; the slot simply was not
+    in the vocabulary, so nothing could ever fill it.
+    """
+    extractor = LlmSlotExtractor(
+        router=FakeRouter(
+            '{"intent": "payment_plan", '
+            '"slots": {"compound": "Noor City", "near_price": 6500000}}'
+        ),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    turn = await extractor.extract(text="x", state=state())
+    assert turn.slots == {"compound": "Noor City", "near_price": 6500000}
+
+
+def test_both_price_slots_are_described_and_contrasted():
+    """They are one preposition apart in Masri, so the prompt has to draw the
+    line rather than leave it to inference — and it has to draw it in both
+    directions, because reading a ceiling as an identifier is just as wrong."""
+    prompt = render_prompt(
+        script=REALESTATE, message="x", held_slots={}, catalogue=CATALOGUE
+    )
+    near = next(ln for ln in prompt.splitlines() if ln.startswith("- near_price:"))
+    ceiling = next(ln for ln in prompt.splitlines() if ln.startswith("- budget_max:"))
+
+    assert "في حدود" in ceiling, "the phrase that marks a ceiling"
+    assert "الوحدة" in near, "the phrase that marks a specific unit"
+    assert "budget" in near or "ceiling" in near, "each names the other to contrast"
 
 
 def test_a_free_slot_says_what_it_is_for():

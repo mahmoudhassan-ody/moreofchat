@@ -207,7 +207,12 @@ def _describe(
     lines = []
     for slot, allowed in sorted(vocabulary.items()):
         if allowed is INTEGER:
-            lines.append(f"- {slot}: an integer, no separators or units")
+            # Every slot may carry its own gloss. "an integer" is true of
+            # `budget_max` and `near_price` alike and distinguishes nothing,
+            # and they are one preposition apart in Masri.
+            gloss = describe.get(slot)
+            suffix = f" — {gloss}" if gloss else ""
+            lines.append(f"- {slot}: an integer, no separators or units{suffix}")
         elif allowed is FREE:
             # The script's own description, because "exactly as the customer
             # wrote it" says nothing about *what* — and the model filled

@@ -186,3 +186,50 @@ async def test_live_the_realestate_suite_produces_a_report(live_runner, capsys):
     assert len(runs) == times
     assert all(len(outcomes) == len(cases) for outcomes in runs)
     assert spreads["overall_accuracy"].attempts == times
+
+
+CEILING = "شقة في نور سيتي في حدود ٦ مليون و نص"
+IDENTIFIER = "الوحدة في نور سيتي بـ ٦ مليون و نص، القسط كام؟"
+
+
+async def test_live_the_two_price_slots_are_not_confused_in_either_direction(
+    live_runner, capsys
+):
+    """`budget_max` and `near_price`, one preposition apart, N runs each.
+
+    A ceiling read as an identifier quotes one unit when the customer wanted a
+    range. An identifier read as a ceiling quotes a 2,930,000 studio to
+    someone asking about a 6,450,000 apartment — with a correct instalment, so
+    the reply looks entirely normal. Both directions, because a prompt that
+    fixes one by leaning on the other has fixed nothing.
+
+    Measured rather than assumed: if the model cannot hold this at temperature
+    0 the honest outcome is a number in the report, not another prompt edit.
+    """
+    extractor = live_runner._agent._extractor
+    times = default_runs()
+    results: dict[str, list[dict]] = {CEILING: [], IDENTIFIER: []}
+
+    for message in (CEILING, IDENTIFIER):
+        for _ in range(times):
+            turn = await extractor.extract(
+                text=message, state=ScriptEngine.from_config(SCRIPT).start()
+            )
+            results[message].append(dict(turn.slots))
+
+    with capsys.disabled():
+        print(f"\n{'=' * 68}")
+        print(f"  PRICE SLOT DISCRIMINATION — {times} runs each")
+        print(f"{'=' * 68}")
+        for message, runs in results.items():
+            print(f"  {message}")
+            for index, slots in enumerate(runs, 1):
+                print(f"    run {index}: {slots}")
+        print(f"{'=' * 68}")
+
+    for slots in results[CEILING]:
+        assert slots.get("budget_max") == 6_500_000, "a ceiling is budget_max"
+        assert "near_price" not in slots, "and never the identifier"
+    for slots in results[IDENTIFIER]:
+        assert slots.get("near_price") == 6_500_000, "a quoted unit price is near_price"
+        assert "budget_max" not in slots, "and never the ceiling"
