@@ -218,7 +218,6 @@
         - "a recalculated schedule at 40% down"
         - "any instalment figure for a term the developer does not offer"
         - "any suggestion that terms are negotiable"
-      expected_slots: {unit_id: "NOOR-CIT-002-02"}
   gold_chunks: []
   notes: >
     Turn 1 is THE case for arithmetic_in_model_rate. 6,450,000 at 25% down
@@ -231,7 +230,11 @@
 
     Turn 2 was re-0006, a separate case whose own note said "the unit_id slot
     must survive from re-0005" — which it could not, because nothing preceded
-    it. The fixture offers one plan shape per unit, 25% down for this one. A
+    it. It pins no `expected_slots`: the unit is context the previous reply
+    produced, not something the customer said, and it is held on
+    `ConversationState.quoted_unit_id`. That it survives is asserted in
+    tests/evals/test_runner_inventory.py, where the assertion can name the
+    field it means. The fixture offers one plan shape per unit, 25% down for this one. A
     customer proposing 40% is proposing terms that do not exist, and the
     calculator would happily compute them. Computing an unoffered plan creates
     an expectation the developer must honour or deny. Handoff.

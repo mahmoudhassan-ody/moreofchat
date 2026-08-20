@@ -511,3 +511,28 @@ def test_the_narrowing_slots_are_config_not_a_literal():
     source = inspect.getsource(script_engine)
     for slot in ("compound", "budget_max"):
         assert f'"{slot}"' not in source, f"{slot} is named in the engine"
+
+
+def test_every_state_field_survives_a_turn():
+    """The engine rebuilt `ConversationState` field by field, so a field added
+    later was dropped on every turn — silently, back to its default. Asserted
+    structurally rather than by listing fields, which is the same mistake."""
+    import dataclasses
+    import inspect
+
+    from moc.agent import script_engine
+
+    source = inspect.getsource(script_engine)
+    assert source.count("ConversationState(") == 1, (
+        "only `start` may construct one; everywhere else must use `replace`, "
+        "or the next field added to the state is dropped the same way"
+    )
+    engine = ScriptEngine.from_config(SCRIPT)
+    start = engine.start()
+    seeded = dataclasses.replace(start, quoted_unit_id="SOME-UNIT-1")
+
+    decision = engine.advance(seeded, turn(intent="fees", slots={"faculty": "dentistry"}))
+    assert decision.state.quoted_unit_id == "SOME-UNIT-1"
+
+    clarified = engine.advance(seeded, turn(intent=None))
+    assert clarified.state.quoted_unit_id == "SOME-UNIT-1"

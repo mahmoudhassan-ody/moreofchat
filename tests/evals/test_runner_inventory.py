@@ -398,3 +398,81 @@ async def test_the_villa_turn_and_re_0021_produce_the_two_distinct_shapes(runner
     none_anywhere = await case_runner.run_case(by_id["re-0021"])
     assert str(none_anywhere.turns[0].action) == "handoff"
     assert not none_anywhere.turns[0].named_compounds, "nothing to name, so name nothing"
+
+
+# ─────────────────── staleness and delivery (re-0008, re-0009) ───────────────────
+
+
+async def test_a_price_validity_question_is_answered_with_the_snapshot_date(runner):
+    """re-0008. "السعر ده لسه ساري؟"
+
+    "Yes, still valid" is a commitment the broker must honour or deny. The
+    honest answer is the date the data is current as of — which the agent has
+    and, until now, had no node to say it from: the turn matched nothing and
+    fell through to handoff, so the suite's only two staleness cases both
+    failed on `action` and then on `asof_disclosure` downstream of it.
+    """
+    case_runner, _ = runner
+    outcome = await case_runner.run_case(next(c for c in cases() if c.id == "re-0008"))
+    turn = outcome.turns[0]
+
+    assert str(turn.action) == "answer"
+    assert "2026-08-01" in turn.reply
+    assert not turn.presented_unit_ids, "no unit is being quoted, so none is presented"
+
+
+async def test_the_price_validity_answer_promises_nothing(runner):
+    """The forbidden claim is a guarantee, not a date."""
+    case_runner, _ = runner
+    outcome = await case_runner.run_case(next(c for c in cases() if c.id == "re-0008"))
+    reply = outcome.turns[0].reply
+    for promise in ("مضمون", "ثابت", "guaranteed", "fixed"):
+        assert promise not in reply, f"the reply promises {promise!r}"
+
+
+async def test_a_delivery_question_with_a_unit_in_hand_answers_from_the_row(runner):
+    """The delivery date is a catalogue value like a price, so it comes from
+    the row and never from the model."""
+    case_runner, _ = runner
+    from dataclasses import replace
+
+    from moc.agent.script_engine import ScriptEngine
+
+    state = replace(
+        ScriptEngine.from_config(SCRIPT).start(), quoted_unit_id="NOOR-CIT-002-02"
+    )
+    result = await case_runner._agent.handle(state=state, text="التسليم امتى؟")
+
+    assert str(result.action) == "answer"
+    assert "2026-08-01" in result.reply, "as_of travels with every inventory reply"
+    assert "NOOR-CIT-002-02" in result.presented_unit_ids
+
+
+async def test_a_delivery_question_with_no_unit_asks_which_one(runner):
+    """There are 305 delivery dates in the catalogue. Answering with one of
+    them is the same failure as answering a bare browse with one studio —
+    see `requires_any_slot`."""
+    case_runner, _ = runner
+    result = await case_runner._agent.handle(
+        state=ScriptEngine.from_config(SCRIPT).start(), text="التسليم امتى؟"
+    )
+    assert str(result.action) == "clarify"
+
+
+async def test_a_presented_unit_is_held_for_the_next_turn(runner):
+    """What makes a follow-up answerable at all.
+
+    re-0005 turn 2 asserts `unit_id` survives from turn 1, and "when's
+    delivery?" is only answerable because the turn before it quoted a unit.
+    A conversation that forgets what it just quoted forces the customer to
+    repeat themselves — F5, and the reason `slot_retention_accuracy` exists.
+    """
+    case_runner, _ = runner
+    outcome = await case_runner.run_case(next(c for c in cases() if c.id == "re-0005"))
+
+    assert outcome.turns[0].state.quoted_unit_id == "NOOR-CIT-002-02"
+    assert outcome.turns[1].state.quoted_unit_id == "NOOR-CIT-002-02"
+    assert "unit_id" not in outcome.turns[0].state.slots, (
+        "context, not a slot — a case's expected_slots must not have to name "
+        "whichever unit the agent happened to quote"
+    )

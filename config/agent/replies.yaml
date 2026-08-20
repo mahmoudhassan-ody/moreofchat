@@ -107,3 +107,17 @@ ask_for_slot:
     masri: "حضرتك بتسأل عن أنهي كلية؟"
     msa: "عن أي كلية تستفسر؟"
     english: "Which faculty are you asking about?"
+
+  # re-0009's clarification. Never "which unit id" — a customer does not know
+  # one and asking for it reads as a form. The compound and the type are what
+  # they said in the first place.
+  unit_id:
+    masri: "بتسأل عن أنهي وحدة بالظبط؟ قوللي الكمبوند و نوع الوحدة و هجيبلك التفاصيل."
+    msa: "عن أي وحدة تستفسر؟ يرجى تحديد الكمبوند ونوع الوحدة."
+    english: "Which unit do you mean? Tell me the compound and the unit type and I'll pull the details."
+
+  # A browse question that narrowed nothing — see `requires_any_slot`.
+  property_type:
+    masri: "بتدوّر على إيه بالظبط؟ شقة، فيلا، استوديو؟ و في أنهي منطقة؟"
+    msa: "ما نوع الوحدة المطلوبة، وفي أي منطقة؟"
+    english: "What are you looking for — an apartment, a villa, a studio? And in which area?"

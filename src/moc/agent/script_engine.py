@@ -22,6 +22,7 @@ ask for the slot, not hand off for low confidence on a question nobody has
 finished asking yet.
 """
 
+from dataclasses import replace
 from typing import Any
 
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
@@ -184,21 +185,15 @@ class ScriptEngine:
             )
 
 
+# `replace`, never a field-by-field rebuild. Both of these used to list every
+# field of ConversationState, so `quoted_unit_id` — added later — was dropped on
+# every turn that passed through them. Nothing raised: the field simply reset to
+# its default, and a follow-up question stopped knowing which unit it was about.
 def _count_clarification(state: ConversationState, node: str) -> ConversationState:
-    return ConversationState(
-        script_id=state.script_id,
-        script_version=state.script_version,
-        node=node,
-        slots=state.slots,
-        consecutive_clarifications=state.consecutive_clarifications + 1,
+    return replace(
+        state, node=node, consecutive_clarifications=state.consecutive_clarifications + 1
     )
 
 
 def _reset_clarifications(state: ConversationState, node: str) -> ConversationState:
-    return ConversationState(
-        script_id=state.script_id,
-        script_version=state.script_version,
-        node=node,
-        slots=state.slots,
-        consecutive_clarifications=0,
-    )
+    return replace(state, node=node, consecutive_clarifications=0)

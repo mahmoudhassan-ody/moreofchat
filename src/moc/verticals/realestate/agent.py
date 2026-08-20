@@ -102,6 +102,8 @@ class KeywordSlotExtractor:
         ("negotiation", ("أقل سعر", "خصم", "كاش", "تخفيض", "أحسن سعر")),
         ("investment_projection", ("هتزيد", "قيمتها", "استثمار", "بعد سنتين", "عائد")),
         ("contracts", ("عقد", "تعاقد", "تمليك", "قانون")),
+        ("price_validity", ("لسه ساري", "ساري", "لسه بنفس السعر", "still valid")),
+        ("delivery_date", ("التسليم", "الاستلام", "تسليم", "handover", "delivery")),
         ("payment_plan", ("قسط", "أقسط", "تقسيط", "مقدم", "أقساط")),
         ("inventory_lookup", ("في", "عايز", "عندكم", "متاح", "شقة", "فيلا", "استوديو")),
     )
@@ -224,9 +226,80 @@ class InventoryAgent:
                 state=decision.state,
             )
 
+        if decision.node == "staleness":
+            return self._data_currency(decision, voice)
+        if decision.node == "delivery_date":
+            return await self._delivery_date(decision, slots, voice)
         if decision.node == "payment_plan":
             return await self._payment_plan(decision, slots, voice)
         return await self._lookup(decision, slots, voice)
+
+    # ─────────────────────────── staleness ───────────────────────────
+
+    def _data_currency(self, decision: Any, voice: Voice) -> InventoryTurn:
+        """re-0008. "Is this price still valid?"
+
+        "Yes" is a commitment somebody has to honour or deny, so the answer is
+        the date the data is current as of and who confirms the final price.
+        No unit is quoted, so none is presented — the snapshot date is a
+        property of the catalogue rather than of a row.
+        """
+        as_of = _snapshot_as_of(self._repository)
+        reply = _fill("data_currency", voice, as_of=as_of)
+        return InventoryTurn(
+            reply=reply,
+            action=Action.answer,
+            register=decision.register,
+            state=decision.state,
+            script_constants=_figures(reply),
+            as_of=as_of,
+        )
+
+    async def _delivery_date(
+        self, decision: Any, slots: dict[str, Any], voice: Voice
+    ) -> InventoryTurn:
+        """re-0009. The handover date is a catalogue value, read from the row.
+
+        Stated as the developer's schedule, never as a promise: fixture dates
+        run to 2030 and off-plan slippage is normal here, so certainty is a
+        claim about the future nobody can back.
+        """
+        known = decision.state.quoted_unit_id or slots.get("unit_id")
+        if not known:
+            # 305 delivery dates in the catalogue. Answering with one of them
+            # is the same failure as answering a bare browse with one studio.
+            return InventoryTurn(
+                reply=_ask_for("unit_id", voice),
+                action=Action.clarify,
+                register=decision.register,
+                state=decision.state,
+            )
+        unit = await self._repository.get(str(known))
+        if unit is None:
+            return InventoryTurn(
+                reply=_scripted("handoff", voice),
+                action=Action.handoff,
+                register=decision.register,
+                state=decision.state,
+            )
+        reply = _fill(
+            "delivery_date",
+            voice,
+            compound=unit.compound,
+            delivery_date=str(unit.delivery_date),
+            as_of=str(unit.as_of),
+        )
+        return InventoryTurn(
+            reply=reply,
+            action=Action.answer,
+            register=decision.register,
+            state=_holding(decision, unit),
+            tool_calls=(RecordedCall("inventory_lookup", {"unit_id": unit.unit_id}),),
+            presented_unit_ids=(unit.unit_id,),
+            named_compounds=(unit.compound,) if unit.compound else (),
+            script_constants=_figures(reply),
+            as_of=str(unit.as_of),
+        )
 
     # ─────────────────────────── inventory ───────────────────────────
 
@@ -283,7 +356,7 @@ class InventoryAgent:
             reply=reply,
             action=action,
             register=decision.register,
-            state=decision.state,
+            state=_holding(decision, alternative) if alternative else decision.state,
             tool_calls=(call,),
             named_compounds=(alternative.compound,) if alternative else (),
             presented_unit_ids=(alternative.unit_id,) if alternative else (),
@@ -294,7 +367,7 @@ class InventoryAgent:
     async def _payment_plan(
         self, decision: Any, slots: dict[str, Any], voice: Voice
     ) -> InventoryTurn:
-        unit = await self._resolve_unit(slots)
+        unit = await self._resolve_unit(slots, decision.state.quoted_unit_id)
         if unit is None:
             return InventoryTurn(
                 reply=_scripted("handoff", voice),
@@ -321,7 +394,7 @@ class InventoryAgent:
                 reply=reply,
                 action=Action.answer,
                 register=decision.register,
-                state=decision.state,
+                state=_holding(decision, unit),
                 tool_calls=(RecordedCall("inventory_lookup", {"compound": unit.compound}),),
                 presented_unit_ids=(unit.unit_id,),
                 named_compounds=(unit.compound,) if unit.compound else (),
@@ -343,7 +416,7 @@ class InventoryAgent:
             reply=reply,
             action=Action.answer,
             register=decision.register,
-            state=decision.state,
+            state=_holding(decision, unit),
             tool_calls=(call,),
             presented_unit_ids=(unit.unit_id,),
             named_compounds=(unit.compound,) if unit.compound else (),
@@ -353,10 +426,12 @@ class InventoryAgent:
         )
 
 
-    async def _resolve_unit(self, slots: dict[str, Any]) -> Any | None:
+    async def _resolve_unit(
+        self, slots: dict[str, Any], quoted: str | None = None
+    ) -> Any | None:
         """Which unit the customer means.
 
-        By id when a previous turn established one, otherwise by the compound
+        By id when a previous turn quoted one, otherwise by the compound
         they named and the price they quoted — re-0005 is "the unit in Noor
         City at six and a half million", which identifies a row without naming
         one. Nearest price rather than exact: customers round, and refusing to
@@ -366,8 +441,9 @@ class InventoryAgent:
         Still filtered. `get` and `search` both apply the availability
         predicate, so a sold unit cannot be resolved through this path either.
         """
-        if slots.get("unit_id"):
-            return await self._repository.get(slots["unit_id"])
+        known = slots.get("unit_id") or quoted
+        if known:
+            return await self._repository.get(str(known))
         if not slots.get("compound"):
             return None
         units = await self._repository.search(
@@ -408,7 +484,7 @@ def _answer(
         reply=reply,
         action=Action.answer,
         register=decision.register,
-        state=decision.state,
+        state=_holding(decision, unit),
         tool_calls=(call,),
         presented_unit_ids=(unit.unit_id,),
         named_compounds=(unit.compound,) if unit.compound else (),
@@ -423,6 +499,10 @@ def _fill(key: str, voice: Voice, **values: Any) -> str:
 
 def _scripted(key: str, voice: Voice) -> str:
     return voice.say(load(_REPLIES)["replies"][key])
+
+
+def _ask_for(slot: str, voice: Voice) -> str:
+    return voice.say(load(_REPLIES)["ask_for_slot"][slot])
 
 
 def _reply_key(decision: Any) -> str:
@@ -440,6 +520,19 @@ def _figures(reply: str) -> tuple[str, ...]:
     them — they are as sourced as a retrieved passage, and more directly.
     """
     return tuple(re.findall(r"[\d,]*\d", reply))
+
+
+def _holding(decision: Any, unit: Any) -> ConversationState:
+    """Remember the unit this turn quoted.
+
+    A conversation that forgets what it just showed forces the customer to
+    repeat themselves — F5, and what `slot_retention_accuracy` measures. It is
+    also what makes a follow-up answerable at all: "when's delivery?" and "and
+    at 40% down?" both name a unit only by having been preceded by one.
+    """
+    from dataclasses import replace
+
+    return replace(decision.state, quoted_unit_id=unit.unit_id)
 
 
 def _snapshot_as_of(repository: Any) -> str:

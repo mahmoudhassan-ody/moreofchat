@@ -92,6 +92,42 @@ nodes:
       register: masri
       ask_for_slot: property_type
 
+  # re-0008. MSA: what a price commits the broker to is an official statement.
+  #
+  # "Yes, still valid" is a commitment somebody has to honour or deny, so the
+  # node answers with the date the data is current as of and says prices are
+  # confirmed by the sales team. It needs no slot: the snapshot date is a
+  # property of the catalogue, not of a unit.
+  staleness:
+    intents: [price_validity, staleness, still_valid]
+    describe: >
+      whether a price or an offer still stands. السعر لسه ساري، لسه بنفس السعر، ده سعر النهاردة.
+    action: answer
+    register: msa
+    requires_slots: []
+    grounding: required
+
+  # re-0009. The delivery date is a catalogue value like a price — from the
+  # row, never from the model, and stated as the developer's schedule rather
+  # than as a promise. Fixture dates run to 2030 and off-plan slippage is
+  # normal here, so certainty is a claim about the future nobody can back.
+  #
+  # Requires a unit. There are 305 delivery dates in the catalogue and
+  # answering with one of them is the same failure as answering a bare browse
+  # with one arbitrary studio.
+  delivery_date:
+    intents: [delivery_date, handover]
+    describe: >
+      when a unit is handed over. التسليم امتى، الاستلام، موعد التسليم.
+    action: answer
+    register: msa
+    # Not `requires_slots: [unit_id]`. The unit is context the last reply
+    # produced, not something the customer said — see
+    # `ConversationState.quoted_unit_id` — so the agent asks when it has
+    # neither, and the engine has nothing to gate on.
+    requires_slots: []
+    grounding: required
+
   # re-0005, re-0006, re-0007. MSA: an instalment schedule is an official
   # statement, and the figures come from the calculator rather than the model.
   payment_plan:
@@ -178,6 +214,19 @@ replies:
     masri: "الوحدة دي في {compound} كاش بس، المشروع مكتمل. السعر {price} {currency}. البيانات محدّثة {as_of}."
     msa: "هذه الوحدة في {compound} متاحة نقدًا فقط لاكتمال المشروع. السعر {price} {currency}. البيانات محدثة بتاريخ {as_of}."
     english: "This unit in {compound} is cash only — the project is complete. Price {price} {currency}. Inventory current as of {as_of}."
+
+  # re-0008. No figure, and deliberately no reassurance: what the broker can
+  # stand behind is the date, and everything after it is who confirms.
+  data_currency:
+    masri: "البيانات اللي عندي محدّثة {as_of}. الأسعار ممكن تتغيّر، وفريق المبيعات بيأكّد السعر النهائي."
+    msa: "البيانات المتاحة محدثة بتاريخ {as_of}. الأسعار عرضة للتغيير، ويتم تأكيدها من خلال فريق المبيعات."
+    english: "My data is current as of {as_of}. Prices are subject to change and are confirmed by the sales team."
+
+  # re-0009. The date is the developer's schedule, said as such.
+  delivery_date:
+    masri: "التسليم للوحدة دي في {compound} متوقّع {delivery_date} حسب جدول المطوّر. البيانات محدّثة {as_of}."
+    msa: "موعد التسليم المعلن لهذه الوحدة في {compound} هو {delivery_date} وفقًا لجدول المطور. البيانات محدثة بتاريخ {as_of}."
+    english: "Handover for this unit in {compound} is scheduled for {delivery_date} per the developer. Inventory current as of {as_of}."
 
   # re-0005. Every figure comes from the calculator's output, which the gate
   # string-matches the reply against.

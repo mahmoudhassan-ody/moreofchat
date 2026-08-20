@@ -71,6 +71,18 @@ class ConversationState:
     node: str | None = None
     slots: dict[str, Any] = field(default_factory=dict)
     consecutive_clarifications: int = 0
+    #: The unit the last reply quoted. **Context, not a slot.**
+    #:
+    #: `slots` is what the customer said, and `expected_slots` in a case is an
+    #: equality assertion against it — so an agent writing its own bookkeeping
+    #: in there makes every case assert which unit we happened to pick, which
+    #: is neither stable nor anything the case means to test.
+    #:
+    #: It is still state that must survive the turn: "when's delivery?" and
+    #: "and at 40% down?" name a unit only by having been preceded by one, and
+    #: a conversation that forgets what it just showed makes the customer
+    #: repeat themselves (F5).
+    quoted_unit_id: str | None = None
 
     def with_slots(self, new: dict[str, Any]) -> ConversationState:
         """Merge newly extracted slots over the held ones.
@@ -87,6 +99,7 @@ class ConversationState:
             "node": self.node,
             "slots": self.slots,
             "consecutive_clarifications": self.consecutive_clarifications,
+            "quoted_unit_id": self.quoted_unit_id,
         }
 
     @classmethod
@@ -97,6 +110,7 @@ class ConversationState:
             node=record.get("node"),
             slots=record.get("slots") or {},
             consecutive_clarifications=record.get("consecutive_clarifications", 0),
+            quoted_unit_id=record.get("quoted_unit_id"),
         )
 
 
