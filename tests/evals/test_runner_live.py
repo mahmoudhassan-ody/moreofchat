@@ -151,7 +151,14 @@ async def corpus(app_engine, engine):
         tenant_id=tenant.id,
         vertical="education",
         points=[
-            VectorPoint(chunk_id=r["chunk_id"], vector=v, payload={"content": r["content"]})
+            VectorPoint(
+                chunk_id=r["chunk_id"],
+                vector=v,
+                # The title as well as the body. `titles` feeds the fallback
+                # clarification, and an arm that indexes only content answers
+                # first with a payload that has none.
+                payload={"content": r["content"], "title": r["title"]},
+            )
             for r, v in zip(records, vectors, strict=True)
         ],
     )

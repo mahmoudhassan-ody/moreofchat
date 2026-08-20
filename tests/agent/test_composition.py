@@ -258,3 +258,24 @@ def test_every_shipped_script_configures_a_referral():
         if not ScriptEngine.from_config(name).referral(lang)
     ]
     assert missing == [], f"no referral configured for: {sorted(set(missing))}"
+
+
+def test_the_referral_rule_says_when_the_sentence_must_not_appear():
+    """edu-0014. Told only "end with this sentence", the model read it as a
+    sign-off: a correct, grounded accreditation answer that then sent the
+    customer to student affairs for no reason, which the judge scored as an
+    unsupported claim because on that turn it was one.
+
+    A conditional instruction has to carry both branches, and this one is
+    read by a model that will otherwise pick the simpler reading.
+    """
+    system = render_composition(
+        message="الجامعة معتمدة؟",
+        register=Register.msa,
+        channel="whatsapp",
+        referral="اتواصل مع شئون الطلبة.",
+    )
+    rule = next(line for line in system.splitlines() if "اتواصل مع شئون الطلبة." in line)
+    assert "must not appear" in system[system.index(rule):], (
+        "the rule states when to include the sentence and never when not to"
+    )

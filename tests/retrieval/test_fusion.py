@@ -462,3 +462,21 @@ async def test_titles_are_empty_when_the_gate_closed():
     the gate leaking through a different field."""
     result = await fuse(query="q", dense=[], sparse=None, config=CONFIG)
     assert result.titles == ()
+
+
+async def test_payloads_merge_across_arms():
+    """The arms index different fields of the same chunk — the lexical
+    document carries `title`, the vector point carries `content` — so the
+    first arm to answer must not decide which fields survive.
+
+    `titles` read empty against the live corpus while every unit test passed,
+    because the dense arm answered first with a payload that has no title and
+    the lexical arm's was dropped whole. A feature can be correct, tested and
+    dead at the same time.
+    """
+    dense = [Candidate(chunk_id="a", rank=1, relevance=0.9, content="body",
+                       payload={"content": "body"})]
+    sparse = [Candidate(chunk_id="a", rank=1, relevance=0.8, content="body",
+                        payload={"title": "مواعيد الباصات؟"})]
+    result = await fuse(query="q", dense=dense, sparse=sparse, config=CONFIG)
+    assert result.titles == ("مواعيد الباصات؟",)

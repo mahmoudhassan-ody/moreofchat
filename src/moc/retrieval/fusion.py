@@ -206,8 +206,18 @@ def reciprocal_rank_fusion(
                 )
             if candidate.content and candidate.chunk_id not in contents:
                 contents[candidate.chunk_id] = candidate.content
-            if candidate.payload and candidate.chunk_id not in payloads:
-                payloads[candidate.chunk_id] = dict(candidate.payload)
+            if candidate.payload:
+                # Merged across arms, first writer wins per key. The arms
+                # describe the same chunk and index different fields of it —
+                # the lexical document carries `title`, the vector point
+                # carries `content` — so taking whichever arm answered first
+                # and discarding the other's keys loses whichever field that
+                # arm does not index. `titles` read empty in the live suite
+                # for exactly that reason, and the clarification it feeds was
+                # silently dead while every unit test passed.
+                merged = payloads.setdefault(candidate.chunk_id, {})
+                for key, value in candidate.payload.items():
+                    merged.setdefault(key, value)
 
     return [
         FusedHit(

@@ -86,6 +86,12 @@ def render_composition(
 def _referral_rule(referral: str | None) -> str:
     """The next-step sentence, or the instruction that stood before it.
 
+    The negative half is not padding. Given only "end with this sentence", the
+    model read it as a sign-off and appended it to an answered turn — edu-0014
+    stated the accreditation correctly and then sent the customer to student
+    affairs anyway, which the judge scored as an unsupported claim, because on
+    that turn it was one.
+
     Never the bare placeholder: a script whose author has not decided where
     unanswerable turns go must get the old behaviour, not `{referral}` in front
     of a customer.
@@ -93,8 +99,10 @@ def _referral_rule(referral: str | None) -> str:
     if not referral:
         return "Say what is missing and stop there."
     return (
-        "Say what is missing, then end the reply with exactly this sentence, "
-        f"unchanged: {referral}"
+        "Say what is missing, and only then end the reply with exactly this "
+        f"sentence, unchanged: {referral} "
+        "If the material does answer the question, that sentence must not "
+        "appear at all — it is not a sign-off."
     )
 
 
