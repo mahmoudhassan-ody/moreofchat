@@ -70,11 +70,14 @@ class RecordingRetriever:
     assertion rather than an assumption.
     """
 
-    def __init__(self, *, passages=(PASSAGE,), chunk_ids=("chunk-1",), confidence=0.9):
+    def __init__(
+        self, *, passages=(PASSAGE,), chunk_ids=("chunk-1",), confidence=0.9, titles=()
+    ):
         self.queries: list[str] = []
         self._passages = passages
         self._chunk_ids = chunk_ids
         self._confidence = confidence
+        self._titles = titles
 
     async def search(self, *, query: str) -> Retrieval:
         self.queries.append(query)
@@ -82,6 +85,7 @@ class RecordingRetriever:
             passages=self._passages,
             confidence=self._confidence,
             script_constants=(),
+            titles=self._titles,
         )
 
     async def chunk_ids_for(self, *, query: str) -> tuple[str, ...]:
@@ -801,3 +805,17 @@ def test_a_partially_grounded_reply_is_not_a_figure_failure():
         )
     }
     assert checks["hallucinated_figure_rate"].passed
+
+
+async def test_the_outcome_records_the_titles_the_turn_retrieved(session_tenant):
+    """A clarification that names nothing is either a node with no options or
+    a retrieval that returned none, and the reply text cannot tell those apart.
+
+    edu-0009 read as the first for two runs while it was the second: `titles`
+    was empty in the live path because the arms' payloads were not merged, and
+    the report had no field that would have shown it.
+    """
+    session, _ = session_tenant
+    run, _, _ = build(retriever=RecordingRetriever(titles=("مواعيد الباصات؟",)))
+    outcome = await run.run_case(a_case(), session=session)
+    assert outcome.turns[0].titles == ("مواعيد الباصات؟",)

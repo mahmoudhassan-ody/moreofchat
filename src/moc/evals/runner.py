@@ -90,6 +90,11 @@ class TurnOutcome:
     #: at 100% recall is either wrong or working on unusable passages, and
     #: those have opposite fixes.
     passages: tuple[str, ...] = ()
+    #: What those passages were about. A clarification that names nothing is
+    #: either a node with no options or a retrieval that returned none, and the
+    #: reply text cannot tell those apart — edu-0009 read as the first for two
+    #: runs while it was the second.
+    titles: tuple[str, ...] = ()
     checks: tuple[CheckResult, ...] = ()
     verdict: JudgeVerdict | None = None
 
@@ -242,6 +247,7 @@ class CaseRunner:
                     grounding=getattr(result, "grounding", None),
                     composed=_composed(result),
                     passages=tuple(getattr(result, "passages", ()) or ()),
+                    titles=tuple(getattr(result, "titles", ()) or ()),
                     checks=tuple(checks),
                     verdict=verdict,
                 )

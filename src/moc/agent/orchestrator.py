@@ -130,6 +130,10 @@ class TurnResult:
     degraded: bool = False
     redacted: tuple[str, ...] = ()
     passages: tuple[str, ...] = ()
+    #: What those passages were about. Carried so the harness can tell a
+    #: clarification that had nothing to offer from one that had options and
+    #: did not use them — the reply text says the same thing either way.
+    titles: tuple[str, ...] = ()
     #: §3.1's figures the script itself may state. Carried alongside
     #: `passages` because together they are the full source set the delivered
     #: reply is graded against — without them a scripted fee reads as an
@@ -275,6 +279,7 @@ class Orchestrator:
             degraded=completion.degraded,
             redacted=redaction.found,
             passages=tuple(retrieval.passages),
+            titles=tuple(retrieval.titles),
             script_constants=tuple(str(c) for c in retrieval.script_constants),
             grounding=grounding,
             completions=[completion],
@@ -387,6 +392,7 @@ class Orchestrator:
             degraded=degraded,
             redacted=redaction.found,
             passages=tuple(retrieval.passages),
+            titles=tuple(retrieval.titles),
             script_constants=tuple(str(c) for c in retrieval.script_constants),
             grounding=grounding,
             completions=completions or [],

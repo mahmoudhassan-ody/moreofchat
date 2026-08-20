@@ -27,7 +27,7 @@ from moc.agent.script_engine import ScriptEngine
 from moc.config_store import load
 from moc.evals.judge import Judge
 from moc.evals.load import load_cases
-from moc.evals.repeatability import default_runs, render_all, repeat, unmeasurable
+from moc.evals.repeatability import MetricSpread, default_runs, render_all, repeat, unmeasurable
 from moc.evals.runner import CaseRunner, metrics, summarize
 from moc.llm.anthropic_direct import AnthropicDirect
 from moc.llm.openai_direct import OpenAIDirect
@@ -262,7 +262,16 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             )
             print("  A delta smaller than the spread is not a result.")
         else:
-            print("  Every measured metric settled within the configured bar.")
+            # Measurability, never gate compliance. The previous wording —
+            # "settled within the configured bar" — read as "every gate
+            # passed" on a run where hallucinated_figure_rate sat at 8.1%
+            # against a zero-tolerance gate. A spread is how noisy a number
+            # is, not whether it is allowed.
+            print(
+                f"  Every metric's spread is under "
+                f"{MetricSpread.measurable_spread_pp()} points at this suite size."
+            )
+            print("  That is measurability, not gate compliance — read the values above.")
         print(f"{'-' * 68}")
         # The two producers of `hallucinated_figure_rate`, split. The
         # deterministic one sees every turn that stated a figure; the judge
@@ -332,6 +341,12 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
                 if not misses and not judged:
                     continue
                 print(f"        t{turn.turn_index} {turn.action}: {turn.reply[:220]!r}")
+                if turn.action == "clarify":
+                    # What the fallback had to offer. A clarification that
+                    # names nothing is either a node with no options or a
+                    # retrieval that returned none, and the reply text alone
+                    # cannot tell those apart.
+                    print(f"          retrieved titles: {list(turn.titles)}")
                 for check in misses:
                     print(f"          {check.name}: {check.detail[:110]}")
                 # The judge's own words. A case that passes every
