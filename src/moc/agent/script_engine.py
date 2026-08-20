@@ -62,6 +62,9 @@ class ScriptEngine:
 
     def advance(self, state: ConversationState, turn: TurnInput) -> Decision:
         self._require_pinned_version(state)
+        # Read against the state as it stood when the question was asked, so
+        # "did this turn answer it?" is decided before the answer is merged in.
+        resumed = self._resumed(state, turn)
         # Cleared before the node is chosen, so `requires_any_slot` and the
         # connector both see the state the customer actually left behind.
         state = state.with_slots(turn.slots, turn.cleared)
@@ -74,6 +77,8 @@ class ScriptEngine:
             # unreadable message must still fall back, or every one of them
             # would silently re-run the last search.
             node_name = state.node
+        elif resumed is not None:
+            node_name = resumed
         node = self._script["nodes"][node_name]
 
         if turn.explicit_handoff_request:
@@ -144,6 +149,35 @@ class ScriptEngine:
             state=_reset_clarifications(state, node_name),
             grounding_required=node.get("grounding") == "required",
         )
+
+    def _resumed(self, state: ConversationState, turn: TurnInput) -> str | None:
+        """The node that asked, when this turn is the answer to it.
+
+        edu-0007 turn 2 is the case: the clarification asked which branch, the
+        customer said `العريش`, and a bare slot value carries no intent because
+        there is no question in it to read one from. So it fell to `fallback`
+        and got the generic "ممكن توضّحلي أكتر". The slot survived — retention
+        never dropped — but the node did not, which left the clarification with
+        nothing missing to name and put §19's "name the missing thing" fix out
+        of reach of the one turn that needed it. The customer answered the
+        question and was asked to start over.
+
+        The discriminator is deliberately narrow: this turn filled a slot the
+        held node was *still waiting for*. Continuing on any slot-bearing turn
+        would make a topic change re-run the question the customer just left,
+        and repeating a slot the node already holds answers nothing. Both are
+        read against the pre-merge state, because after the merge every slot
+        looks held.
+        """
+        if turn.intent is not None or not turn.slots:
+            return None
+        node = self._script["nodes"].get(state.node or "")
+        if node is None:
+            return None
+        pending = (
+            set(node.get("requires_slots") or []) | set(node.get("requires_any_slot") or [])
+        ) - set(state.slots)
+        return state.node if pending & set(turn.slots) else None
 
     # ─────────────────────────── outcomes ───────────────────────────
 

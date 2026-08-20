@@ -635,3 +635,72 @@ def test_a_bare_null_intent_still_falls_back():
 
     decision = engine.advance(state, turn(intent=None, slots={}))
     assert decision.node == "fallback"
+
+
+# ───────── edu-0007 turn 2: answering the question that was asked ─────────
+
+
+def test_a_bare_slot_value_returns_to_the_node_that_asked_for_it(script):
+    """edu-0007 turn 2. The clarification asked which branch; the customer
+    said `العريش` and nothing else.
+
+    A bare slot value carries no intent — there is no question in it to read
+    one from — so it fell to `fallback` and got the generic
+    "ممكن توضّحلي أكتر عايز تعرف إيه بالظبط؟". The branch was retained
+    (`slot_retention_accuracy` stayed at 100%); the *node* was not, so the
+    clarification had no missing slots left to name and §19's "name the
+    missing thing" fix could not reach the turn at all. The judge scored it
+    helpfulness 0: the customer answered the question and was asked to start
+    over.
+    """
+    asked = script.advance(script.start(), turn(intent="admission_thresholds"))
+    assert asked.node == "admission_thresholds", "precondition: the node asked"
+
+    answered = script.advance(asked.state, turn(intent=None, slots={"branch": "arish"}))
+
+    assert answered.node == "admission_thresholds", "the node that asked was lost"
+    assert answered.action is Action.clarify
+    assert set(answered.missing_slots) == {"certificate", "faculty"}, (
+        "it must now ask for what is still missing, not for everything again"
+    )
+
+
+def test_returning_to_the_node_needs_a_slot_that_node_was_waiting_for(script):
+    """The discriminator is narrow on purpose.
+
+    Continuing on *any* slot-bearing turn would make a topic change re-run the
+    question the customer just left. `housing` needs nothing, so naming a
+    faculty at it is a new subject, not an answer — and the fallback is the
+    honest reading of a sentence with no intent and no pending question.
+    """
+    asked = script.advance(script.start(), turn(intent="housing"))
+    assert asked.action is Action.answer, "precondition: housing asks for nothing"
+
+    decision = script.advance(
+        asked.state, turn(intent=None, slots={"faculty": "engineering"})
+    )
+    assert decision.node == "fallback"
+
+
+def test_an_unreadable_turn_still_falls_back_even_mid_clarification(script):
+    """A message that filled no slot answered no question, whatever was
+    pending. This is the guard the `cleared` branch already carries, restated
+    for the branch beside it."""
+    asked = script.advance(script.start(), turn(intent="admission_thresholds"))
+    decision = script.advance(asked.state, turn(intent=None, slots={}))
+    assert decision.node == "fallback"
+
+
+def test_a_slot_the_node_already_held_does_not_resume_it(script):
+    """Repeating a slot answers nothing. `fees` asked for a faculty, got one,
+    and answered; saying the same faculty again is a new turn about it, not a
+    reply to a question nobody is still asking."""
+    answered = script.advance(
+        script.start(), turn(intent="fees", slots={"faculty": "dentistry"})
+    )
+    assert answered.action is Action.answer
+
+    decision = script.advance(
+        answered.state, turn(intent=None, slots={"faculty": "dentistry"})
+    )
+    assert decision.node == "fallback"
