@@ -604,3 +604,86 @@ async def test_a_rejected_composition_is_kept_for_the_report(session_tenant):
     assert "4500" in turn.composed, "the text the gate rejected"
     assert turn.composed != turn.reply, "the customer got the scripted reply"
     assert turn.passages, "and what it was checked against"
+
+
+# ─────────────── judge dimensions that had no gate (2026-08-20) ───────────────
+
+
+def _verdict(**overrides):
+    from moc.evals.judge import JudgeVerdict
+
+    base = {
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "grounding": 3,
+        "register": 3,
+        "helpfulness": 3,
+        "meets_rubric": True,
+    }
+    return JudgeVerdict(**{**base, **overrides})
+
+
+def test_the_judge_s_register_score_feeds_the_register_gate():
+    """`register_accuracy` is a soft gate in gates.yaml and read "not
+    measured" on every run the suite has ever produced — while the judge
+    scored register on every graded turn and the score was dropped at the
+    reporting boundary. §8.2 makes register a product requirement."""
+    from moc.evals.runner import checks_from_verdict
+
+    passing = {c.metric: c for c in checks_from_verdict(_verdict(register=3))}
+    assert passing["register_accuracy"].passed
+
+    failing = {c.metric: c for c in checks_from_verdict(_verdict(register=1))}
+    assert not failing["register_accuracy"].passed
+    assert "1" in failing["register_accuracy"].detail
+
+
+def test_the_register_floor_comes_from_the_judge_config():
+    """§19. The bar for "right register" is the rubric's, not a second one
+    invented here that could drift from it."""
+    from moc.config_store import load
+    from moc.evals.runner import checks_from_verdict
+
+    floor = load("evals/judge")["pass_thresholds"]["register"]
+    at_floor = {c.metric: c for c in checks_from_verdict(_verdict(register=floor))}
+    below = {c.metric: c for c in checks_from_verdict(_verdict(register=floor - 1))}
+
+    assert at_floor["register_accuracy"].passed
+    assert not below["register_accuracy"].passed
+
+
+def test_a_forbidden_claim_the_judge_caught_feeds_its_gate():
+    """Zero tolerance, and it read "not measured" while the judge was
+    printing violations two lines above it in the same report."""
+    from moc.evals.runner import checks_from_verdict
+
+    clean = {c.metric: c for c in checks_from_verdict(_verdict())}
+    assert clean["forbidden_claim_violations"].passed
+
+    caught = {
+        c.metric: c
+        for c in checks_from_verdict(
+            _verdict(forbidden_violated=("the Qantara figure",), meets_rubric=False)
+        )
+    }
+    assert not caught["forbidden_claim_violations"].passed
+    assert "Qantara" in caught["forbidden_claim_violations"].detail
+
+
+def test_a_malformed_verdict_grades_nothing():
+    """A judge that returned prose has not assessed the register. Counting its
+    zero as a register failure would report a judge outage as a quality
+    regression."""
+    from moc.evals.runner import checks_from_verdict
+
+    checks = {c.metric: c for c in checks_from_verdict(_verdict(malformed=True))}
+    assert all(c.skipped for c in checks.values())
+
+
+def test_a_turn_the_judge_never_saw_contributes_nothing():
+    """Stage 2 runs only when stage 1 passed. A turn that failed a
+    deterministic check has no verdict, and an absent verdict must not read as
+    a register pass."""
+    from moc.evals.runner import checks_from_verdict
+
+    assert checks_from_verdict(None) == []

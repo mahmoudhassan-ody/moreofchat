@@ -258,3 +258,28 @@ def test_markdown_records_the_config_hash_so_a_reader_can_check_pinning():
 def test_write_markdown_creates_the_file(tmp_path):
     path = write_markdown(build_report(run(), [case("a")]), tmp_path / "out.md")
     assert path.read_text(encoding="utf-8").startswith("#")
+
+
+def test_the_stage_two_gates_carry_their_coverage_limit_in_the_report():
+    """`register_accuracy` and `forbidden_claim_violations` are graded by the
+    judge, and the judge runs only on turns that passed stage 1.
+
+    Their denominators are therefore smaller than the suite's, and a reader
+    comparing 100% register against 49% accuracy is comparing two different
+    populations. Stated in the artifact rather than in a docstring nobody
+    reading the report will open.
+    """
+    from moc.evals.deterministic import CheckResult
+
+    report = build_report(
+        run(),
+        [
+            case("edu-1", checks=(CheckResult("register", "register_accuracy", True),)),
+            case("edu-2", passed=False),
+        ],
+    )
+    markdown = report.to_markdown()
+
+    assert "stage 1" in markdown
+    assert "register_accuracy" in markdown
+    assert "forbidden_claim_violations" in markdown

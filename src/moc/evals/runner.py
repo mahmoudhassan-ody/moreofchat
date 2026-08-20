@@ -224,6 +224,7 @@ class CaseRunner:
             retrieved = await self._retriever.chunk_ids_for(query=turn.user)
             checks = self._stage_one(turn, result)
             verdict = await self._stage_two(turn, result, checks)
+            checks.extend(checks_from_verdict(verdict))
             turns.append(
                 TurnOutcome(
                     turn_index=index,
@@ -407,6 +408,61 @@ def _recall_for(case: EvalCase, turns: Sequence[TurnOutcome]) -> float | None:
     return found / len(case.gold_chunks)
 
 
+def checks_from_verdict(verdict: JudgeVerdict | None) -> list[CheckResult]:
+    """The two §2.1 metrics the judge computes and the report used to discard.
+
+    `register_accuracy` and `forbidden_claim_violations` were declared in
+    `gates.yaml` and fed by nothing. Every run they printed "not measured" —
+    while the judge scored register on every graded turn, and returned
+    `forbidden_violated` non-empty twice in the same run that reported the
+    gate as unmeasured.
+
+    **Coverage limit, stated here because it belongs with the numbers:** stage
+    2 runs only on turns that passed stage 1, so these two are observed on a
+    subset of turns and their denominators are smaller than the suite's. A
+    turn that failed an action or language check has no verdict, and an absent
+    verdict contributes nothing rather than a pass.
+    """
+    if verdict is None:
+        return []
+    if verdict.malformed:
+        # A judge that returned prose has not assessed anything. Reading its
+        # default zero as a register failure reports a judge outage as a
+        # quality regression.
+        detail = "the judge's response could not be parsed"
+        return [
+            CheckResult("register", "register_accuracy", True, detail, skipped=True),
+            CheckResult(
+                "forbidden_claims",
+                "forbidden_claim_violations",
+                True,
+                detail,
+                skipped=True,
+            ),
+        ]
+
+    floor = load("evals/judge")["pass_thresholds"]["register"]
+    violated = verdict.forbidden_violated
+    return [
+        CheckResult(
+            name="register",
+            metric="register_accuracy",
+            passed=verdict.register >= floor,
+            detail=(
+                ""
+                if verdict.register >= floor
+                else f"judge scored register {verdict.register}, floor is {floor}"
+            ),
+        ),
+        CheckResult(
+            name="forbidden_claims",
+            metric="forbidden_claim_violations",
+            passed=not violated,
+            detail="" if not violated else "; ".join(violated),
+        ),
+    ]
+
+
 def _composed(result: Any) -> str:
     """What the model wrote, whether or not it was sent."""
     completions = getattr(result, "completions", ()) or ()
@@ -496,6 +552,7 @@ __all__ = [
     "CaseRunner",
     "RunSummary",
     "TurnOutcome",
+    "checks_from_verdict",
     "gate_directions",
     "metrics",
     "recall_at_k",

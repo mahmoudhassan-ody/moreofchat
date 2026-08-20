@@ -26,6 +26,22 @@ from moc.evals.deterministic import CheckResult
 from moc.evals.run_metadata import RunMetadata
 
 _GATES = "evals/gates"
+
+#: Which gates the judge feeds, and therefore which ones see fewer turns than
+#: the suite has. Stated in the artifact rather than in a docstring: a reader
+#: comparing a register rate against overall accuracy is comparing two
+#: different populations, and nothing in the table says so.
+_STAGE_TWO_GATES = ("register_accuracy", "forbidden_claim_violations")
+
+_STAGE_TWO_NOTE = (
+    "> **Coverage:** `"
+    + "` and `".join(_STAGE_TWO_GATES)
+    + "` are graded by the judge, which runs only on turns that passed stage 1."
+    " Their observation counts are therefore smaller than the suite's, and a"
+    " turn that failed a deterministic check contributes nothing to them"
+    " rather than a pass.",
+    "",
+)
 _PERCENT = 100.0
 
 
@@ -158,6 +174,7 @@ class Report:
             "",
             f"Tracked, never gated: {', '.join(self.tracked)}",
             "",
+            *_STAGE_TWO_NOTE,
             "## By category",
             "",
             "| Category | Passed | Total | Accuracy |",
