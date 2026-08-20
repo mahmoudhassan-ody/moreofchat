@@ -108,9 +108,21 @@ turn pins no required fact.
 turn, and that turn is edu-0012 — `expected_action_accuracy` is 94.7% with zero
 spread, so the suite holds one action-only failure and the guard now grades it.
 The judge scored its grounding 3: the reply named its figures as admission
-thresholds and said outright they were not tuition. **The relabelling class has
-zero observations over the population it is about**, which is the number a
-claim-level audit pass has to be worth more than.
+thresholds and said outright they were not tuition.
+
+**Then it fired (2026-08-20, later the same day).** `figure_labelling` 1/9 on
+edu-0002: the reply gave the 2000 EGP application fee correctly, then added
+`وفي حالة استخدام مكتب التقديم، تكون الرسوم 1000 جنيه مصري` — a second figure
+from an adjacent passage, presented as an alternative application fee. The
+deterministic check passed it, because 1000 is in the retrieved set; the judge
+scored grounding 0 and the case's own forbidden claim caught the same
+sentence. It is not stable across runs — edu-0002 changes verdict — so the rate
+reads 3.5% (0.0–5.6, n=3) rather than a fixed count.
+
+**That is the first observation of the class in the project's history**, and it
+arrived within hours of the guard that made it visible. The reading changes
+accordingly: a claim-level audit pass is no longer defending against a class
+with no evidence.
 
 ---
 
@@ -196,16 +208,32 @@ comparing two different systems measured by two different harnesses.
 | real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
 | real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
-| education | `overall_accuracy` | 58.8% (52.9–64.7) — spread 11.8, **not measurable at 17 cases** |
+| education | `overall_accuracy` | 72.5% (70.6–76.5) — spread 5.9, **measurable** |
 | education | `expected_action_accuracy` | 94.7% (94.7–94.7) |
 | education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
-| education | `register_accuracy` | 91.2% (89.5–94.7) |
-| education | `forbidden_claim_violations` | 14.0% (10.5–15.8) — **not measurable** |
+| education | `register_accuracy` | 98.2% (94.7–100.0) |
+| education | `forbidden_claim_violations` | 10.5% (5.3–15.8) — **not measurable** |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
-| education | `hallucinated_figure_rate` | 5.4% (0.0–11.1) — **not measurable** |
+| education | `hallucinated_figure_rate` | 3.5% (0.0–5.6) — **breaches its zero-tolerance gate** |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
 | education | `errored_rate` | 0.0% (0.0–0.0) |
+
+**Education re-measured 2026-08-20 after the four defects the non-answer facts
+exposed were fixed**: the node a bare slot value returns to, the fallback's
+option list, per-node refusals, and a composed reply that names where to ask.
+`overall_accuracy` is measurable for the first time — 5.9 points of spread
+against the 10-point bar — which is a bigger result than the level it settled
+at. `register_accuracy` reached 98.2%.
+
+Two of those four took a second pass, and both failures were the same shape:
+a change that was correct where it was tested and inert where it ran.
+`FusionRetriever` built every candidate without a payload, so the titles the
+new clarification reads were structurally empty in the only path that uses
+them — `fuse` and `FusionResult.titles` each passed their own tests while the
+feature was dead. And the referral, given as "end the reply with this
+sentence", was read as a sign-off and appended to two turns that had answered
+correctly.
 
 **The education rows above were re-measured 2026-08-20 after the non-answer
 facts landed, and they are a different assertion, not a later sample of the
