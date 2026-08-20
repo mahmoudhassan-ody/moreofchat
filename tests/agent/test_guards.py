@@ -165,3 +165,87 @@ def test_the_guard_would_notice_a_pattern_moved_into_source(tmp_path):
     planted = tmp_path / "leaky.py"
     planted.write_text('PATTERN = "\\\\d{14}"\n', encoding="utf-8")
     assert [s for s in _non_docstring_strings(planted) if "\\d" in s] != []
+
+
+# ────────────────── formatting is not arithmetic (2026-08-20) ──────────────────
+
+
+def test_a_decorated_hallucinated_figure_still_fails_the_gate():
+    """**The one that shipped a wrong fee.**
+
+    `hallucinated_figure_rate` is zero-tolerance and read 0.0% throughout,
+    because a figure with `**` welded to it was not a figure at all. The same
+    sentence without the asterisks was caught correctly, so the gate was doing
+    its job on every reply nobody had formatted.
+    """
+    from moc.agent.guards import check_numeric_grounding
+
+    result = check_numeric_grounding("الرسوم **3000** جنيه", ["رسوم التقديم 2000 جنيه"], [])
+
+    assert not result.passed
+    assert 3000 in result.orphan_numbers
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "الرسوم **3000** جنيه",
+        "الرسوم *3000* جنيه",
+        "الرسوم `3000` جنيه",
+        "الرسوم _3000_ جنيه",
+        "| الرسوم | 3000 |",
+        "**Fee: 3000 EGP**",
+    ],
+)
+def test_no_decoration_hides_a_figure(reply):
+    """Every character a model reaches for when it formats. The gate must see
+    through all of them, because the prompt asking for plain text is an
+    instruction and this is the guarantee."""
+    from moc.agent.guards import check_numeric_grounding
+
+    assert not check_numeric_grounding(reply, ["رسوم التقديم 2000 جنيه"], []).passed
+
+
+def test_a_decorated_grounded_figure_still_passes():
+    """Seeing through the decoration must not turn correct replies into
+    failures — that is the other half of the same bug."""
+    from moc.agent.guards import check_numeric_grounding
+
+    assert check_numeric_grounding("الرسوم **2000** جنيه", ["رسوم التقديم 2000 جنيه"], []).passed
+
+
+def test_a_list_marker_is_structure_not_a_claim():
+    """edu-0010: three application methods, numbered.
+
+    `## 1.` / `## 2.` / `## 3.` were read as the figures one, two and three,
+    every one of them an orphan, and a correct and fully-grounded answer was
+    discarded whole. The customer got "I need to verify this before telling
+    you" about a list of three ways to apply.
+    """
+    from moc.agent.guards import check_numeric_grounding
+
+    numbered = "في ثلاث طرق:\n1. الموقع\n2. الفروع\n3. المكتب"
+    assert check_numeric_grounding(numbered, ["ثلاث طرق"], []).passed
+
+    headed = "## 1. عن طريق الموقع\n## 2. في الفروع\n## 3. عن طريق المكتب"
+    assert check_numeric_grounding(headed, ["ثلاث طرق"], []).passed
+
+    parenthesised = "1) الموقع\n2) الفروع"
+    assert check_numeric_grounding(parenthesised, ["طرق"], []).passed
+
+
+def test_a_figure_that_merely_starts_a_line_is_still_a_claim():
+    """Only a marker — digits then `.` or `)` then the rest of the line — is
+    structure. A line that opens with the fee is a line stating the fee."""
+    from moc.agent.guards import check_numeric_grounding
+
+    assert not check_numeric_grounding("3000 جنيه رسوم التقديم", ["2000 جنيه"], []).passed
+
+
+def test_a_marker_digit_elsewhere_in_the_line_is_still_a_claim():
+    """`1. الرسوم 3000 جنيه` — the 1 is a marker, the 3000 is a claim."""
+    from moc.agent.guards import check_numeric_grounding
+
+    result = check_numeric_grounding("1. الرسوم 3000 جنيه", ["2000 جنيه"], [])
+    assert not result.passed
+    assert result.orphan_numbers == [3000], "the marker must not be counted"

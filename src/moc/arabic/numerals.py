@@ -63,6 +63,9 @@ class _Lexicon:
     separators: str
     group_size: int
     trim: str
+    list_markers: str
+    list_marker_max_digits: int
+    line_prefixes: str
     units: dict[str, int]
     fractions: dict[str, float]
     conjunctions: frozenset[str]
@@ -117,6 +120,9 @@ def _lexicon() -> _Lexicon:
         separators=separator_chars,
         group_size=separators["group_size"],
         trim="".join(c for c in raw["punctuation"]["trim"] if c not in separator_chars),
+        list_markers=raw["punctuation"]["list_markers"],
+        list_marker_max_digits=raw["punctuation"]["list_marker_max_digits"],
+        line_prefixes=raw["punctuation"]["line_prefixes"],
         units=units,
         fractions={_fold(k): v for k, v in raw["fractions"].items()},
         conjunctions=frozenset(_fold(w) for w in raw["conjunctions"]),
@@ -171,11 +177,14 @@ def extract_numbers(text: str) -> list[int | float]:
 def extract_quantities(text: str) -> list[Quantity]:
     """As extract_numbers, but tagged with what each figure is about."""
     lex = _lexicon()
-    tokens = normalize_digits(text).split()
+    tokens, markers = _tokenize(normalize_digits(text), lex)
     folded = [_fold(t.strip(lex.trim)) for t in tokens]
 
     quantities = []
     for index, token in enumerate(tokens):
+        if index in markers:
+            # A list marker numbers an item; it does not state an amount.
+            continue
         match = _number_pattern().fullmatch(token.strip(lex.trim))
         if match is None:
             continue
@@ -202,6 +211,41 @@ def extract_quantities(text: str) -> list[Quantity]:
 
 
 # ─────────────────────────────── parsing ───────────────────────────────
+
+
+def _tokenize(text: str, lex: _Lexicon) -> tuple[list[str], set[int]]:
+    """Whitespace tokens, plus the indices that are list markers.
+
+    Line-aware, which the previous whitespace split was not — and it has to be,
+    because "is this digit a claim?" is answered by where on the line it sits.
+    `1.` opening a line numbers an item; the same `1.` mid-sentence does not.
+    """
+    tokens: list[str] = []
+    markers: set[int] = set()
+    marker = _marker_pattern()
+    for line in text.splitlines():
+        line_tokens = line.split()
+        offset = len(tokens)
+        first = 0
+        while first < len(line_tokens) and _is_prefix(line_tokens[first], lex):
+            first += 1
+        if first < len(line_tokens) and marker.fullmatch(line_tokens[first]):
+            markers.add(offset + first)
+        tokens.extend(line_tokens)
+    return tokens, markers
+
+
+def _is_prefix(token: str, lex: _Lexicon) -> bool:
+    """A formatter's leading decoration — `##`, `-`, `>`. Never content."""
+    return bool(token) and all(c in lex.line_prefixes for c in token)
+
+
+@lru_cache(maxsize=1)
+def _marker_pattern() -> re.Pattern[str]:
+    lex = _lexicon()
+    return re.compile(
+        rf"\d{{1,{lex.list_marker_max_digits}}}[{re.escape(lex.list_markers)}]"
+    )
 
 
 def _is_franco_consonant(suffix: str, lex: _Lexicon) -> bool:

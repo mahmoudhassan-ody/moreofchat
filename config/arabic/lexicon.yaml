@@ -39,8 +39,31 @@ separators:
 
 # Shaved off a token before it is matched. Separators are excluded automatically,
 # so a trailing "." here never eats a decimal point.
+#
+# `*_`|~` were added on 2026-08-20 and they are not cosmetic. A model that
+# formats — and one did, every time, because there was no composition prompt —
+# writes `**3000**`, and a figure with an asterisk welded to it did not match
+# the number pattern at all. It was therefore not a figure, so
+# `hallucinated_figure_rate` read 0.0% while a wrong fee went out. The same
+# sentence without the asterisks was caught correctly, which is why nothing
+# looked broken.
 punctuation:
-  trim: "،؛,.;:!؟?()[]«»\"'"
+  trim: "،؛,.;:!؟?()[]«»\"'*_`|~"
+
+  # Digits that number a list rather than state an amount. `1.` and `2)` at
+  # the start of a line are structure — edu-0010 answered "three ways to
+  # apply" as a numbered list and the gate read one, two and three as three
+  # ungrounded figures, discarding a correct and fully-grounded reply.
+  #
+  # Only at the start of a line, only these two characters, and only a short
+  # run of digits: `1400.` opening a line is a fee, not the one-thousand-four-
+  # hundredth item.
+  list_markers: ".)"
+  list_marker_max_digits: 2
+
+  # Leading characters a formatter puts before the marker. Skipped over when
+  # looking for one, never treated as content.
+  line_prefixes: "#*->•—–\t "
 
 # ─────────────────────────────────────────────────────────────
 # Unit multipliers. Latin entries match case-insensitively.
