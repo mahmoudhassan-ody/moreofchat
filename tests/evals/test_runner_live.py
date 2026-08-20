@@ -14,6 +14,7 @@ structured-inventory connector, neither of which exists yet; running them now
 would report failures that measure the missing connector rather than quality.
 """
 
+import collections
 import os
 from pathlib import Path
 
@@ -220,6 +221,15 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
                 f"  run {len(runs)}/{times}: {summary.accuracy:.1%} "
                 f"({summary.passed}/{summary.scored} scored, {summary.errored} errored)"
             )
+            # Errors, distinctly and immediately. An errored case is an
+            # outage, not a quality signal, and a run that degrades mid-way
+            # needs its cause visible in the same output as its number —
+            # otherwise the next reader sees only that the suite got worse.
+            reasons = collections.Counter(
+                o.error.split("(")[0][:70] for o in outcomes if o.errored
+            )
+            for reason, count in reasons.most_common():
+                print(f"      {count:2} errored: {reason}")
         return metrics(outcomes)
 
     with capsys.disabled():
@@ -256,6 +266,16 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             failed = [c.name for t in outcome.turns for c in t.checks if not c.passed]
             detail = outcome.error[:60] if outcome.errored else (",".join(failed) or "-")
             print(f"  {mark}  {outcome.case_id:12} {outcome.category:22} {detail}")
+            # The reply, for any check that failed. A check name says which
+            # gate moved; only the text says why, and reconstructing it meant
+            # a second full run every time.
+            for turn in outcome.turns:
+                misses = [c for c in turn.checks if not c.passed and not c.skipped]
+                if not misses:
+                    continue
+                print(f"        t{turn.turn_index} {turn.action}: {turn.reply[:150]!r}")
+                for check in misses:
+                    print(f"          {check.name}: {check.detail[:110]}")
         # Cases that changed verdict between runs are the suite's own
         # instability, and they are invisible in any single run's table.
         verdicts: dict[str, set[bool]] = {}
