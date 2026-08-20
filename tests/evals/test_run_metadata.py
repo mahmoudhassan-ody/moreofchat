@@ -72,3 +72,22 @@ def test_metadata_is_frozen():
     """A run record edited after the fact is not a record."""
     with pytest.raises(Exception):  # noqa: B017
         _run("h1").config_hash = "h2"
+
+
+def test_the_prompts_that_live_under_src_are_recorded():
+    """§2.3. `config_hash` covers `config/`; the extraction and composition
+    prompts live under `src/`, so without their digests a prompt edit leaves a
+    run claiming comparability it does not have.
+
+    The judge's version travelled from the start. The other two did not, and
+    the composition prompt was rewritten from nothing on 2026-08-20 — exactly
+    the edit that must invalidate a baseline.
+    """
+    from moc.evals.runner import CaseRunner
+
+    runner = CaseRunner(orchestrator=None, retriever=None, script="scripts/education/fees")
+    run = runner.metadata(git_sha="abc1234")
+    versions = {t.task: t.prompt_version for t in run.tasks}
+
+    assert versions["answer_composition"].startswith("composition_v1+")
+    assert versions["slot_extraction"].startswith("extraction_v1+")

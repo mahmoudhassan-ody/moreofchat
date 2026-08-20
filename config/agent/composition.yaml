@@ -1,0 +1,58 @@
+# Answer composition — the prompt and the channel's formatting rules.
+#
+# Resolved to src/moc/agent/prompts/<prompt>.md. The recorded prompt_version is
+# the file's digest, not this name: `config_hash` covers `config/` and the
+# prompt lives under `src/`, so without the digest a prompt edit would leave a
+# run claiming comparability it does not have (harness §2.3).
+#
+# **Formatting is per channel and lives here, not in the prompt.** WhatsApp
+# renders no markdown at all — a heading arrives as a literal `#`, a table as a
+# row of pipes. That was cosmetic right up until it was not: the numeric gate
+# reads `## 1.` as the figure 1 and discards a correct answer whole, and it
+# reads `**3000**` as no figure at all. See tests/agent/test_guards.py.
+
+version: 1
+
+prompt: composition_v1
+
+formatting:
+  # The floor. An unconfigured channel gets the strictest rules rather than
+  # the loosest — a channel nobody has thought about is not a licence.
+  default: >
+    Plain sentences only. No headings, no tables, no bullet lists, no code
+    blocks, no asterisks or underscores for emphasis, no emoji. Separate ideas
+    with a blank line, and write a number as digits with no formatting around
+    it.
+
+  whatsapp: >
+    Plain sentences only. No headings, no tables, no bullet lists, no code
+    blocks, no asterisks or underscores for emphasis, no emoji. Separate ideas
+    with a blank line, and write a number as digits with no formatting around
+    it. Keep it short — this is a chat message, not a document.
+
+  instagram: >
+    Plain sentences only. No headings, no tables, no bullet lists, no code
+    blocks, no asterisks or underscores for emphasis, no emoji. Separate ideas
+    with a blank line, and write a number as digits with no formatting around
+    it. Keep it short — this is a chat message, not a document.
+
+  messenger: >
+    Plain sentences only. No headings, no tables, no bullet lists, no code
+    blocks, no asterisks or underscores for emphasis, no emoji. Separate ideas
+    with a blank line, and write a number as digits with no formatting around
+    it. Keep it short — this is a chat message, not a document.
+
+  telegram: >
+    Plain sentences only. No headings, no tables, no bullet lists, no code
+    blocks, no asterisks or underscores for emphasis, no emoji. Separate ideas
+    with a blank line, and write a number as digits with no formatting around
+    it. Keep it short — this is a chat message, not a document.
+
+  # The one channel where a longer, structured reply is normal. Still no
+  # markdown: an email client renders none of it either, and a number with
+  # punctuation stuck to it is invisible to the grounding gate.
+  email: >
+    Plain sentences and short paragraphs. No headings, no tables, no code
+    blocks, no asterisks or underscores for emphasis, no emoji. A numbered list
+    is allowed where the answer really is a sequence of steps; write a number as
+    digits with no formatting around it.

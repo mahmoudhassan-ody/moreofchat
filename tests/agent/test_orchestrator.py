@@ -492,3 +492,54 @@ def test_conversation_state_uuid_helper_is_not_needed_here():
     assert not any(
         parameter.annotation is UUID for parameter in signature.parameters.values()
     )
+
+
+async def test_the_composition_call_carries_the_prompt_and_the_question(turn_session):
+    """`_compose` sent `system=None` and the node name as the message body, so
+    the model answered the retrieval rather than the customer. Both travel
+    now: the prompt as the system block, the passages still as cache blocks.
+    """
+    orchestrator, anthropic, *_ = build()
+
+    await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="رسوم كلية الهندسة كام؟",
+        channel="whatsapp",
+    )
+
+    call = composition_calls(anthropic)[-1]
+    system = call["system"] or ""
+    assert system, "the composition prompt travels as the system block"
+    assert "رسوم كلية الهندسة كام؟" in system, "and it carries the question"
+    assert "Arabic" in system, "with the language the customer wrote in"
+    assert "emoji" in system.lower(), "and the channel's formatting rules"
+
+
+async def test_an_english_question_is_composed_in_english(turn_session):
+    """F6 in the composition path. The passages are Arabic here; the customer
+    is not."""
+    orchestrator, anthropic, *_ = build()
+
+    await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="How much are the engineering fees?",
+        channel="whatsapp",
+    )
+    assert "English" in (composition_calls(anthropic)[-1]["system"] or "")
+
+
+async def test_the_passages_still_travel_as_cache_blocks_not_in_the_prompt(
+    turn_session,
+):
+    """The prompt is the volatile part now; the passages are still the stable
+    prefix, which is the ordering both providers' caches reward."""
+    orchestrator, anthropic, *_ = build()
+
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام؟", channel="whatsapp"
+    )
+    call = composition_calls(anthropic)[-1]
+    assert PASSAGE in call["cache_blocks"]
+    assert PASSAGE not in (call["system"] or "")

@@ -46,6 +46,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from moc.agent.composition import render_composition
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
 from moc.agent.replies import Voice
 from moc.agent.script_engine import ScriptEngine
@@ -202,7 +203,9 @@ class Orchestrator:
             return self._scripted(decision, redaction, retrieval, self._non_answer_key(decision))
 
         try:
-            completion = await self._compose(session, decision, retrieval, channel)
+            completion = await self._compose(
+                session, decision, retrieval, channel, redaction.text
+            )
         except AllProvidersUnavailable:
             # §2.6: the customer gets a sentence and a human, not an error. The
             # router raised rather than inventing text precisely so this
@@ -261,17 +264,30 @@ class Orchestrator:
         decision: Decision,
         retrieval: Retrieval,
         channel: str,
+        message: str,
     ) -> Completion:
         """Ask the model for words, having already decided the facts.
 
         Passages go in `cache_blocks`, not the message body: they are the
         stable prefix of the prompt and the volatile part is the customer's
         question, which is the ordering both providers' caches reward.
+
+        The customer's question travels too, which it did not: this used to
+        send `system=None` and `decision.reason or decision.node` as the whole
+        body, so the model saw the retrieved passages and the string "fees".
+        It answered the retrieval — in the retrieval's language, formatted as
+        a document — and four Arabic education cases came back as English
+        markdown because of it.
         """
         completion = await self._router.complete(
             task=Task.answer_composition,
-            messages=[Message(role=Role.user, content=decision.reason or decision.node)],
-            system=None,
+            messages=[Message(role=Role.user, content=message)],
+            system=render_composition(
+                message=message,
+                register=decision.register,
+                channel=channel,
+                passages=retrieval.passages,
+            ),
             cache_blocks=list(retrieval.passages),
         )
         # Metered here rather than through the router's usage sink so the row

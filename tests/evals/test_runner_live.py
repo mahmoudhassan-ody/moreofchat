@@ -257,6 +257,37 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         else:
             print("  Every measured metric settled within the configured bar.")
         print(f"{'-' * 68}")
+        # Compositions the RUNTIME gate discarded (§19.3). These never reached
+        # a customer, so they cannot count against `hallucinated_figure_rate`
+        # — but how often the model tried, and on which figure, is the signal
+        # the gate exists to produce.
+        #
+        # WHICH figure had no source, and what it was checked against. A gate
+        # refusing compositions while recall is 100% is either the gate being
+        # wrong or the passages being unusable, and those have opposite fixes;
+        # a count cannot tell them apart.
+        rejected = [
+            (o.case_id, t)
+            for o in runs[-1]
+            for t in o.turns
+            if t.grounding is not None and not t.grounding.passed
+        ]
+        attempted = [
+            t for o in runs[-1] for t in o.turns if t.grounding is not None
+        ]
+        print(
+            f"  the runtime gate discarded {len(rejected)} of {len(attempted)} "
+            f"compositions, run {times} of {times}:"
+        )
+        for case_id, t in rejected:
+            print(f"    {case_id} t{t.turn_index}")
+            print(f"      orphans:   {t.grounding.orphan_numbers}")
+            print(f"      in reply:  {t.grounding.reply_numbers}")
+            print(f"      in source: {t.grounding.source_numbers}")
+            print(f"      composed:  {t.composed[:180]!r}")
+            for passage in t.passages[:2]:
+                print(f"      passage:   {passage[:180]!r}")
+        print(f"{'-' * 68}")
         # Per-case, from the LAST run only — labelled as such, because a case
         # that passes twice and fails once is not the same as one that fails
         # every time, and this table cannot tell them apart.

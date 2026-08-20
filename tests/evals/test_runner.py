@@ -579,3 +579,28 @@ def test_a_script_constant_is_a_source():
     that did not know that would fail every scripted fee."""
     checks = _figure_checks(reply="الرسوم 1400 جنيه", passages=[], constants=("1400",))
     assert checks["hallucinated_figure_rate"].passed is True
+
+
+async def test_a_rejected_composition_is_kept_for_the_report(session_tenant):
+    """§19.3 discards a composition holding an orphan figure and sends a
+    scripted reply. The discarded text is the only thing that says WHY — which
+    figure had no source, and whether the passages could ever have supplied
+    it — and the harness was throwing it away.
+
+    A gate refusing compositions at 100% recall is either the gate being wrong
+    or the passages being unusable, and the two have opposite fixes. Neither
+    is visible from a scripted apology and a check name.
+    """
+    session, _ = session_tenant
+    runner, _, _ = build(reply="رسوم التقديم 4500 جنيه.")
+    case = a_case(
+        turns=[{"user": "رسوم التقديم كام؟", "expected_action": "answer"}]
+    )
+
+    outcome = (await runner.run([case], session=session))[0]
+    turn = outcome.turns[0]
+
+    assert turn.grounding is not None and not turn.grounding.passed
+    assert "4500" in turn.composed, "the text the gate rejected"
+    assert turn.composed != turn.reply, "the customer got the scripted reply"
+    assert turn.passages, "and what it was checked against"

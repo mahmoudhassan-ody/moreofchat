@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import ConversationState
+from moc.config_store import load
 from moc.evals.deterministic import (
     CheckResult,
     check_action,
@@ -80,6 +81,15 @@ class TurnOutcome:
     #: sends a scripted reply, so this records an attempt the customer never
     #: received — a signal about composition quality, not a gate.
     grounding: Any = None
+    #: The text the model produced, which is the reply only when the gate let
+    #: it through. On a rejection this is the discarded composition and
+    #: `reply` is the scripted apology the customer received — and the
+    #: discarded text is the only thing that says which figure had no source.
+    composed: str = ""
+    #: What the gate checked that text against. A gate refusing compositions
+    #: at 100% recall is either wrong or working on unusable passages, and
+    #: those have opposite fixes.
+    passages: tuple[str, ...] = ()
     checks: tuple[CheckResult, ...] = ()
     verdict: JudgeVerdict | None = None
 
@@ -222,6 +232,8 @@ class CaseRunner:
                     state=state,
                     retrieved_chunk_ids=retrieved,
                     grounding=getattr(result, "grounding", None),
+                    composed=_composed(result),
+                    passages=tuple(getattr(result, "passages", ()) or ()),
                     checks=tuple(checks),
                     verdict=verdict,
                 )
@@ -303,7 +315,31 @@ class CaseRunner:
         reworded rubric is not silently compared against one graded under the
         old wording.
         """
-        tasks: list[TaskBinding] = []
+        from moc.agent.composition import prompt_version as composition_version
+        from moc.agent.extraction import LlmSlotExtractor
+
+        routing = load("llm/routing")["tasks"]
+
+        def binding(task: str, version: str) -> TaskBinding:
+            primary = routing[task]["primary"]
+            return TaskBinding(
+                task=task,
+                prompt_version=version,
+                provider=primary["provider"],
+                model=primary["model"],
+            )
+
+        # Both prompts live under `src/`, where `config_hash` cannot see them.
+        # The judge's version travelled from the start and these two did not,
+        # which meant a prompt rewrite left every run claiming comparability
+        # against a baseline measured under different instructions.
+        tasks: list[TaskBinding] = [
+            binding("answer_composition", composition_version()),
+            binding(
+                "slot_extraction",
+                LlmSlotExtractor(router=None, script=self._script).prompt_version,
+            ),
+        ]
         if self._judge is not None and hasattr(self._judge, "task_binding"):
             tasks.append(
                 self._judge.task_binding(provider="openai", model="gpt-5.6-sol")
@@ -369,6 +405,12 @@ def _recall_for(case: EvalCase, turns: Sequence[TurnOutcome]) -> float | None:
         )
         found += recall_at_k(retrieved=pooled, gold=(chunk_id,), k=len(pooled)) or 0.0
     return found / len(case.gold_chunks)
+
+
+def _composed(result: Any) -> str:
+    """What the model wrote, whether or not it was sent."""
+    completions = getattr(result, "completions", ()) or ()
+    return completions[0].text if completions else getattr(result, "reply", "")
 
 
 def _provider_of(result: Any) -> str:
