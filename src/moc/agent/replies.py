@@ -19,7 +19,7 @@ lookup asked for `msa`. The English wording had been sitting in
 from dataclasses import dataclass
 from typing import Any
 
-from moc.agent.state import Register
+from moc.agent.state import Action, Register
 from moc.arabic.script import reply_language
 
 #: The wording key an English turn takes, whatever register the node declares.
@@ -69,6 +69,31 @@ def scripted(entry: dict[str, Any], register: Register, *, lang: str | None) -> 
     return entry.get(str(speaks)) or entry[str(Register.masri)]
 
 
+#: The refusal for a node with no wording of its own.
+_DEFAULT = "default"
+
+
+def refusal(replies: dict[str, Any], node: str | None, voice: Voice) -> str:
+    """The refusal this node offers instead, not the one another node offers.
+
+    A refusal that says only "no" reads as evasion, so every one of them names
+    what *is* knowable — and what is knowable is a property of the node doing
+    the refusing. One shared string served both verticals and it was written
+    for one of them: edu-0017 asks which faculty leads to a job, is correctly
+    refused, and told "أقدر أقولك السعر الحالي وخطة السداد المتاحة" — a price
+    and a payment plan, to a student.
+
+    Lives here rather than in either agent because both of them refuse, and the
+    real-estate agent is where the string that leaked was written.
+
+    `default` catches a node with no entry: a KeyError in front of a customer
+    is worse than a general sentence. A test asserts every shipped refuse node
+    has its own, so the default is a floor and not a destination.
+    """
+    entries = replies[str(Action.refuse)]
+    return voice.say(entries.get(node) or entries[_DEFAULT])
+
+
 @dataclass(frozen=True)
 class Voice:
     """How this turn should sound: the node's register, the customer's language.
@@ -92,4 +117,4 @@ class Voice:
         return scripted(entry, self.register, lang=self.lang)
 
 
-__all__ = ["Voice", "resolve", "scripted"]
+__all__ = ["Voice", "refusal", "resolve", "scripted"]

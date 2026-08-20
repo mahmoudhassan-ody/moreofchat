@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.composition import render_composition
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
-from moc.agent.replies import Voice
+from moc.agent.replies import Voice, refusal
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
 from moc.arabic.script import reply_language
@@ -404,6 +404,8 @@ class Orchestrator:
         # answers an English question in Arabic.
         voice = Voice(decision.register, lang or reply_language(message))
         document = load(_REPLIES)
+        if key is _REFUSE:
+            return refusal(document["replies"], decision.node, voice)
         if key is _CLARIFY:
             # Named slots first. A node with missing slots knows exactly what
             # it needs, and offering a menu instead would replace an

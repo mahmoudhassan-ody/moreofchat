@@ -51,12 +51,31 @@ def test_every_scripted_reply_carries_an_english_form(document):
     from moc.config_store import load
 
     config = load(document)
-    missing = [
-        f"{group}.{key}"
+
+    def wordings(prefix: str, entry):
+        """Every leaf that is a per-register wording, however deep.
+
+        `replies.refuse` grew a level when refusals became per-node, and a
+        one-level walk stopped seeing any of them — it reported clean while
+        three new Arabic-only entries would have gone straight to an English
+        customer. A wording is a mapping whose keys are register names; a
+        mapping of anything else is a group to descend into.
+        """
+        if not isinstance(entry, dict):
+            return
+        if {"masri", "msa", "english"} & set(entry):
+            yield prefix, entry
+            return
+        for key, child in entry.items():
+            yield from wordings(f"{prefix}.{key}", child)
+
+    seen = [
+        (name, entry)
         for group in ("replies", "ask_for_slot")
-        for key, entry in (config.get(group) or {}).items()
-        if isinstance(entry, dict) and not entry.get("english")
+        for name, entry in wordings(group, config.get(group) or {})
     ]
+    assert seen, "no wordings found — this assertion would pass vacuously"
+    missing = [name for name, entry in seen if not entry.get("english")]
     assert missing == [], f"no English wording for: {missing}"
 
 

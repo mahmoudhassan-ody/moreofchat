@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from moc.agent.replies import Voice
+from moc.agent.replies import Voice, refusal
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
 from moc.retrieval.inventory import UnitQuery
@@ -249,7 +249,7 @@ class InventoryAgent:
 
         if decision.action is not Action.answer:
             return InventoryTurn(
-                reply=_scripted(_reply_key(decision), voice),
+                reply=_non_answer(decision, voice),
                 action=decision.action,
                 register=decision.register,
                 state=decision.state,
@@ -540,12 +540,16 @@ def _ask_for(slot: str, voice: Voice) -> str:
     return voice.say(load(_REPLIES)["ask_for_slot"][slot])
 
 
-def _reply_key(decision: Any) -> str:
-    if decision.action is Action.handoff:
-        return "handoff"
+def _non_answer(decision: Any, voice: Voice) -> str:
+    """A refusal names what this node can offer instead; the rest are one
+    string each. `refusal` is shared with the education orchestrator because
+    both agents refuse, and the string that leaked into edu-0017 was written
+    here."""
+    replies = load(_REPLIES)["replies"]
     if decision.action is Action.refuse:
-        return "refuse"
-    return "clarify"
+        return refusal(replies, decision.node, voice)
+    key = "handoff" if decision.action is Action.handoff else "clarify"
+    return voice.say(replies[key])
 
 
 def _figures(reply: str) -> tuple[str, ...]:

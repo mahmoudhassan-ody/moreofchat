@@ -585,7 +585,10 @@ async def test_a_refuse_node_does_not_emit_the_clarify_text(turn_session):
     )
 
     assert result.action is Action.refuse
-    assert result.reply == load("agent/replies")["replies"]["refuse"]["masri"]
+    assert (
+        result.reply
+        == load("agent/replies")["replies"]["refuse"]["career_advice"]["masri"]
+    )
 
 
 async def test_a_clarification_names_every_slot_it_is_missing(turn_session):
@@ -820,3 +823,56 @@ async def test_an_english_customer_gets_the_english_option_sentence(turn_session
     assert result.reply.startswith(
         load("agent/replies")["clarify_options"]["template"]["english"].split("{")[0]
     )
+
+
+# ───────── edu-0017: a refusal says what THIS script can offer ─────────
+
+
+def test_every_refuse_node_has_its_own_refusal():
+    """One shared `refuse` string served both verticals, and it was written for
+    one of them.
+
+    edu-0017 asks which faculty leads to a job — career advice, correctly
+    refused — and the customer was told "أقدر أقولك السعر الحالي وخطة السداد
+    المتاحة": a price and a payment plan, offered to a student. The judge
+    caught it as an ungrounded offer, which it also is.
+
+    The refusal's second half is what makes it a limit rather than a wall, and
+    what is knowable instead is a property of the node doing the refusing. So
+    the entry is per node, and this test is why a new refuse node cannot
+    quietly inherit another vertical's answer.
+    """
+    from moc.config_store import load as _load
+
+    refusals = _load("agent/replies")["replies"]["refuse"]
+    nodes = [
+        (script, name)
+        for script in ("scripts/education/fees", "scripts/realestate/search")
+        for name, node in _load(script)["nodes"].items()
+        if node.get("action") == "refuse"
+    ]
+    assert nodes, "no refuse node found — this assertion would pass vacuously"
+    missing = [f"{s}:{n}" for s, n in nodes if n not in refusals]
+    assert not missing, (
+        f"these refuse nodes fall back to another node's offer: {missing}"
+    )
+
+
+async def test_the_education_refusal_offers_something_a_student_can_use(
+    turn_session,
+):
+    """edu-0017's forbidden claims rule out a ranking and an employment rate.
+    What is left, and what the case note asks for, is the programme list."""
+    from moc.config_store import load as _load
+
+    orchestrator, *_ = build(intent="career_advice")
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="إيه أحسن كلية أدخلها عشان ألاقي شغل بسرعة؟",
+        channel=CHANNEL,
+    )
+
+    assert result.action is Action.refuse
+    assert result.reply == _load("agent/replies")["replies"]["refuse"]["career_advice"]["masri"]
+    assert "السعر" not in result.reply, "the real-estate offer, to a student"

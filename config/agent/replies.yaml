@@ -23,18 +23,42 @@
 version: 1
 
 replies:
-  # The script's node says this turn is refused (re-0015: an investment
-  # projection). Distinct from `clarify`, which asks the customer to say more —
-  # here the question was perfectly clear and the answer is that we will not.
-  # Distinct from `handoff` too: a colleague cannot project a return either,
-  # and passing it along implies someone here will.
+  # The script's node says this turn is refused. Distinct from `clarify`, which
+  # asks the customer to say more — here the question was perfectly clear and
+  # the answer is that we will not. Distinct from `handoff` too: a colleague
+  # cannot project a return either, and passing it along implies someone here
+  # will.
   #
   # Says what *is* knowable, because a refusal that offers nothing reads as
-  # evasion rather than as a limit.
+  # evasion rather than as a limit — and that second half is a property of the
+  # node doing the refusing, which is why these are keyed by node.
+  #
+  # **This was one string for both verticals and it was written for one of
+  # them.** edu-0017 asks which faculty leads to a job, is correctly refused,
+  # and told "أقدر أقولك السعر الحالي وخطة السداد المتاحة" — a price and a
+  # payment plan, to a student. `default` exists so a new refuse node is never
+  # a KeyError in front of a customer; a test asserts every shipped refuse node
+  # has its own entry, so it is also never silently another vertical's offer.
   refuse:
-    masri: "مش هينفع أتوقّعلك ده، بس أقدر أقولك السعر الحالي وخطة السداد المتاحة."
-    msa: "لا يمكننا تقديم توقعات بهذا الشأن. يمكننا إفادتك بالسعر الحالي وخطة السداد المتاحة."
-    english: "I can't forecast that, but I can tell you the current price and the payment plan."
+    default:
+      masri: "مش هينفع أساعد في ده، بس قوللي محتاج تعرف إيه تاني وأنا تحت أمرك."
+      msa: "لا يمكننا الإفادة في هذا الشأن. يسعدنا مساعدتك في أي استفسار آخر."
+      english: "I can't help with that one, but tell me what else you need and I'll help."
+
+    # re-0015. Every number in a projection would be invented, and it is also
+    # the kind of claim that attracts regulatory attention.
+    investment_projection:
+      masri: "مش هينفع أتوقّعلك ده، بس أقدر أقولك السعر الحالي وخطة السداد المتاحة."
+      msa: "لا يمكننا تقديم توقعات بهذا الشأن. يمكننا إفادتك بالسعر الحالي وخطة السداد المتاحة."
+      english: "I can't forecast that, but I can tell you the current price and the payment plan."
+
+    # edu-0017. The forbidden claims rule out a ranking and an employment rate,
+    # so what is left to offer is the thing the KB actually holds: which
+    # faculties exist and what each one asks for.
+    career_advice:
+      masri: "مش هينفع أرشحلك كلية معينة، بس أقدر أقولك الكليات المتاحة والحد الأدنى للقبول في كل واحدة."
+      msa: "لا يمكننا ترشيح كلية بعينها. يمكننا إفادتك بالكليات المتاحة والحد الأدنى للقبول لكل منها."
+      english: "I can't recommend a particular faculty, but I can tell you which faculties there are and the minimum grade each one asks for."
 
   # The script routed the turn to a human — a handoff node, an explicit
   # request, or three failed clarifications (§9).
