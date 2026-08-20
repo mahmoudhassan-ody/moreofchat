@@ -75,11 +75,22 @@ saying `نسبة القبول 73%` passes. An admission threshold quoted as a di
 
 The gate is still worth what it was: it catches a figure invented from nothing,
 which is the commoner failure and the one that produces impossible numbers.
-What it cannot do is bind a number to what it claims to be, and nothing else in
-the harness does either — `check_figures` is stage 1, and the judge, which can
-see the mismatch and demonstrably does (it caught edu-0007 quoting the Qantara
-figure), runs only on turns that passed stage 1. edu-0012 failed stage 1 on
-`expected_action`, so no judge ever saw it.
+What it cannot do is bind a number to what it claims to be.
+
+**The judge can, and now does (2026-08-20).** Its rubric already scored this —
+grounding 0 is "contains an unsupported figure, or contradicts a passage" — and
+nothing read the score. `hallucinated_figure_rate` has two producers from that
+date: the deterministic check on every turn that stated a figure, and the judge
+on the subset that also cleared stage 1. Measured over three runs of the
+education suite: 0/10 deterministic, 0/9 judge-fed. Different denominators, and
+the report says so.
+
+**It is a partial fix and the gap it leaves is the one edu-0012 fell through.**
+Stage 2 runs only on turns that passed stage 1, so a turn that gets the action
+wrong is never graded on anything else — and edu-0012 failed stage 1 on
+`expected_action` precisely because it answered when it should have handed off.
+The turns most likely to carry a bad figure are the turns that should not have
+answered at all, and those are exactly the ones the judge does not see.
 
 ---
 
