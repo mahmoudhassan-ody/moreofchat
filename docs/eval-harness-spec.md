@@ -32,7 +32,7 @@ Run at the lowest available temperature. Every metric is computed per vertical a
 
 | Metric | Threshold |
 |---|---|
-| `hallucinated_figure_rate` | **0** — any numeric claim not traceable to a retrieved chunk or script constant fails |
+| `hallucinated_figure_rate` | **0** — any numeric claim not traceable to a retrieved chunk or script constant fails. **Bounded — see §2.1.1** |
 | `hedged_figure_rate` | **0** — a *grounded* figure stated with an approximation marker ("حوالي", "تقريبا", "around") fails |
 | `expected_action_accuracy` | ≥ 0.95 — answer vs clarify vs handoff vs refuse |
 | `forbidden_claim_violations` | **0** |
@@ -45,6 +45,43 @@ Run at the lowest available temperature. Every metric is computed per vertical a
 **Why hedging is gated separately from hallucination.** Both are zero-tolerance and both are caught by the same deterministic check, but they are different faults with different fixes. An orphan figure means retrieval or the script failed to supply the number. A hedged figure means the generation step editorialized over a number it *had*. Collapsing them into one rate tells you a regression happened and nothing about where to look, so the two are reported as separate metrics and a figure that is both counts only as an orphan — one incident must not move two rates.
 
 Hedging is a hard gate rather than a soft one because its consequence is commercial, not stylistic: "around 1400" invites the customer to treat a fixed fee as an opening position, and the tenant then honours a figure they never set. Design doc §19.3 fixes the enforcement while leaving the marker list configurable.
+
+#### 2.1.1 What `hallucinated_figure_rate` does not catch
+
+**A figure lifted from a retrieved passage and relabelled passes this gate, and
+always has.** Every 0.0% reading in the project's history is bounded by "no
+figure appeared that was absent from the retrieved set" — not by "no figure was
+hallucinated".
+
+Found 2026-08-20 on edu-0012. The fixture states `500 جنيه مصري` under the
+title "ما قيمة الرسوم الإضافية لتغيير المسار؟" — the track-change fee, and the
+only place 500 appears in 51 facts. The reply said:
+
+> الرسوم الدراسية للهندسة محددة برقم ثابت وليس تقريبيًا، وهو 500 جنيه مصري
+
+Engineering tuition, which this KB does not contain at all. `check_numeric_
+grounding` returned `passed=True`, no orphans: 500 is in the source set, so 500
+may be stated.
+
+This is not a collision problem and framing it as one understates it. 500 is
+uniquely identified in the corpus; it was still mislabelled. The gate compares
+a reply's figures against a *set of numbers*, discarding which passage each came
+from and what that passage said it was — so the permitted vocabulary for any
+claim is every figure across all `final_k` retrieved passages, and any of them
+may be attached to any claim.
+
+The same shape, verified: a reply saying `الخصم 73%` grounded against a passage
+saying `نسبة القبول 73%` passes. An admission threshold quoted as a discount.
+
+The gate is still worth what it was: it catches a figure invented from nothing,
+which is the commoner failure and the one that produces impossible numbers.
+What it cannot do is bind a number to what it claims to be, and nothing else in
+the harness does either — `check_figures` is stage 1, and the judge, which can
+see the mismatch and demonstrably does (it caught edu-0007 quoting the Qantara
+figure), runs only on turns that passed stage 1. edu-0012 failed stage 1 on
+`expected_action`, so no judge ever saw it.
+
+---
 
 ### 2.2 Soft gates — warn, review before release
 
