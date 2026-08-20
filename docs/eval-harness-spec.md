@@ -97,7 +97,18 @@ Rules:
 
 Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extraction`), per §2's "lowest available temperature". Note that this is per candidate rather than per task: `claude-sonnet-5` answers a request carrying `temperature` with a 400 (`temperature is deprecated for this model`, measured 2026-08-20), while `claude-haiku-4-5` accepts it. Dropping extraction to 0 narrowed real-estate `overall_accuracy` from a 13.1-point spread to 2.1.
 
-**Baseline, 2026-08-20**, n=3 each. Real estate on 20 cases, all passing.
+**Baseline, 2026-08-20**, n=3 each. Real estate on 20 cases, all passing;
+education re-measured on 17.
+
+> **Every education figure recorded before this line is void, not merely
+> superseded.** The composition prompt did not exist — `_compose` sent
+> `system=None` and the node name as the whole message body — and the numeric
+> grounding gate could neither see a figure wrapped in `**` nor distinguish a
+> list marker from a claim. Runs made under those conditions were measuring
+> three defects at once, and `prompt_version` did not record the composition
+> prompt at all, so nothing would have flagged the incomparability. §2.3's
+> rule applies with full force: those runs are not a baseline this one may be
+> compared against.
 
 | Suite | Metric | Value |
 |---|---|---|
@@ -111,13 +122,14 @@ Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extracti
 | real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
 | real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
-| education | `overall_accuracy` | 5.9% (0.0–11.8) — **not measurable at 17 cases** |
-| education | `expected_action_accuracy` | 66.7% (63.2–68.4) |
-| education | `language_mirror_accuracy` | 82.5% (78.9–84.2) |
+| education | `overall_accuracy` | 49.0% (47.1–52.9) |
+| education | `expected_action_accuracy` | 89.5% (89.5–89.5) |
+| education | `language_mirror_accuracy` | 94.7% (94.7–94.7) |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
 | education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
+| education | `errored_rate` | 0.0% (0.0–0.0) |
 
 **Aliases reach the prompt (2026-08-20).** `slot_vocabulary` injected the
 canonical values of every closed slot and nothing else, so the model had to
@@ -132,7 +144,15 @@ what the model may read, the canonical value is still all it may emit. That
 moved `overall_accuracy` 46.2% -> 56.5%, `tool_call_accuracy` 58.6% -> 73.3%,
 and `errored_rate` to zero, with zero spread across three runs.
 
-Education's accuracy is not comparable against at this suite size. One case is 5.9 points of a 17-case suite, so a two-case swing exceeds the bar on its own; §4.1's 150 cases are what makes that metric readable, not a steadier model. `register_accuracy`, `p95_latency_ms` and `forbidden_claim_violations` fed nothing in any run and are unmeasured, not clean.
+**The gate fix and the composition prompt, measured (2026-08-20).** Education
+went 13.7% (5.9–23.5) to 49.0% (47.1–52.9); `language_mirror_accuracy` 75.4% to
+94.7%; `expected_action_accuracy` 66.7% to 89.5%; and the runtime gate
+discarded 0 of 11 compositions where it had been discarding 2. The spread
+closed from 17.6 points to 5.8, and the number is measurable for the first
+time — three of the four figures that moved were the harness measuring its own
+defects rather than the agent's.
+
+Education's accuracy remains fragile at this suite size. One case is 5.9 points of a 17-case suite, so a two-case swing exceeds the bar on its own; §4.1's 150 cases are what makes that metric readable, not a steadier model. `register_accuracy`, `p95_latency_ms` and `forbidden_claim_violations` fed nothing in any run and are unmeasured, not clean.
 
 ---
 
