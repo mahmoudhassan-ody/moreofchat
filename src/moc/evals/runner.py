@@ -159,6 +159,13 @@ def recall_at_k(
     return sum(1 for chunk_id in gold if chunk_id in top) / len(gold)
 
 
+# The one stage-1 failure that does not withdraw the reply from grading. Named
+# rather than inlined so the report can say which population each stage-2 gate
+# was measured over, and so widening this list is a decision someone makes on
+# purpose.
+_JUDGED_ANYWAY = ("expected_action_accuracy",)
+
+
 class CaseRunner:
     def __init__(
         self,
@@ -276,13 +283,32 @@ class CaseRunner:
     async def _stage_two(
         self, turn: Turn, result: Any, checks: Sequence[CheckResult]
     ) -> JudgeVerdict | None:
-        """The judge, only when stage 1 passed.
+        """The judge, when stage 1 passed — or failed on the action alone.
 
         Skipped rather than deferred: a case already failing a hard gate
         cannot be rescued by a good rubric score, so the call would buy
         nothing and cost real money at 230 cases.
+
+        Action is the one exception, and it is the important one. A turn that
+        answered where it should have handed off still composed a reply, and
+        that reply is where the failure this suite most cares about actually
+        lives: the model that would not admit the figure was missing is the
+        model that reached for a nearby one. While the guard read `all`, every
+        such turn was dropped before grading — so no judge ever saw edu-0012,
+        and `hallucinated_figure_rate` read 0.0% over a population selected to
+        exclude the failure it is named after.
+
+        Only alone, though. A turn that also mirrored the wrong language
+        produced a reply nobody would have sent, and its register and
+        grounding scores would describe that reply — money spent to add noise
+        to two gates.
+
+        Nothing is rescued by this. The action check stays in the list and the
+        turn still fails; what changes is that its reply is graded.
         """
-        if self._judge is None or not all(check.passed for check in checks):
+        if self._judge is None:
+            return None
+        if any(check.metric not in _JUDGED_ANYWAY and not check.passed for check in checks):
             return None
         return await self._judge.grade(
             question=turn.user,

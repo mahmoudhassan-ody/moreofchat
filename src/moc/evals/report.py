@@ -40,12 +40,13 @@ _STAGE_TWO_GATES = (
 _STAGE_TWO_NOTE = (
     "> **Coverage:** `"
     + "` and `".join(_STAGE_TWO_GATES)
-    + "` draw on the judge, which runs only on turns that passed stage 1."
-    " Their observation counts are therefore smaller than the suite's, and a"
-    " turn that failed a deterministic check contributes nothing to them"
+    + "` draw on the judge, which runs on turns that passed stage 1 and on"
+    " turns whose only stage-1 failure was `expected_action_accuracy`. Their"
+    " observation counts are therefore smaller than the suite's, and a turn"
+    " that failed any other deterministic check contributes nothing to them"
     " rather than a pass. `hallucinated_figure_rate` has two producers over"
     " two populations: the deterministic check on every turn that stated a"
-    " figure, and the judge on the subset that also cleared stage 1.",
+    " figure, and the judge on the subset described above.",
     "",
 )
 _PERCENT = 100.0

@@ -283,3 +283,20 @@ def test_the_stage_two_gates_carry_their_coverage_limit_in_the_report():
     assert "stage 1" in markdown
     assert "register_accuracy" in markdown
     assert "forbidden_claim_violations" in markdown
+
+
+def test_the_report_names_the_action_only_exception():
+    """The coverage note is the only place a reader learns which population a
+    stage-2 gate was measured over, so it has to track the guard.
+
+    It read "only on turns that passed stage 1" for as long as that was true.
+    Once action-only failures were let through, leaving it would have
+    understated the coverage of exactly the gates that had just gained the
+    population they most needed.
+    """
+    markdown = build_report(run(), [case("edu-1")]).to_markdown()
+    note = next(line for line in markdown.splitlines() if line.startswith("> **Coverage:**"))
+    assert "expected_action_accuracy" in note, (
+        "the note still describes the guard as it was before action-only "
+        f"failures were let through: {note}"
+    )

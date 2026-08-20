@@ -357,7 +357,38 @@ async def test_the_outcome_reports_recall_as_none_when_there_is_no_ground_truth(
 async def test_deterministic_checks_run_before_the_judge(session_tenant):
     """Stage 1 is free and non-flaky and covers both hard gates. A case that
     fails it must not cost a judge call — at 39 cases that is merely wasteful,
-    at 230 it is the difference between running the suite and not."""
+    at 230 it is the difference between running the suite and not.
+
+    Asserted here on a language failure rather than an action one, because
+    action is now the documented exception — see the two tests below.
+    """
+    session, _ = session_tenant
+    judge = RecordingJudge()
+    run, _, _ = build(judge=judge)
+
+    outcome = await run.run_case(
+        a_case(turns=[{"user": "كام؟", "expected_action": "answer",
+                       "expected_lang": "en"}]),
+        session=session,
+    )
+
+    assert outcome.turns[0].checks, "stage 1 did not run"
+    assert judge.calls == [], "the judge was called on a case that failed stage 1"
+
+
+async def test_the_judge_grades_a_turn_that_failed_only_on_the_action(session_tenant):
+    """The population most likely to carry a bad figure is the one the judge
+    could not see.
+
+    A turn that answered where it should have handed off is precisely the turn
+    that reached for a nearby number — and until this opened, every such turn
+    was dropped before grading. That is why no judge ever saw edu-0012, and
+    why `hallucinated_figure_rate` read 0.0% over a population that excluded
+    the failure it is named after.
+
+    The turn still fails: the action check is in the list and nothing here
+    rescues it. What changes is that its reply gets graded.
+    """
     session, _ = session_tenant
     judge = RecordingJudge()
     run, _, _ = build(judge=judge)
@@ -366,8 +397,28 @@ async def test_deterministic_checks_run_before_the_judge(session_tenant):
         a_case(turns=[{"user": "كام؟", "expected_action": "handoff"}]), session=session
     )
 
-    assert outcome.turns[0].checks, "stage 1 did not run"
-    assert judge.calls == [], "the judge was called on a case that failed stage 1"
+    assert len(judge.calls) == 1, "an action-only failure was dropped before grading"
+    assert not outcome.turns[0].passed, "the action failure was graded away"
+
+
+async def test_an_action_failure_alongside_another_still_skips_the_judge(session_tenant):
+    """Only action is excused, and only alone.
+
+    A turn that also mirrored the wrong language produced a reply whose
+    register and grounding scores describe a reply nobody would have sent.
+    Grading it would spend money to add noise to two gates.
+    """
+    session, _ = session_tenant
+    judge = RecordingJudge()
+    run, _, _ = build(judge=judge)
+
+    await run.run_case(
+        a_case(turns=[{"user": "كام؟", "expected_action": "handoff",
+                       "expected_lang": "en"}]),
+        session=session,
+    )
+
+    assert judge.calls == []
 
 
 async def test_the_judge_runs_when_stage_one_passes(session_tenant):
