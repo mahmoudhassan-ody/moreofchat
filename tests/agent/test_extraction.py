@@ -603,3 +603,75 @@ def test_exactly_one_intent_name_is_offered_per_node():
         for intent in node.get("intents", [])
     }
     assert set(offered) <= routable
+
+
+# ─────────────────── clearing a slot the customer moved off ───────────────────
+
+
+async def test_a_customer_widening_the_search_can_clear_a_slot():
+    """re-0001 turn 3: "In any other location" after two New Cairo turns.
+
+    The turn has to DROP the city, and nothing could express that. `null` and
+    an absent key both mean "not said", which correctly preserves held state —
+    so the held `city: New Cairo` survived a sentence whose entire content was
+    the customer moving off it, and the reply searched New Cairo again.
+
+    `locations.yaml` has carried an `anywhere_else` list since it was
+    transcribed. Nothing consumed it, because there was nowhere for the answer
+    to go.
+    """
+    extractor = LlmSlotExtractor(
+        router=FakeRouter(
+            '{"intent": "inventory_lookup", "slots": {}, '
+            '"clear_slots": ["city", "compound"]}'
+        ),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    turn = await extractor.extract(text="In any other location", state=state())
+    assert turn.cleared == ("city", "compound")
+
+
+async def test_clearing_an_undeclared_slot_is_a_failed_turn():
+    """Same rule as a value outside the vocabulary: a name nothing declares
+    cannot be acted on, and silently ignoring it hides the miss."""
+    extractor = LlmSlotExtractor(
+        router=FakeRouter(
+            '{"intent": "inventory_lookup", "slots": {}, "clear_slots": ["area"]}'
+        ),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    with pytest.raises(ExtractionFailed, match="area"):
+        await extractor.extract(text="x", state=state())
+
+
+async def test_clearing_is_absent_by_default():
+    extractor = LlmSlotExtractor(
+        router=FakeRouter('{"intent": "inventory_lookup", "slots": {}}'),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    turn = await extractor.extract(text="x", state=state())
+    assert turn.cleared == ()
+
+
+async def test_a_slot_named_in_both_slots_and_clear_slots_is_a_failed_turn():
+    """Setting and clearing the same slot is not a preference the engine
+    should have to resolve — it is a model that produced two answers."""
+    extractor = LlmSlotExtractor(
+        router=FakeRouter(
+            '{"intent": "inventory_lookup", "slots": {"city": "New Cairo"}, '
+            '"clear_slots": ["city"]}'
+        ),
+        script=REALESTATE,
+        catalogue=CATALOGUE,
+    )
+    with pytest.raises(ExtractionFailed, match="city"):
+        await extractor.extract(text="x", state=state())
+
+
+def test_the_prompt_says_how_to_clear_a_slot():
+    text = PROMPT.read_text(encoding="utf-8")
+    assert "clear_slots" in text
+    assert "any other" in text.lower()

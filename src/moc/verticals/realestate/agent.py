@@ -102,6 +102,7 @@ class KeywordSlotExtractor:
         ("negotiation", ("أقل سعر", "خصم", "كاش", "تخفيض", "أحسن سعر")),
         ("investment_projection", ("هتزيد", "قيمتها", "استثمار", "بعد سنتين", "عائد")),
         ("contracts", ("عقد", "تعاقد", "تمليك", "قانون")),
+        ("financing", ("تمويل", "قرض", "بنك", "مرتبي", "تمويل عقاري")),
         ("price_validity", ("لسه ساري", "ساري", "لسه بنفس السعر", "still valid")),
         ("delivery_date", ("التسليم", "الاستلام", "تسليم", "handover", "delivery")),
         ("payment_plan", ("قسط", "أقسط", "تقسيط", "مقدم", "أقساط")),
@@ -144,7 +145,9 @@ class KeywordSlotExtractor:
             # unit from the nearer of the two rather than treating a stated
             # price as a filter that could exclude the very unit meant.
             slots["budget_max" if "حدود" in text else "near_price"] = budget
-        return TurnInput(intent=intent, slots=slots, grounded=True)
+        return TurnInput(
+            intent=intent, slots=slots, grounded=True, cleared=_cleared_in(text)
+        )
 
 
 def _aliases() -> dict[str, str]:
@@ -160,6 +163,32 @@ def _aliases() -> dict[str, str]:
         for alias in forms.get("arabic", [])
     ]
     return dict(sorted(pairs, key=lambda pair: -len(pair[0])))
+
+
+#: Which slots "somewhere else" drops. Both, because a customer rejecting a
+#: compound has not necessarily rejected the city — but keeping the city would
+#: re-run the search they just said no to, and re-0001 turn 3 says "any other
+#: location" after two New Cairo turns.
+_LOCATION_SLOTS = ("city", "compound")
+
+
+def _cleared_in(text: str) -> tuple[str, ...]:
+    """"In any other location" — the customer moving off the area on offer.
+
+    `locations.yaml` has carried this list since it was transcribed and
+    nothing consumed it, because `TurnInput` had no way to say "drop that".
+    An absent slot means "not mentioned", which correctly keeps a held value,
+    so the held city survived a sentence whose entire content was dropping it.
+    """
+    document = load(_LOCATIONS)["anywhere_else"]
+    lowered = text.lower()
+    for phrase in document["arabic"]:
+        if phrase in text:
+            return _LOCATION_SLOTS
+    for phrase in document["latin"]:
+        if phrase in lowered:
+            return _LOCATION_SLOTS
+    return ()
 
 
 def _location_in(text: str, column: str, catalogue: Any) -> str | None:

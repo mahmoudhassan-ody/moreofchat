@@ -70,12 +70,20 @@ JSON only. One object, no code fence, no prose before or after:
 {
   "intent": "<intent or null>",
   "slots": {"<slot>": "<value>"},
+  "clear_slots": [],
   "explicit_handoff_request": false
 }
+
+`clear_slots` names slots the customer has moved OFF. It is not the same as
+leaving a slot out: an absent slot means they did not mention it and whatever
+is held still applies. "In any other location", "somewhere else", "في مكان
+تاني", "مشروع تاني" all mean the held location no longer applies — clear
+`city` and `compound` and keep everything else. Never name a slot in both
+`slots` and `clear_slots`.
 
 `explicit_handoff_request` is true only when the customer asks for a person —
 "عايز أكلم حد", "حولني لموظف". Frustration is not a request; asking the same
 question twice is not a request.
 
 Malformed output is a failed turn. There is no partial credit for a nearly
-correct object, so return the three keys and nothing else.
+correct object, so return the four keys and nothing else.

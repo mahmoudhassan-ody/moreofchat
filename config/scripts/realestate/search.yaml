@@ -201,6 +201,21 @@ nodes:
     action: handoff
     register: msa
 
+  # re-0019. Mortgage eligibility is an assessment a bank makes, and any
+  # number here is a commitment nobody in this loop can back. The script had a
+  # node for legal questions and none for financial ones, so `مرتبي 40 ألف،
+  # أقدر آخد تمويل عقاري بكام؟` fell to the fallback and asked the customer to
+  # clarify a question they had asked perfectly clearly.
+  #
+  # Handoff rather than refuse: a colleague genuinely can put them in touch
+  # with a bank, which is not true of an investment projection.
+  financing:
+    intents: [financing, mortgage, affordability]
+    describe: >
+      mortgage, instalments through a bank, or whether they can afford a unit on their income. تمويل عقاري، قرض، بنك، مرتبي.
+    action: handoff
+    register: masri
+
   fallback:
     action: clarify
     register: masri

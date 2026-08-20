@@ -349,12 +349,40 @@ class LlmSlotExtractor:
         if not isinstance(raw, dict):
             raise ExtractionFailed("malformed extraction: `slots` was not an object")
 
+        slots = self._validate(raw)
         return TurnInput(
             intent=intent,
-            slots=self._validate(raw),
+            slots=slots,
             grounded=True,
             explicit_handoff_request=bool(document.get("explicit_handoff_request")),
+            cleared=self._cleared(document.get("clear_slots"), slots),
         )
+
+    def _cleared(self, raw: Any, slots: dict[str, Any]) -> tuple[str, ...]:
+        """Slots the customer moved off — "in any other location".
+
+        Names are checked against the script for the same reason values are
+        checked against the vocabulary: a name nothing declares cannot be
+        acted on, and dropping it silently hides the miss behind a search that
+        simply kept the old filter.
+        """
+        if not raw:
+            return ()
+        if not isinstance(raw, list):
+            raise ExtractionFailed("malformed extraction: `clear_slots` was not a list")
+        known = _slot_specs(self._script)
+        for name in raw:
+            if name not in known:
+                raise ExtractionFailed(
+                    f"cannot clear {name!r}: not declared in {self._script}"
+                )
+            if name in slots:
+                # Setting and clearing the same slot is not a preference for
+                # the engine to resolve; it is a model that gave two answers.
+                raise ExtractionFailed(
+                    f"{name!r} is both set and cleared in one extraction"
+                )
+        return tuple(raw)
 
     def _validate(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Every key known, every value in vocabulary, every number a number.

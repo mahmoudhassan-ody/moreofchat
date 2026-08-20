@@ -62,7 +62,9 @@ class ScriptEngine:
 
     def advance(self, state: ConversationState, turn: TurnInput) -> Decision:
         self._require_pinned_version(state)
-        state = state.with_slots(turn.slots)
+        # Cleared before the node is chosen, so `requires_any_slot` and the
+        # connector both see the state the customer actually left behind.
+        state = state.with_slots(turn.slots, turn.cleared)
         node_name = self._by_intent.get(turn.intent or "", _FALLBACK_NODE)
         node = self._script["nodes"][node_name]
 

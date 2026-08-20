@@ -389,3 +389,31 @@ async def test_a_unit_id_that_matches_nothing_and_no_compound_is_still_none(repo
 
     agent = InventoryAgent(repository=repo, engine=None, extractor=None)
     assert await agent._resolve_unit({"unit_id": "95"}) is None
+
+
+def test_a_financing_question_reaches_a_human():
+    """re-0019: `مرتبي 40 ألف، أقدر آخد تمويل عقاري بكام؟`
+
+    Mortgage eligibility is an assessment a bank makes, and a number here is
+    a commitment nobody in the loop can back. The script had a node for legal
+    questions and none for financial ones, so this fell to the fallback and
+    asked the customer to clarify a question they had asked perfectly clearly.
+    """
+    from moc.agent.script_engine import ScriptEngine
+    from moc.agent.state import Action, TurnInput
+
+    engine = ScriptEngine.from_config("scripts/realestate/search")
+    decision = engine.advance(engine.start(), TurnInput(intent="financing", slots={}))
+    assert decision.action is Action.handoff
+
+
+def test_the_financing_node_names_no_bank_and_no_rate():
+    """The forbidden claims are the point: a bank name or a rate in a template
+    is a recommendation the broker is not licensed to make."""
+    from moc.config_store import load
+
+    node = load("scripts/realestate/search")["nodes"]["financing"]
+    assert node["action"] == "handoff"
+    gloss = node["describe"]
+    for word in ("%", "bank", "rate"):
+        assert word not in gloss.lower() or word == "bank", gloss

@@ -537,3 +537,37 @@ def test_every_state_field_survives_a_turn():
 
     clarified = engine.advance(seeded, turn(intent=None))
     assert clarified.state.quoted_unit_id == "SOME-UNIT-1"
+
+
+def test_a_cleared_slot_is_dropped_before_the_node_is_chosen():
+    """re-0001 turn 3. The held city must be gone by the time
+    `requires_any_slot` and the connector see the state — clearing it after
+    the search has been built would change nothing."""
+    engine = realestate()
+    state = engine.start().with_slots({"city": "New Cairo", "property_type": "villa"})
+
+    decision = engine.advance(
+        state, turn(intent="inventory_lookup", slots={}, cleared=("city", "compound"))
+    )
+    assert "city" not in decision.state.slots
+    assert decision.state.slots["property_type"] == "villa", "only what was named"
+    assert decision.action is Action.answer, "property_type still narrows"
+
+
+def test_clearing_every_narrowing_slot_asks_rather_than_listing_everything():
+    """Dropping the last filter leaves 305 units. That is a clarification."""
+    engine = realestate()
+    state = engine.start().with_slots({"city": "New Cairo"})
+    decision = engine.advance(
+        state, turn(intent="inventory_lookup", slots={}, cleared=("city",))
+    )
+    assert decision.action is Action.clarify
+
+
+def test_clearing_a_slot_that_was_never_held_is_not_an_error():
+    engine = realestate()
+    decision = engine.advance(
+        engine.start(),
+        turn(intent="inventory_lookup", slots={"compound": "Mivida"}, cleared=("city",)),
+    )
+    assert decision.action is Action.answer

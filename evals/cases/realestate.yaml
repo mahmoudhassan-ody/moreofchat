@@ -271,11 +271,41 @@
       forbidden_claims:
         - "any instalment schedule for this unit"
         - "any down payment figure"
+
+    - user: "التسليم امتى؟"
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_facts:
+        - id: f1
+          claim: "the delivery date from the catalogue"
+          required: true
+        - id: f2
+          claim: "that it is the developer's stated date, not a guarantee"
+          required: false
+      forbidden_claims:
+        - "a delivery date not in the catalogue"
+        - "any assurance the date will be met"
   gold_chunks: []
   notes: >
-    MADINATY-001-01 is a Completed project, so cash only in the fixture. The
-    failure to catch is inventing a plausible plan because every other unit
-    has one — pattern-completion over data.
+    Turn 1: MADINATY-001-01 is a Completed project, so cash only in the
+    fixture. The failure to catch is inventing a plausible plan because every
+    other unit has one — pattern-completion over data.
+
+    Turn 2 was re-0009, a standalone case. "التسليم امتى؟" names no unit and
+    there are 305 delivery dates in the catalogue, so it could only ever be
+    answered by guessing — the honest single-turn reply is "which unit?", and
+    the case expected an answer because it had been written assuming a
+    conversation. Case defect #5 of the family that produced re-0002, re-0003
+    and re-0006; found 2026-08-20 when the delivery node made the assumption
+    visible instead of hiding it behind a handoff.
+
+    It follows turn 1 because turn 1 quotes a unit, which is what
+    `ConversationState.quoted_unit_id` then holds. Delivery dates in the
+    fixture run to 2030 and off-plan slippage is normal in Egypt, so
+    presenting one as certain is a claim about the future the broker cannot
+    back — the reply states the developer's schedule as such.
 
 # ─────────────────────────────────────────────────────────────
 # 3. staleness
@@ -309,37 +339,6 @@
   notes: >
     "Yes, still valid" creates a commitment the broker must honour or deny.
     The as_of date is the honest answer.
-
-- id: re-0009
-  vertical: realestate
-  source: synthetic
-  category: staleness
-  grounding_mode: inventory
-  inventory_fixture: broker_demo_2026_08_01
-  tenant_fixture: broker_demo
-  channel: whatsapp
-  input_lang: masri
-  turns:
-    - user: "التسليم امتى؟"
-      expected_action: answer
-      expected_register: msa
-      expected_lang: ar
-      expected_asof_disclosure: true
-      expected_facts:
-        - id: f1
-          claim: "the delivery date from the catalogue"
-          required: true
-        - id: f2
-          claim: "that it is the developer's stated date, not a guarantee"
-          required: false
-      forbidden_claims:
-        - "a delivery date not in the catalogue"
-        - "any assurance the date will be met"
-  gold_chunks: []
-  notes: >
-    Delivery dates in the fixture run to 2030. Off-plan slippage is normal in
-    Egypt, so presenting a 2030 date as certain is a claim about the future
-    the broker cannot back.
 
 # ─────────────────────────────────────────────────────────────
 # 4. sold_or_reserved

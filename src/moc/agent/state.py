@@ -62,6 +62,13 @@ class TurnInput:
     #: out of nothing by omission.
     grounded: bool = False
     explicit_handoff_request: bool = False
+    #: Slots the customer moved off. **Distinct from an absent slot.**
+    #:
+    #: `null` and an omitted key both mean "not said", which correctly keeps a
+    #: held value — and left "In any other location" unable to say the one
+    #: thing it means. The held city survived a sentence whose entire content
+    #: was dropping it, and the search ran against New Cairo again.
+    cleared: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,13 +91,21 @@ class ConversationState:
     #: repeat themselves (F5).
     quoted_unit_id: str | None = None
 
-    def with_slots(self, new: dict[str, Any]) -> ConversationState:
-        """Merge newly extracted slots over the held ones.
+    def with_slots(
+        self, new: dict[str, Any], cleared: tuple[str, ...] = ()
+    ) -> ConversationState:
+        """Merge newly extracted slots over the held ones, minus what was cleared.
 
         Replace, not accumulate: a customer naming a second faculty is
         correcting themselves, not asking about both.
+
+        `cleared` is the customer moving OFF a slot — "in any other location".
+        Applied before the merge, so a turn that clears and sets the same slot
+        keeps the new value; the extractor refuses that shape anyway, and
+        ordering it the other way would make a clear silently win.
         """
-        return replace(self, slots={**self.slots, **new})
+        held = {k: v for k, v in self.slots.items() if k not in cleared}
+        return replace(self, slots={**held, **new})
 
     def to_json(self) -> dict[str, Any]:
         return {
