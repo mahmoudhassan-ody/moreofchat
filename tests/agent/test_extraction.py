@@ -264,6 +264,21 @@ def test_a_slot_with_no_alias_file_renders_as_a_plain_list():
     assert "(" not in line, line
 
 
+def test_the_prompt_distinguishes_a_correction_from_a_choice():
+    """re-0018 turn 3: `الشيخ زايد أو أكتوبر` — Sheikh Zayed *or* October.
+
+    The correction rule was written for `مش التجمع، الشيخ زايد` and is right
+    there. Applied to `أو` it drops half the question: the turn returned
+    `Sheikh Zayed` alone, and the customer's second city never reached the
+    filter. Both readings are one sentence apart, so the exception has to be
+    stated rather than left to inference.
+    """
+    text = PROMPT.read_text(encoding="utf-8")
+    assert "أو" in text, "the Arabic conjunction is what the turn actually contains"
+    assert '"or"' in text or "` or `" in text
+    assert "list" in text.lower(), "a choice returns both values, which is a list"
+
+
 def test_only_intents_the_engine_can_route_are_offered():
     """An intent the script has no node for routes to the fallback, so
     offering it produces a clarification the customer cannot resolve."""

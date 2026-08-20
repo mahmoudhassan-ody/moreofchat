@@ -84,6 +84,15 @@ class ScriptEngine:
         if missing:
             return self._clarify(state, node_name, node, missing)
 
+        # "At least one of these", where `requires_slots` is "all of these".
+        # A browse node cannot demand a specific slot — re-0023 names only a
+        # compound and must be answered — but demanding nothing is not the
+        # alternative: "بدور على حاجة للبيع" answered with one arbitrary studio
+        # out of 305 units, which is a worse turn than asking.
+        narrowing = node.get("requires_any_slot") or []
+        if narrowing and not any(s in state.slots for s in narrowing):
+            return self._clarify(state, node_name, node, tuple(narrowing))
+
         # §7.5, as two separate questions. Presence is the one that carries:
         # with nothing retrieved, composition would have to invent every
         # figure. The threshold is kept because it is configurable, but it

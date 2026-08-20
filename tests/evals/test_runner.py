@@ -460,8 +460,8 @@ def test_every_shipped_case_loads_for_the_runner():
     ids = {case.id for case in education + realestate}
 
     assert len(ids) == len(education) + len(realestate), "duplicate case id"
-    assert len(ids) >= 40
-    assert {"edu-0015", "re-0002", "re-0005", "re-0021", "re-0022", "re-0023"} <= ids
+    assert len(ids) >= 37
+    assert {"edu-0015", "re-0001", "re-0005", "re-0021", "re-0022", "re-0023"} <= ids
 
 
 @pytest_asyncio.fixture(loop_scope="session")

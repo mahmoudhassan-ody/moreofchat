@@ -52,7 +52,11 @@ def by_id(path: Path, case_id: str):
 # catching — cases silently disappearing — and the named ids below catch a
 # specific case being dropped while others are added.
 EDUCATION_CASES = 17
-REALESTATE_CASES = 21
+# Lowered from 21 on 2026-08-20: re-0002/re-0003 merged into re-0001 and
+# re-0006 into re-0005, as turns of the conversations they were always part of.
+# Three cases fewer, no coverage lost — each was asserting a slot stated by a
+# turn it had been separated from.
+REALESTATE_CASES = 20
 
 
 @pytest.mark.eval

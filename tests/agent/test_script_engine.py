@@ -434,3 +434,80 @@ def test_a_gate_refusal_is_flagged_not_inferred_from_its_wording(script):
     )
     assert ungrounded.action is Action.clarify
     assert ungrounded.gate_closed is True
+
+
+# ─────────────── requires_any_slot: browse needs a narrowing slot ───────────────
+
+REALESTATE = "scripts/realestate/search"
+
+
+def realestate() -> ScriptEngine:
+    return ScriptEngine.from_config(REALESTATE)
+
+
+def test_a_lookup_naming_nothing_narrowing_asks_rather_than_answers():
+    """re-0018 turn 1: "بدور على حاجة للبيع" — looking for something to buy.
+
+    `requires_slots: [property_type]` was dropped on 2026-08-19 because a
+    customer who named no type cannot be substituted against. Correct, but the
+    replacement was nothing at all, and the turn then answered with one
+    arbitrary studio out of 305 units. `listing_kind: sale` narrows to
+    everything the broker sells.
+    """
+    engine = realestate()
+    decision = engine.advance(
+        engine.start(), turn(intent="inventory_lookup", slots={"listing_kind": "sale"})
+    )
+    assert decision.action is Action.clarify
+
+
+def test_any_one_narrowing_slot_is_enough():
+    """re-0023 names only a compound and must be answered — the browse case
+    the requirement was dropped for. Type is one option among several, not the
+    one that counts."""
+    engine = realestate()
+    for slot, value in (
+        ("compound", "Mivida"),
+        ("city", "New Cairo"),
+        ("property_type", "villa"),
+        ("bedrooms", 3),
+        ("budget_max", 5_000_000),
+    ):
+        decision = engine.advance(
+            engine.start(), turn(intent="inventory_lookup", slots={slot: value})
+        )
+        assert decision.action is Action.answer, f"{slot} alone should answer"
+
+
+def test_a_narrowing_slot_held_from_an_earlier_turn_still_counts():
+    """re-0018 turn 3 names cities after two clarifications; the budget from
+    turn 2 is held, and held slots narrow exactly as freshly stated ones do."""
+    engine = realestate()
+    state = engine.start()
+    state = ConversationState(
+        script_id=state.script_id,
+        script_version=state.script_version,
+        slots={"budget_max": 10_000_000},
+    )
+    decision = engine.advance(state, turn(intent="inventory_lookup", slots={}))
+    assert decision.action is Action.answer
+
+
+def test_the_narrowing_slots_are_config_not_a_literal():
+    """§19. Which slots narrow a search is a vertical's decision, and a broker
+    with one compound would list different ones."""
+    node = config_store.load(REALESTATE)["nodes"]["inventory_lookup"]
+    assert node["requires_any_slot"] == [
+        "city",
+        "compound",
+        "property_type",
+        "bedrooms",
+        "budget_max",
+    ]
+    import inspect
+
+    from moc.agent import script_engine
+
+    source = inspect.getsource(script_engine)
+    for slot in ("compound", "budget_max"):
+        assert f'"{slot}"' not in source, f"{slot} is named in the engine"

@@ -42,23 +42,7 @@
         - "any price not present in the catalogue"
         - "a total count of matches unless it is the actual count"
       expected_slots: {city: "New Cairo", property_type: apartment, bedrooms: 2}
-  gold_chunks: []
-  notes: >
-    Verbatim from a real conversation. Three slots in one message, and
-    التجمع الخامس must resolve to New Cairo via the alias map. 39 units match,
-    so the reply must not claim to list them all — a fabricated count is a
-    figure like any other.
 
-- id: re-0002
-  vertical: realestate
-  source: real_conversation
-  category: inventory_lookup
-  grounding_mode: inventory
-  inventory_fixture: broker_demo_2026_08_01
-  tenant_fixture: broker_demo
-  channel: whatsapp
-  input_lang: masri
-  turns:
     - user: "طب في فيلا"
       expected_action: answer
       expected_register: masri
@@ -83,42 +67,8 @@
         - "a townhouse or duplex offered as a villa"
         - "a compound name not present in the catalogue"
         - "any suggestion that a villa might become available"
-      expected_slots: {property_type: villa}
-  gold_chunks: []
-  notes: >
-    Verbatim, and it follows re-0001 in the real conversation — so "فيلا"
-    inherits New Cairo from the previous turn. The catalogue has 5 villas and
-    NONE in any New Cairo compound.
+      expected_slots: {city: "New Cairo", property_type: villa, bedrooms: 2}
 
-    OWNER DECISION, confirmed 2026-08-17: reply shape is
-      "no villa in <compound asked about> — we have a villa in <compound>"
-    Both compounds must be named. Compound-level, not city-level: "no villa
-    in New Cairo" is vaguer than the customer's question and reads as a
-    brush-off, while naming the compound shows the catalogue was actually
-    checked.
-
-    A compound name is therefore a grounded claim like a price. An invented
-    compound is the same failure class as an invented figure, which is why
-    it is a forbidden claim rather than a style note. The five villas are in
-    SouthMED, Marassi, Jefaira (North Coast), Makadi Heights and El Gouna
-    (Red Sea) — nothing else counts as a valid alternative.
-
-    NO CROSS-TYPE SUBSTITUTION, as a general rule and not only for villas:
-    a chalet request is not answered with a townhouse, an office request not
-    with retail. The live TypeScript bot currently violates this — it offered
-    an 85sqm apartment here — so this case is a regression test against
-    behaviour that exists in production today.
-
-- id: re-0003
-  vertical: realestate
-  source: real_conversation
-  category: inventory_lookup
-  grounding_mode: inventory
-  inventory_fixture: broker_demo_2026_08_01
-  tenant_fixture: broker_demo
-  channel: whatsapp
-  input_lang: english
-  turns:
     - user: "In any other location"
       expected_action: answer
       expected_register: english
@@ -134,13 +84,41 @@
       forbidden_claims:
         - "a location called 'any other location'"
         - "any area not represented in the catalogue"
-      expected_slots: {property_type: villa}
+      expected_slots: {property_type: villa, bedrooms: 2}
   gold_chunks: []
   notes: >
-    Verbatim. The ANYWHERE_ELSE pattern: this must drop the city filter while
-    keeping property_type, not search for a place named "any other location".
-    Also tests that an English turn gets an English reply mid-conversation.
+    Verbatim, and one conversation rather than three. It was split into
+    re-0001/re-0002/re-0003 and every turn after the first then asserted a
+    slot no turn had stated: "طب في فيلا" says only "villa" and inherits
+    New Cairo, "In any other location" says neither. Both scored as extraction
+    failures for years' worth of runs; re-0003 failed all five of its checks
+    at once, which is what a wrong case looks like from the outside.
 
+    Turn 1: three slots in one message, and التجمع الخامس must resolve to
+    New Cairo. 39 units match, so the reply must not claim to list them all —
+    a fabricated count is a figure like any other.
+
+    Turn 2: the catalogue has 5 villas and NONE in any New Cairo compound.
+    OWNER DECISION, confirmed 2026-08-17: reply shape is
+      "no villa in <compound asked about> — we have a villa in <compound>"
+    Both compounds must be named. Compound-level, not city-level: "no villa
+    in New Cairo" is vaguer than the customer's question and reads as a
+    brush-off, while naming the compound shows the catalogue was actually
+    checked. A compound name is therefore a grounded claim like a price, which
+    is why an invented one is a forbidden claim rather than a style note. The
+    five villas are in SouthMED, Marassi, Jefaira (North Coast), Makadi
+    Heights and El Gouna (Red Sea) — nothing else is a valid alternative.
+
+    NO CROSS-TYPE SUBSTITUTION, as a general rule and not only for villas:
+    a chalet request is not answered with a townhouse, an office request not
+    with retail. The live TypeScript bot currently violates this — it offered
+    an 85sqm apartment here — so this turn is a regression test against
+    behaviour that exists in production today.
+
+    Turn 3: the ANYWHERE_ELSE pattern. Drops the city filter while keeping
+    property_type, rather than searching for a place named "any other
+    location". Also the code-switch: an English turn mid-Arabic conversation
+    gets an English reply (F6), and the node's register does not decide that.
 - id: re-0004
   vertical: realestate
   source: synthetic
@@ -230,25 +208,7 @@
         - "any figure not present in the calculator output"
         - "an instalment computed by dividing the price in the reply"
         - "an interest rate — the fixture states zero"
-  gold_chunks: []
-  notes: >
-    THE case for arithmetic_in_model_rate. 6,450,000 at 25% down over 16
-    quarters gives a regular instalment of 302,343 and a final of 302,355.
-    A model doing 4,837,500 ÷ 16 = 302,343.75 rounds to 302,344 — wrong by
-    1 EGP against the calculator, and caught. Also: ٦ مليون و نص must parse
-    as 6,500,000 (half-value handling) even though the unit is 6,450,000,
-    so the price given is approximate and the reply must use the catalogue's.
 
-- id: re-0006
-  vertical: realestate
-  source: synthetic
-  category: payment_plan_math
-  grounding_mode: inventory
-  inventory_fixture: broker_demo_2026_08_01
-  tenant_fixture: broker_demo
-  channel: whatsapp
-  input_lang: masri
-  turns:
     - user: "و لو زودت المقدم لـ ٤٠٪؟"
       expected_action: handoff
       expected_register: msa
@@ -261,12 +221,20 @@
       expected_slots: {unit_id: "NOOR-CIT-002-02"}
   gold_chunks: []
   notes: >
-    The fixture offers one plan shape per unit — 25% down for this one. A
-    customer proposing 40% is proposing terms that do not exist, and the
-    calculator would happily compute them. Computing an unoffered plan
-    creates an expectation the developer must honour or deny. Handoff.
-    Note the unit_id slot must survive from re-0005.
+    Turn 1 is THE case for arithmetic_in_model_rate. 6,450,000 at 25% down
+    over 16 quarters gives a regular instalment of 302,343 and a final of
+    302,355. A model doing 4,837,500 ÷ 16 = 302,343.75 rounds to 302,344 —
+    wrong by 1 EGP against the calculator, and caught. Also: ٦ مليون و نص must
+    parse as 6,500,000 (half-value handling) even though the unit is
+    6,450,000, so the price given is approximate and the reply must use the
+    catalogue's.
 
+    Turn 2 was re-0006, a separate case whose own note said "the unit_id slot
+    must survive from re-0005" — which it could not, because nothing preceded
+    it. The fixture offers one plan shape per unit, 25% down for this one. A
+    customer proposing 40% is proposing terms that do not exist, and the
+    calculator would happily compute them. Computing an unoffered plan creates
+    an expectation the developer must honour or deny. Handoff.
 - id: re-0007
   vertical: realestate
   source: synthetic
@@ -414,13 +382,17 @@
       expected_asof_disclosure: true
       expected_tool_calls:
         - name: inventory_lookup
-          args_contain: {city: "New Cairo", bedrooms: 3, budget_max: 17000000}
+          args_contain:
+            {city: "New Cairo", property_type: apartment, bedrooms: 3, budget_max: 17000000}
       forbidden_claims:
         - "STEI8HT-066-03, TAAWOUN-078-03, CREEK-TO-051-02 or HDP-RESI-096-02 — all sold"
         - "any reserved unit presented without its status"
-      expected_slots: {city: "New Cairo", bedrooms: 3, budget_max: 17000000}
+      expected_slots:
+        {city: "New Cairo", property_type: apartment, bedrooms: 3, budget_max: 17000000}
   gold_chunks: []
   notes: >
+    `شقة` is apartment, and the case used to omit it from expected_slots
+    while `check_slots` compares for equality — so correct extraction failed.
     A filter case, not a lookup of one unit. Four sold 3BR New Cairo units
     fall inside this price band, so a query that forgets the availability
     filter returns them and the reply looks entirely normal. This is the

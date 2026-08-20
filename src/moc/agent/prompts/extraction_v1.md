@@ -52,8 +52,13 @@ Rules that matter more than they look:
   Do not guess, do not carry a default, and do not infer a value from what
   would be typical.
 - **Held slots persist unless corrected.** Repeat a held slot only if this
-  message changes it. A customer naming a second value is correcting
-  themselves, not asking about both.
+  message changes it. A customer naming a second value *instead of* the first
+  is correcting themselves: `مش التجمع، الشيخ زايد` is one value, the second.
+- **`أو` and "or" mean both, not the last one.** `الشيخ زايد أو أكتوبر` is a
+  customer widening the search, not changing their mind — return a list of
+  both values. The same goes for `و` and "and" between two values of one slot.
+  Dropping half of an "or" quietly narrows the search to something the
+  customer never asked for.
 - **A number is a number.** `bedrooms` and `budget_max` are integers with no
   separators or units. `في حدود ١٥ مليون` is 15000000. `٦ مليون و نص` is
   6500000.

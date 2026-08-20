@@ -78,6 +78,15 @@ nodes:
     action: answer
     register: masri          # showing someone what is available is conversation
     requires_slots: []
+    # At least one of these, not all. `requires_slots: [property_type]` was
+    # dropped on 2026-08-19 — a customer who named no type cannot be
+    # substituted against, so the requirement refused legitimate browse
+    # questions without enforcing anything. But the replacement was nothing at
+    # all, and "بدور على حاجة للبيع" was then answered with one arbitrary studio
+    # out of 305 units. re-0023 names only a compound and is still answered;
+    # `listing_kind: sale` alone narrows to everything the broker sells, and
+    # asks.
+    requires_any_slot: [city, compound, property_type, bedrooms, budget_max]
     grounding: required
     clarify:
       register: masri

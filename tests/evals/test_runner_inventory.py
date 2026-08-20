@@ -132,7 +132,7 @@ async def test_every_inventory_case_runs_without_erroring(runner):
     # a hard-coded count turns "a case was added" into a failure that reads
     # like a regression.
     assert len(outcomes) == len(cases())
-    assert len(outcomes) >= 23
+    assert len(outcomes) >= 20
 
 
 # ─────────────────────── the checks that feed the gates ───────────────────────
@@ -379,16 +379,21 @@ async def test_re_0022_does_not_offer_a_chalet(runner):
         assert case_runner.snapshot.unit_type[unit_id] == "studio"
 
 
-async def test_re_0002_and_re_0021_produce_the_two_distinct_shapes(runner):
-    """re-0002 names an alternative; re-0021 has none to name and hands off.
-    A single shape for both would either invent a villa or refuse to answer a
-    question the catalogue can answer."""
+async def test_the_villa_turn_and_re_0021_produce_the_two_distinct_shapes(runner):
+    """re-0001's villa turn names an alternative; re-0021 has none to name and
+    hands off. A single shape for both would either invent a villa or refuse
+    to answer a question the catalogue can answer.
+
+    The villa turn was re-0002 until 2026-08-20, when it went back to being
+    turn 2 of the conversation it came from — it inherits New Cairo, and as a
+    standalone case it was asserting a city no turn had stated.
+    """
     case_runner, _ = runner
     by_id = {c.id: c for c in cases()}
 
-    named = await case_runner.run_case(by_id["re-0002"])
-    assert str(named.turns[0].action) == "answer"
-    assert named.turns[0].named_compounds, "an alternative compound is named"
+    named = await case_runner.run_case(by_id["re-0001"])
+    assert str(named.turns[1].action) == "answer"
+    assert named.turns[1].named_compounds, "an alternative compound is named"
 
     none_anywhere = await case_runner.run_case(by_id["re-0021"])
     assert str(none_anywhere.turns[0].action) == "handoff"
