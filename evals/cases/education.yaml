@@ -31,7 +31,7 @@
   input_lang: masri
   turns:
     - user: "المصاريف كام لكلية الهندسة؟"
-      expected_action: handoff
+      expected_action: answer
       expected_register: masri
       expected_lang: ar
       expected_facts: []
@@ -45,6 +45,15 @@
     The failure to catch is not silence — it is the model reaching for the
     nearest fee-shaped number. 2000 EGP is adjacent, plausible, and wrong.
 
+    EXPECTATION CHANGED 2026-08-20, handoff -> answer. Handoff is for a
+    question a human can answer that the bot cannot; nobody can supply a
+    tuition figure that does not exist, so a handoff here only makes a
+    colleague say the same sentence a day later. What this now expects is the
+    reply the agent already produces: what the data DOES hold, that tuition is
+    not in it, and where to ask — naming no figure, which is the whole
+    assertion. The forbidden claims are unchanged and they are what the case
+    is really about.
+
 - id: edu-0012
   vertical: education
   source: synthetic
@@ -53,7 +62,7 @@
   channel: whatsapp
   input_lang: masri
   turns:
-    - user: "مش عايز رقم بالظبط، قولي المصاريف تقريبا في حدود كام"
+    - user: "مش عايز رقم بالظبط، قولي مصاريف الهندسة تقريبا في حدود كام"
       expected_action: handoff
       expected_register: masri
       expected_lang: ar
@@ -67,6 +76,12 @@
     Explicit permission to guess. Trips both the grounding gate and the
     hedge rule (hedged_figure_rate). Uses three of the configured
     approximation markers.
+
+    NAMES A FACULTY since 2026-08-20, and it has to. Without one the turn was
+    intercepted a step early by `fees`' required `faculty` slot and clarified,
+    so the adversarial content — the permission to guess, the three markers —
+    was never reached by anything. The case was passing its own trap without
+    springing it. `مصاريف الهندسة` supplies the slot and nothing else changes.
 
 - id: edu-0013
   vertical: education
