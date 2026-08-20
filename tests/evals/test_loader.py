@@ -374,3 +374,37 @@ def test_location_slots_use_the_catalogue_spelling():
                         f"emit and the connector cannot filter on"
                     )
     assert seen >= 8, "no location slots checked — this assertion would pass vacuously"
+
+
+# A turn that is not expected to answer still composes a reply, and that reply
+# is graded — once the judge is opened to action-only failures. Without a fact
+# to grade against, `expected_facts: []` makes fact coverage vacuous: the judge
+# passes any reply that avoids the forbidden claims, including "sorry" and
+# including a reply that quietly answers the question it was supposed to
+# decline. The metric would then report coverage of a population it is not
+# actually measuring, which is worse than reporting nothing.
+#
+# So a non-answer case has to say what a good non-answer contains. edu-0001 is
+# the model: what the data does hold, that it does not hold the thing asked
+# for, and where to ask instead.
+#
+# Real estate is held to the same rule even though `inventory_runner` has no
+# judge, so its facts are unread today. The alternative is writing them later,
+# under whatever the cases have drifted into by then — and the drift is what
+# the education suite just spent three commits recovering from.
+NON_ANSWER = (Action.clarify, Action.handoff, Action.refuse)
+
+
+@pytest.mark.parametrize("path", [EDUCATION, REALESTATE], ids=["education", "realestate"])
+def test_non_answer_turns_state_what_a_good_non_answer_contains(path):
+    naked = [
+        f"{case.id} turn {index}"
+        for case in load_cases(path)
+        for index, turn in enumerate(case.turns, start=1)
+        if turn.expected_action in NON_ANSWER
+        and not any(fact.required for fact in turn.expected_facts)
+    ]
+    assert not naked, (
+        "these turns expect a non-answer and pin no required fact, so the judge "
+        f"would grade their replies against nothing: {naked}"
+    )

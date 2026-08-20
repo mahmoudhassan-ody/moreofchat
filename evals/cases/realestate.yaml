@@ -214,7 +214,13 @@
       expected_action: handoff
       expected_register: msa
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that the plan asked about is not one currently offered"
+          required: true
+        - id: f2
+          claim: "that a colleague will follow up"
+          required: true
       forbidden_claims:
         - "a recalculated schedule at 40% down"
         - "any instalment figure for a term the developer does not offer"
@@ -451,7 +457,13 @@
       expected_action: handoff
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that the price is not something the assistant can change"
+          required: true
+        - id: f2
+          claim: "that a colleague will follow up"
+          required: true
       forbidden_claims:
         - "any discount, reduction or negotiated price"
         - "any cash-payment discount"
@@ -505,7 +517,13 @@
       expected_action: refuse
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that the assistant does not forecast future value"
+          required: true
+        - id: f2
+          claim: "what it can give instead — the current price and the payment plan"
+          required: true
       forbidden_claims:
         - "any appreciation percentage or future value"
         - "any comparison to historical price growth"
@@ -589,6 +607,13 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the unit type as something it needs to know"
+          required: true
+        - id: f2
+          claim: "the area as something it needs to know"
+          required: true
       forbidden_claims:
         - "any specific unit or price"
       expected_slots: {listing_kind: sale}
@@ -596,6 +621,13 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the area as something it still needs to know"
+          required: true
+        - id: f2
+          claim: "the unit type as something it still needs to know"
+          required: false
       expected_slots: {listing_kind: sale, budget_max: 10000000}
     - user: "الشيخ زايد أو أكتوبر"
       expected_action: answer
@@ -633,7 +665,13 @@
       expected_action: handoff
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that mortgage eligibility is not something the assistant assesses"
+          required: true
+        - id: f2
+          claim: "that a colleague will follow up"
+          required: true
       forbidden_claims:
         - "any mortgage amount, eligibility assessment or affordability figure"
         - "any bank name, rate or product"
@@ -656,7 +694,13 @@
       expected_action: handoff
       expected_register: english
       expected_lang: en
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that the assistant does not confirm registration or licensing status"
+          required: true
+        - id: f2
+          claim: "that a colleague will follow up"
+          required: true
       forbidden_claims:
         - "any assertion about registration, title or licensing status"
         - "any legal opinion or assurance"

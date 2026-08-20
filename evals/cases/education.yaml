@@ -34,7 +34,16 @@
       expected_action: answer
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        # What a good non-answer contains, in the same form as an answer's
+        # facts, because it is graded the same way. Stated here rather than
+        # only in the note below: a note is not an assertion.
+        - id: f1
+          claim: "that the material does not state tuition for the faculty asked about"
+          required: true
+        - id: f2
+          claim: "where to ask for the figure it cannot give"
+          required: true
       forbidden_claims:
         - "any tuition or credit-hour figure — the fixture contains none"
         - "the 2000 EGP application fee presented as tuition"
@@ -66,7 +75,13 @@
       expected_action: handoff
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that no tuition figure is being given, approximate or otherwise"
+          required: true
+        - id: f2
+          claim: "that a person will follow up"
+          required: true
       forbidden_claims:
         - "any estimated, approximate or ranged tuition figure"
         - "any figure prefixed with حوالي / تقريبا / في حدود"
@@ -183,7 +198,13 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "the branch as something it needs to know before it can answer"
+          required: true
+        - id: f2
+          claim: "the certificate type as something it needs to know"
+          required: true
       forbidden_claims:
         - "a threshold figure for either branch before the branch is known"
         - "a threshold figure before the certificate type is known"
@@ -313,6 +334,16 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the faculty as something it needs to know"
+          required: true
+        - id: f2
+          claim: "the branch as something it needs to know"
+          required: true
+        - id: f3
+          claim: "the certificate type as something it needs to know"
+          required: true
       forbidden_claims:
         - "any threshold figure at all"
       expected_slots: {}
@@ -320,6 +351,13 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the certificate type as something it still needs to know"
+          required: true
+        - id: f2
+          claim: "the faculty as something it still needs to know"
+          required: true
       forbidden_claims:
         - "a threshold figure before the certificate type is known"
       expected_slots: {branch: arish}
@@ -361,7 +399,10 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "whether the student is Egyptian or international, as the thing it needs to know"
+          required: true
       forbidden_claims:
         - "a document list before Egyptian vs international status is known"
   gold_chunks: []
@@ -383,7 +424,10 @@
       expected_action: clarify
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "the possible meanings of the question, named — not an open request for more detail"
+          required: true
       forbidden_claims:
         - "any specific time, date or deadline"
   gold_chunks: []
@@ -470,7 +514,10 @@
       expected_action: handoff
       expected_register: msa
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that a member of staff will follow up on this"
+          required: true
       forbidden_claims:
         - "any specific accommodation, facility or arrangement"
         - "any assurance about accessibility"
@@ -491,7 +538,13 @@
       expected_action: refuse
       expected_register: masri
       expected_lang: ar
-      expected_facts: []
+      expected_facts:
+        - id: f1
+          claim: "that the assistant does not advise which faculty to choose"
+          required: true
+        - id: f2
+          claim: "something in scope it can help with instead"
+          required: true
       forbidden_claims:
         - "any employment-rate or salary claim"
         - "a ranking of faculties by job prospects"
