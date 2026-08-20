@@ -97,12 +97,11 @@ Rules:
 
 Extraction runs at `temperature: 0.0` on both candidates (§2.6's `slot_extraction`), per §2's "lowest available temperature". Note that this is per candidate rather than per task: `claude-sonnet-5` answers a request carrying `temperature` with a 400 (`temperature is deprecated for this model`, measured 2026-08-20), while `claude-haiku-4-5` accepts it. Dropping extraction to 0 narrowed real-estate `overall_accuracy` from a 13.1-point spread to 2.1.
 
-**Baseline, 2026-08-20**, n=3 each. Real estate on 20 cases, one still
-failing (re-0018 turn 3); education unchanged since `2eb7db8`.
+**Baseline, 2026-08-20**, n=3 each. Real estate on 20 cases, all passing.
 
 | Suite | Metric | Value |
 |---|---|---|
-| real estate | `overall_accuracy` | 95.0% (95.0–95.0) |
+| real estate | `overall_accuracy` | 100.0% (100.0–100.0) |
 | real estate | `asof_disclosure_rate` | 100.0% (100.0–100.0) |
 | real estate | `arithmetic_in_model_rate` | 0.0% (0.0–0.0) |
 | real estate | `type_substitution_rate` | 0.0% (0.0–0.0) |
@@ -110,7 +109,7 @@ failing (re-0018 turn 3); education unchanged since `2eb7db8`.
 | real estate | `wrong_compound_rate` | 0.0% (0.0–0.0) |
 | real estate | `sold_unit_offered_rate` | 0.0% (0.0–0.0) |
 | real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
-| real estate | `unresolved_type_rate` (tracked) | 38.9% (38.9–38.9) |
+| real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
 | education | `overall_accuracy` | 5.9% (0.0–11.8) — **not measurable at 17 cases** |
 | education | `expected_action_accuracy` | 66.7% (63.2–68.4) |

@@ -461,22 +461,54 @@ def test_a_lookup_naming_nothing_narrowing_asks_rather_than_answers():
     assert decision.action is Action.clarify
 
 
-def test_any_one_narrowing_slot_is_enough():
-    """re-0023 names only a compound and must be answered — the browse case
-    the requirement was dropped for. Type is one option among several, not the
-    one that counts."""
+def test_a_search_needs_a_subject_where_or_what():
+    """re-0023 names only a compound and must be answered. A place or a type
+    is enough on its own; either one is a thing to look for."""
     engine = realestate()
     for slot, value in (
         ("compound", "Mivida"),
         ("city", "New Cairo"),
         ("property_type", "villa"),
-        ("bedrooms", 3),
-        ("budget_max", 5_000_000),
+        ("unit_id", "MIVIDA-005-02"),
+        ("near_price", 6_450_000),
     ):
         decision = engine.advance(
             engine.start(), turn(intent="inventory_lookup", slots={slot: value})
         )
         assert decision.action is Action.answer, f"{slot} alone should answer"
+
+
+@pytest.mark.parametrize(
+    ("slot", "value"), [("budget_max", 10_000_000), ("bedrooms", 3)]
+)
+def test_a_qualifier_without_a_subject_still_asks(slot, value):
+    """re-0018 turn 2: `ميزانيتي 10 مليون` after "something for sale".
+
+    A ceiling and a bedroom count both describe a unit without saying what
+    kind or where — they qualify a subject rather than being one. Answering
+    on a budget alone returned one arbitrary studio out of everything under
+    10 million, which is the failure `requires_any_slot` exists to stop; the
+    first version of the list simply included the wrong slots.
+    """
+    engine = realestate()
+    decision = engine.advance(
+        engine.start(),
+        turn(intent="inventory_lookup", slots={"listing_kind": "sale", slot: value}),
+    )
+    assert decision.action is Action.clarify
+
+
+def test_a_qualifier_answers_once_it_has_a_subject():
+    """The same budget, with a city — re-0018 turn 3."""
+    engine = realestate()
+    decision = engine.advance(
+        engine.start(),
+        turn(
+            intent="inventory_lookup",
+            slots={"budget_max": 10_000_000, "city": ["Sheikh Zayed", "October"]},
+        ),
+    )
+    assert decision.action is Action.answer
 
 
 def test_a_narrowing_slot_held_from_an_earlier_turn_still_counts():
@@ -487,7 +519,7 @@ def test_a_narrowing_slot_held_from_an_earlier_turn_still_counts():
     state = ConversationState(
         script_id=state.script_id,
         script_version=state.script_version,
-        slots={"budget_max": 10_000_000},
+        slots={"compound": "Mivida"},
     )
     decision = engine.advance(state, turn(intent="inventory_lookup", slots={}))
     assert decision.action is Action.answer
@@ -501,8 +533,7 @@ def test_the_narrowing_slots_are_config_not_a_literal():
         "city",
         "compound",
         "property_type",
-        "bedrooms",
-        "budget_max",
+        "unit_id",
         "near_price",
     ]
     import inspect

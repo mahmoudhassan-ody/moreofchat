@@ -102,15 +102,24 @@ nodes:
     action: answer
     register: masri          # showing someone what is available is conversation
     requires_slots: []
-    # At least one of these, not all. `requires_slots: [property_type]` was
-    # dropped on 2026-08-19 — a customer who named no type cannot be
-    # substituted against, so the requirement refused legitimate browse
-    # questions without enforcing anything. But the replacement was nothing at
-    # all, and "بدور على حاجة للبيع" was then answered with one arbitrary studio
-    # out of 305 units. re-0023 names only a compound and is still answered;
-    # `listing_kind: sale` alone narrows to everything the broker sells, and
-    # asks.
-    requires_any_slot: [city, compound, property_type, bedrooms, budget_max, near_price]
+    # At least one of these, not all.
+    #
+    # **A search needs a subject — a WHERE or a WHAT.** A city, a compound, a
+    # type or a specific unit is a thing to look for. `bedrooms` and
+    # `budget_max` are qualifiers: they describe a unit without saying what
+    # kind or where, and a search on one of them alone returns whatever the
+    # catalogue happens to list first.
+    #
+    # Both halves of that were learned the hard way. `requires_slots:
+    # [property_type]` was dropped on 2026-08-19 — a customer who named no
+    # type cannot be substituted against, so it refused legitimate browse
+    # questions without enforcing anything — and the replacement was nothing
+    # at all, so "بدور على حاجة للبيع" got one arbitrary studio out of 305
+    # units. The first version of this list then included `budget_max`, and
+    # re-0018 turn 2 (`ميزانيتي 10 مليون`) got one arbitrary studio out of
+    # everything under ten million, which is the same failure with a filter
+    # in front of it.
+    requires_any_slot: [city, compound, property_type, unit_id, near_price]
     grounding: required
     clarify:
       register: masri
