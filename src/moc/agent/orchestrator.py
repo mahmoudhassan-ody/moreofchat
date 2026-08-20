@@ -89,6 +89,11 @@ class Retrieval:
     #: that reads, which is a different claim from "looked and found nothing".
     confidence: float | None = None
     script_constants: Sequence[float | str] = ()
+    #: What each passage is *about*, in the corpus's own words. Only the
+    #: fallback clarification reads this (edu-0009): a body does not say which
+    #: question it answers, so without titles the only honest reply to an
+    #: unroutable message was "what exactly do you need?".
+    titles: Sequence[str] = ()
 
 
 class Retriever(Protocol):
@@ -370,7 +375,9 @@ class Orchestrator:
         """
         failed = key in (_PROVIDER_UNAVAILABLE, _GROUNDING_FAILED)
         return TurnResult(
-            reply=self._reply_text(key, decision, redaction.text, lang),
+            reply=self._reply_text(
+                key, decision, redaction.text, lang, titles=tuple(retrieval.titles)
+            ),
             action=Action.handoff if failed else decision.action,
             register=decision.register,
             state=decision.state,
@@ -385,7 +392,12 @@ class Orchestrator:
 
     @staticmethod
     def _reply_text(
-        key: str, decision: Decision, message: str, lang: str | None = None
+        key: str,
+        decision: Decision,
+        message: str,
+        lang: str | None = None,
+        *,
+        titles: tuple[str, ...] = (),
     ) -> str:
         # Register is the node's policy; language mirrors the customer. Both,
         # because passing only the register is F6: it renders cleanly and
@@ -393,7 +405,10 @@ class Orchestrator:
         voice = Voice(decision.register, lang or reply_language(message))
         document = load(_REPLIES)
         if key is _CLARIFY:
-            asked = _ask_for(document, decision, voice)
+            # Named slots first. A node with missing slots knows exactly what
+            # it needs, and offering a menu instead would replace an
+            # answerable question with a browse.
+            asked = _ask_for(document, decision, voice) or _offer(document, titles, voice)
             if asked:
                 return asked
         return voice.say(document["replies"][key])
@@ -424,6 +439,31 @@ def _ask_for(document: dict, decision: Decision, voice: Voice) -> str | None:
         return None
     joined = voice.say(plural["join"]).join(voice.say(noun) for noun in nouns)
     return voice.say(plural["template"]).replace("{items}", joined)
+
+
+def _offer(document: dict, titles: tuple[str, ...], voice: Voice) -> str | None:
+    """Name the meanings the question might have had, or say nothing.
+
+    edu-0009. The fallback node has no missing slots — the message routed
+    nowhere, which is a different problem from an incomplete question — so
+    `_ask_for` cannot reach it and the generic "ممكن توضّحلي أكتر" was all it
+    could say, to a customer who had already asked clearly.
+
+    The options are the retrieved titles, unedited and in whatever language the
+    tenant wrote them; only the sentence around them mirrors the customer. That
+    keeps the clarification grounded in the same sense a reply is — an option
+    the KB cannot answer is never offered, because it was never retrieved — and
+    leaves no per-tenant list to drift out of date.
+    """
+    options = document["clarify_options"]
+    offered = list(titles)[: options["max"]]
+    if len(offered) < options["min"]:
+        # A list of one is a guess with a question mark on it, not a choice.
+        return None
+    bullet = options["bullet"]
+    return voice.say(options["template"]).replace(
+        "{items}", "\n".join(f"{bullet}{title}" for title in offered)
+    )
 
 
 __all__ = ["Extractor", "Orchestrator", "Retrieval", "Retriever", "TurnResult"]

@@ -81,6 +81,7 @@ def build(
     intent: str | None = "fees",
     slots: dict | None = None,
     passages: tuple[str, ...] = (PASSAGE,),
+    titles: tuple[str, ...] = (),
     fail_with: Exception | None = None,
     fail_primary: Exception | None = None,
 ) -> tuple[Orchestrator, FakeProvider, FakeProvider, FakeExtractor, FakeRetriever]:
@@ -109,7 +110,9 @@ def build(
     extractor = FakeExtractor(
         TurnInput(intent=intent, slots={"faculty": "engineering"} if slots is None else slots)
     )
-    retriever = FakeRetriever(router, Retrieval(passages=passages, confidence=confidence))
+    retriever = FakeRetriever(
+        router, Retrieval(passages=passages, titles=titles, confidence=confidence)
+    )
     orchestrator = Orchestrator(
         engine=ScriptEngine.from_config(SCRIPT),
         router=router,
@@ -719,4 +722,101 @@ async def test_the_fallback_is_load_bearing_when_extraction_reports_nothing(
     assert result.action is Action.clarify
     assert result.reply == Voice(result.register, "ar").say(
         load("agent/replies")["replies"]["clarify"]
+    )
+
+
+# ─────────── edu-0009: the clarification that offers the options ───────────
+
+
+async def test_the_fallback_clarification_offers_what_was_retrieved(turn_session):
+    """edu-0009. "المواعيد إيه؟" could be branch hours, bus times or an
+    application deadline, and the reply was "ممكن توضّحلي أكتر عايز تعرف إيه
+    بالظبط؟" — asking a customer who had already asked clearly to ask again.
+    The judge scored it helpfulness 1 and said so: "طلب توضيحًا عامًا من غير
+    ما يسمّي الفروع أو المواعيد المحتملة".
+
+    The fallback node has no slots to name, so the "name the missing thing"
+    fix cannot reach it. What it does have is the retrieved set, and in a Q&A
+    corpus each title is one of the meanings the question might have had.
+    Offering those is both a real clarification and a grounded one: an option
+    the KB cannot answer is never offered, because it was never retrieved.
+    """
+    orchestrator, *_ = build(
+        intent=None,
+        titles=("ما هي مواعيد عمل الفروع؟", "ما آخر موعد للتقديم؟"),
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
+    )
+
+    assert result.action is Action.clarify
+    assert "مواعيد عمل الفروع" in result.reply
+    assert "آخر موعد للتقديم" in result.reply
+    # Against the string itself, not a word from it. The generic reply and this
+    # one are both clarifications written in the same voice, so any word worth
+    # matching on is a word they might come to share — which is a test that
+    # passes on wording rather than on behaviour.
+    assert result.reply != load("agent/replies")["replies"]["clarify"]["masri"]
+
+
+async def test_one_retrieved_topic_is_not_a_choice(turn_session):
+    """A list of one is not options, it is a guess with a question mark. If
+    retrieval is that certain the fallback should not be reaching for a menu —
+    the generic clarification is the honest reply."""
+    orchestrator, *_ = build(intent=None, titles=("ما هي مواعيد عمل الفروع؟",))
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
+    )
+    assert result.reply == load("agent/replies")["replies"]["clarify"]["masri"]
+
+
+async def test_the_offered_options_are_capped(turn_session):
+    """Retrieval returns `final_k` passages and a wall of them is not a
+    question anyone answers. The cap is config, not a literal here."""
+    from moc.config_store import load as _load
+
+    cap = _load("agent/replies")["clarify_options"]["max"]
+    orchestrator, *_ = build(
+        intent=None, titles=tuple(f"سؤال رقم {n}" for n in range(cap + 3))
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
+    )
+    assert result.reply.count("سؤال رقم") == cap
+
+
+async def test_a_named_missing_slot_still_wins_over_the_options(turn_session):
+    """Two clarifications compete only in principle: a node with missing slots
+    knows exactly what it needs, and offering a menu instead would replace an
+    answerable question with a browse."""
+    orchestrator, *_ = build(
+        intent="admission_thresholds",
+        slots={"faculty": "pharmacy"},
+        titles=("ما هي مواعيد عمل الفروع؟", "ما آخر موعد للتقديم؟"),
+    )
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="الحد الأدنى للقبول في الصيدلة كام؟",
+        channel=CHANNEL,
+    )
+    assert "الفرع" in result.reply
+    assert "مواعيد عمل الفروع" not in result.reply
+
+
+async def test_an_english_customer_gets_the_english_option_sentence(turn_session):
+    """F6. The options are the corpus's own words and stay as written; the
+    sentence around them mirrors the customer."""
+    orchestrator, *_ = build(
+        intent=None, titles=("Branch working hours?", "Application deadline?")
+    )
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=start_state(),
+        text="what times do you mean?",
+        channel=CHANNEL,
+    )
+    assert "Branch working hours?" in result.reply
+    assert result.reply.startswith(
+        load("agent/replies")["clarify_options"]["template"]["english"].split("{")[0]
     )

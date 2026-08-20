@@ -131,6 +131,31 @@ class FusionResult:
     def passages(self) -> tuple[str, ...]:
         return tuple(hit.content for hit in self.hits)
 
+    @property
+    def titles(self) -> tuple[str, ...]:
+        """What each retrieved passage is *about*, in the corpus's own words.
+
+        `passages` is bodies, and a body does not say which question it
+        answers — so a clarification could only ask "what exactly do you
+        need?" of a customer who had already asked clearly (edu-0009:
+        "المواعيد إيه؟", which could be branch hours, bus times or a
+        deadline). A Q&A corpus keeps its subject in the title, which is the
+        one field that can be offered back as an option.
+
+        Untitled hits contribute nothing rather than an empty string: a blank
+        option reads as a rendering fault, and a corpus without titles has to
+        degrade to the generic clarification rather than to a list of
+        nothing. Duplicates collapse — the fixture carries each fact in two
+        languages and they retrieve together, so offering both asks the
+        customer to choose between a thing and itself.
+        """
+        seen: dict[str, None] = {}
+        for hit in self.hits:
+            title = str(hit.payload.get("title") or "").strip()
+            if title:
+                seen.setdefault(title)
+        return tuple(seen)
+
 
 class Reranker(Protocol):
     """Cross-encoder rerank, via API (§7.5 notes).

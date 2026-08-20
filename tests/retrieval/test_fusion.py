@@ -401,3 +401,64 @@ async def test_the_retriever_does_not_invent_relevance_for_the_lexical_arm():
     assert result.confidence is None, "a rank is not a score"
     assert all(hit.relevance is None for hit in result.hits)
     assert result.passages, "and the turn still gets its passages"
+
+
+# ─────────── edu-0009: what the retrieved passages are *about* ───────────
+
+
+async def test_the_result_carries_the_titles_of_what_it_retrieved():
+    """A clarification that names the possible meanings needs them from
+    somewhere, and the corpus already says what each passage is about.
+
+    edu-0009 asks "المواعيد إيه؟" — branch hours, bus times, or a deadline —
+    and the fallback could only answer "what exactly do you need?", because
+    `passages` is bodies and a body does not say what question it answers.
+    This corpus is Q&A-shaped: the title is the question, which makes it the
+    one field that can be offered back as an option.
+    """
+    hits = [
+        Candidate(chunk_id="a", rank=1, relevance=0.9, content="من 9 لـ 4",
+                  payload={"title": "مواعيد عمل الفروع؟"}),
+        Candidate(chunk_id="b", rank=2, relevance=0.8, content="آخر موعد 30 يوليو",
+                  payload={"title": "آخر موعد للتقديم؟"}),
+    ]
+    result = await fuse(query="المواعيد إيه؟", dense=hits, sparse=None, config=CONFIG)
+    assert result.titles == ("مواعيد عمل الفروع؟", "آخر موعد للتقديم؟")
+
+
+async def test_a_hit_with_no_title_contributes_none():
+    """Not an empty string. A blank option in a list of options reads as a
+    rendering fault, and a corpus without titles must degrade to the generic
+    clarification rather than to a list of nothing."""
+    hits = [
+        Candidate(chunk_id="a", rank=1, relevance=0.9, content="body", payload={}),
+        Candidate(chunk_id="b", rank=2, relevance=0.8, content="body",
+                  payload={"title": "  "}),
+        Candidate(chunk_id="c", rank=3, relevance=0.7, content="body",
+                  payload={"title": "a real one"}),
+    ]
+    result = await fuse(query="q", dense=hits, sparse=None, config=CONFIG)
+    assert result.titles == ("a real one",)
+
+
+async def test_the_same_title_twice_is_one_option():
+    """The fixture carries each document in Arabic and English, and a
+    language pair of the same fact retrieves together.
+    Offering it twice asks the customer to choose between a thing and
+    itself."""
+    hits = [
+        Candidate(chunk_id="a", rank=1, relevance=0.9, content="x",
+                  payload={"title": "same"}),
+        Candidate(chunk_id="b", rank=2, relevance=0.8, content="y",
+                  payload={"title": "same"}),
+    ]
+    result = await fuse(query="q", dense=hits, sparse=None, config=CONFIG)
+    assert result.titles == ("same",)
+
+
+async def test_titles_are_empty_when_the_gate_closed():
+    """Same rule as `passages`: a caller must not have to re-apply the
+    threshold, and offering the topics of passages too weak to answer from is
+    the gate leaking through a different field."""
+    result = await fuse(query="q", dense=[], sparse=None, config=CONFIG)
+    assert result.titles == ()

@@ -135,6 +135,36 @@ ask_for_slots:
       msa: "ما إذا كان الطالب مصريًا أم دوليًا"
       english: "whether the student is Egyptian or international"
 
+# edu-0009. The fallback node has no missing slots to name — the customer's
+# message routed nowhere, which is a different problem from an incomplete
+# question — so `ask_for_slots` cannot reach it and "ممكن توضّحلي أكتر" was all
+# it could say. To a customer who had already asked clearly: "المواعيد إيه؟",
+# which could be branch hours, bus times or an application deadline.
+#
+# The options are the *titles of the retrieved passages*, unedited. In a Q&A
+# corpus a title is one of the meanings the question might have had, and using
+# them keeps the clarification grounded in the same sense a reply is: an option
+# the KB cannot answer is never offered, because it was never retrieved. It
+# also means no per-tenant list to maintain and drift.
+#
+# Titles are quoted as the tenant wrote them, in whatever language they wrote
+# them. Only the sentence around them mirrors the customer.
+clarify_options:
+  # Below two, this does not fire — a list of one is a guess with a question
+  # mark on it, not a choice. Above the cap it is a wall nobody answers;
+  # retrieval returns final_k passages and offering all of them is a browse.
+  min: 2
+  max: 3
+  template:
+    masri: "تقصد أنهي واحدة فيهم؟ عندي:\n{items}"
+    msa: "ما المقصود تحديدًا؟ المتاح لدينا:\n{items}"
+    english: "Which do you mean? I have:\n{items}"
+  # One per line rather than a joined sentence: these are whole questions, and
+  # "أ و ب و ج" made of three questions is unreadable. No markdown bullet —
+  # WhatsApp renders none of it (§ channel formatting).
+  bullet: "- "
+
+
 # Slot questions, keyed by the slot the script asked for. Masri by default:
 # asking which faculty is conversation, even when the answer will be regulation.
 ask_for_slot:
