@@ -36,7 +36,8 @@ Two outcomes, and the difference matters (§9):
 from dataclasses import dataclass
 from typing import Any
 
-from moc.agent.state import Action, Register
+from moc.agent.replies import Voice
+from moc.agent.state import Action
 from moc.config_store import load
 
 _SCRIPT = "scripts/realestate/search"
@@ -111,7 +112,7 @@ def route_no_match(no_match: NoMatch) -> Action:
     return Action.answer if no_match.alternative is not None else Action.handoff
 
 
-def render_no_match(no_match: NoMatch, *, register: Register, as_of: str) -> str:
+def render_no_match(no_match: NoMatch, *, voice: Voice, as_of: str) -> str:
     """The customer-facing reply, from the tenant's own wording.
 
     Both halves receive the same type. It is read once, from the request, and
@@ -127,7 +128,7 @@ def render_no_match(no_match: NoMatch, *, register: Register, as_of: str) -> str
     if no_match.alternative is None:
         return _fill(
             templates["no_match_anywhere"],
-            register,
+            voice,
             type=requested_type,
             asked_about=no_match.asked_about,
             as_of=as_of,
@@ -143,7 +144,7 @@ def render_no_match(no_match: NoMatch, *, register: Register, as_of: str) -> str
 
     return _fill(
         templates["no_match_same_type"],
-        register,
+        voice,
         type=requested_type,
         asked_about=no_match.asked_about,
         compound=alternative.compound,
@@ -153,15 +154,9 @@ def render_no_match(no_match: NoMatch, *, register: Register, as_of: str) -> str
     )
 
 
-def _fill(templates: dict[str, str], register: Register, **values: Any) -> str:
-    """Pick the register's wording and fill it.
-
-    Falls back to `masri` when a register has no entry, matching
-    `agent/replies.yaml`: a missing translation must not become a missing
-    reply.
-    """
-    template = templates.get(str(register)) or templates["masri"]
-    return template.format(**values)
+def _fill(templates: dict[str, str], voice: Voice, **values: Any) -> str:
+    """Pick this turn's wording and fill it — see `moc.agent.replies.Voice`."""
+    return voice.say(templates).format(**values)
 
 
 __all__ = [

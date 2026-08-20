@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from moc.agent.replies import Voice
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
 from moc.retrieval.inventory import UnitQuery
@@ -210,22 +211,26 @@ class InventoryAgent:
         turn = await self._extractor.extract(text=text, state=state)
         decision = self._engine.advance(state, turn)
         slots = decision.state.slots
+        # Register is the node's; language is the customer's. Resolved once,
+        # here, because every reply below needs both and half of them used to
+        # take only the register.
+        voice = Voice.of(decision.register, text)
 
         if decision.action is not Action.answer:
             return InventoryTurn(
-                reply=_scripted(_reply_key(decision), decision.register),
+                reply=_scripted(_reply_key(decision), voice),
                 action=decision.action,
                 register=decision.register,
                 state=decision.state,
             )
 
         if decision.node == "payment_plan":
-            return await self._payment_plan(decision, slots)
-        return await self._lookup(decision, slots)
+            return await self._payment_plan(decision, slots, voice)
+        return await self._lookup(decision, slots, voice)
 
     # ─────────────────────────── inventory ───────────────────────────
 
-    async def _lookup(self, decision: Any, slots: dict[str, Any]) -> InventoryTurn:
+    async def _lookup(self, decision: Any, slots: dict[str, Any], voice: Voice) -> InventoryTurn:
         query = UnitQuery(
             city=slots.get("city"),
             compound=slots.get("compound"),
@@ -243,6 +248,7 @@ class InventoryAgent:
                 "units_found",
                 call,
                 unit,
+                voice,
                 type=unit.property_type,
                 compound=unit.compound,
                 price=f"{unit.price:,}",
@@ -272,7 +278,7 @@ class InventoryAgent:
         )
         action = route_no_match(no_match)
         as_of = str(alternative.as_of) if alternative else _snapshot_as_of(self._repository)
-        reply = render_no_match(no_match, register=decision.register, as_of=as_of)
+        reply = render_no_match(no_match, voice=voice, as_of=as_of)
         return InventoryTurn(
             reply=reply,
             action=action,
@@ -285,11 +291,13 @@ class InventoryAgent:
             as_of=as_of,
         )
 
-    async def _payment_plan(self, decision: Any, slots: dict[str, Any]) -> InventoryTurn:
+    async def _payment_plan(
+        self, decision: Any, slots: dict[str, Any], voice: Voice
+    ) -> InventoryTurn:
         unit = await self._resolve_unit(slots)
         if unit is None:
             return InventoryTurn(
-                reply=_scripted("handoff", decision.register),
+                reply=_scripted("handoff", voice),
                 action=Action.handoff,
                 register=decision.register,
                 state=decision.state,
@@ -303,7 +311,7 @@ class InventoryAgent:
             # than answered with an invented plan.
             reply = _fill(
                 "cash_only",
-                decision.register,
+                voice,
                 compound=unit.compound,
                 price=f"{unit.price:,}",
                 currency=unit.currency,
@@ -323,7 +331,7 @@ class InventoryAgent:
 
         reply = _fill(
             "payment_plan",
-            decision.register,
+            voice,
             down_payment=f"{schedule.down_payment:,}",
             installment=f"{schedule.installment_amount:,}",
             currency=unit.currency,
@@ -392,8 +400,10 @@ def _named(query: UnitQuery) -> dict[str, Any]:
     }
 
 
-def _answer(decision: Any, key: str, call: RecordedCall, unit: Any, **values: Any) -> InventoryTurn:
-    reply = _fill(key, decision.register, **values)
+def _answer(
+    decision: Any, key: str, call: RecordedCall, unit: Any, voice: Voice, **values: Any
+) -> InventoryTurn:
+    reply = _fill(key, voice, **values)
     return InventoryTurn(
         reply=reply,
         action=Action.answer,
@@ -407,14 +417,12 @@ def _answer(decision: Any, key: str, call: RecordedCall, unit: Any, **values: An
     )
 
 
-def _fill(key: str, register: Register, **values: Any) -> str:
-    templates = load(_SCRIPT)["replies"][key]
-    return (templates.get(str(register)) or templates["masri"]).format(**values)
+def _fill(key: str, voice: Voice, **values: Any) -> str:
+    return voice.say(load(_SCRIPT)["replies"][key]).format(**values)
 
 
-def _scripted(key: str, register: Register) -> str:
-    templates = load(_REPLIES)["replies"][key]
-    return templates.get(str(register)) or templates["masri"]
+def _scripted(key: str, voice: Voice) -> str:
+    return voice.say(load(_REPLIES)["replies"][key])
 
 
 def _reply_key(decision: Any) -> str:

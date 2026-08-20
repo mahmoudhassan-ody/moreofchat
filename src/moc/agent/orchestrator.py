@@ -42,11 +42,12 @@ growing opinions about Qdrant.
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
+from moc.agent.replies import Voice
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
 from moc.config_store import load
@@ -327,7 +328,7 @@ class Orchestrator:
         """
         failed = key in (_PROVIDER_UNAVAILABLE, _GROUNDING_FAILED)
         return TurnResult(
-            reply=self._reply_text(key, decision),
+            reply=self._reply_text(key, decision, redaction.text),
             action=Action.handoff if failed else decision.action,
             register=decision.register,
             state=decision.state,
@@ -341,24 +342,17 @@ class Orchestrator:
         )
 
     @staticmethod
-    def _reply_text(key: str, decision: Decision) -> str:
+    def _reply_text(key: str, decision: Decision, message: str) -> str:
+        # Register is the node's policy; language mirrors the customer. Both,
+        # because passing only the register is F6: it renders cleanly and
+        # answers an English question in Arabic.
+        voice = Voice.of(decision.register, message)
         document = load(_REPLIES)
         if key is _CLARIFY and decision.ask_for_slot:
             slot = document["ask_for_slot"].get(decision.ask_for_slot)
             if slot:
-                return _in_register(slot, decision.register)
-        return _in_register(document["replies"][key], decision.register)
-
-
-def _in_register(entry: dict[str, Any], register: Register) -> str:
-    """Pick the register's wording, falling back to Masri.
-
-    The fallback is not a shrug. A key with no entry for the node's register is
-    almost always an apology or an outage message, and those are conversation
-    rather than regulation — Masri is the right register for them, not a
-    degraded one.
-    """
-    return entry.get(str(register)) or entry[str(Register.masri)]
+                return voice.say(slot)
+        return voice.say(document["replies"][key])
 
 
 __all__ = ["Extractor", "Orchestrator", "Retrieval", "Retriever", "TurnResult"]

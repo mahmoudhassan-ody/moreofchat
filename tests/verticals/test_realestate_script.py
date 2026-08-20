@@ -30,6 +30,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from moc.agent.replies import Voice
 from moc.agent.state import Action, Register
 from moc.config_store import load
 from moc.retrieval.inventory import InventoryRepository, UnitQuery, load_units
@@ -109,7 +110,7 @@ async def test_a_studio_request_on_the_coast_is_never_answered_with_a_chalet(rep
             asked_about="North Coast",
             alternative=alternative,
         ),
-        register=Register.masri,
+        voice=Voice(Register.masri),
         as_of="2026-08-01",
     )
     assert "chalet" not in reply.lower()
@@ -174,7 +175,7 @@ def test_the_renderer_refuses_a_mismatched_alternative():
     with pytest.raises(TypeSubstitution, match="studio"):
         render_no_match(
             NoMatch(requested_type="studio", asked_about="North Coast", alternative=FakeUnit()),
-            register=Register.masri,
+            voice=Voice(Register.masri),
             as_of="2026-08-01",
         )
 
@@ -191,7 +192,7 @@ async def test_no_match_names_both_compounds(repo):
     assert alternative is not None
     reply = render_no_match(
         NoMatch(requested_type="villa", asked_about="Mivida", alternative=alternative),
-        register=Register.masri,
+        voice=Voice(Register.masri),
         as_of="2026-08-01",
     )
     assert "Mivida" in reply, "the compound the customer asked about"
@@ -291,7 +292,7 @@ async def test_the_asof_is_disclosed_on_every_inventory_reply(repo):
     alternative = await find_same_type_elsewhere(repo, property_type="studio")
     reply = render_no_match(
         NoMatch(requested_type="studio", asked_about="North Coast", alternative=alternative),
-        register=Register.masri,
+        voice=Voice(Register.masri),
         as_of="2026-08-01",
     )
     assert "2026-08-01" in reply
