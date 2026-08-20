@@ -480,3 +480,40 @@ async def test_payloads_merge_across_arms():
                         payload={"title": "مواعيد الباصات؟"})]
     result = await fuse(query="q", dense=dense, sparse=sparse, config=CONFIG)
     assert result.titles == ("مواعيد الباصات؟",)
+
+
+async def test_the_retriever_carries_each_arm_s_payload_into_the_result():
+    """The gap between a correct function and a live path that never calls it
+    with anything.
+
+    `fuse` merged payloads and `FusionResult.titles` read them, both under
+    passing tests — and `FusionRetriever` built every `Candidate` without a
+    payload at all, from either arm. So `titles` was structurally empty in the
+    only place it is used, the fallback clarification had nothing to offer,
+    and edu-0009 failed three measured runs across two commits that were both
+    meant to fix it. The unit tests proved the function; nothing proved the
+    path.
+    """
+    retriever = FusionRetriever(
+        lexical=StubLexical(
+            [
+                SimpleNamespace(
+                    chunk_id="a",
+                    rank=1,
+                    content="من 9 لـ 4",
+                    payload={"title": "مواعيد عمل الفروع؟", "content": "من 9 لـ 4"},
+                ),
+                SimpleNamespace(
+                    chunk_id="b",
+                    rank=2,
+                    content="آخر موعد 30 يوليو",
+                    payload={"title": "آخر موعد للتقديم؟"},
+                ),
+            ]
+        ),
+        tenant_id=uuid.uuid4(),
+        vertical="education",
+        config=CONFIG,
+    )
+    result = await retriever.search(query="المواعيد إيه؟")
+    assert result.titles == ("مواعيد عمل الفروع؟", "آخر موعد للتقديم؟")

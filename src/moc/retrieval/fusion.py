@@ -363,7 +363,16 @@ class FusionRetriever:
             # rank-derived `1.0 / rank` that used to sit here made every
             # top-ranked lexical hit read as total certainty, which is how
             # the gate came to be decorative.
-            Candidate(chunk_id=hit.chunk_id, rank=hit.rank, content=hit.content)
+            # The payload travels. It is where `title` lives, and a candidate
+            # built without one makes `FusionResult.titles` structurally empty
+            # — which it was, in the only path that reads it, while `fuse` and
+            # `titles` both passed their own tests.
+            Candidate(
+                chunk_id=hit.chunk_id,
+                rank=hit.rank,
+                content=hit.content,
+                payload=dict(getattr(hit, "payload", None) or {}),
+            )
             for hit in hits
         ]
 
@@ -376,6 +385,7 @@ class FusionRetriever:
                     rank=position,
                     relevance=point.score,
                     content=point.payload.get("content", ""),
+                    payload=dict(point.payload),
                 )
                 for position, point in enumerate(
                     await self._dense.search(
