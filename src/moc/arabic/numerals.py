@@ -166,7 +166,7 @@ def normalize_digits(text: str) -> str:
 def contains_ordinal(text: str) -> bool:
     """True if any token is an ordinal. An ordinal never denotes an amount."""
     lex = _lexicon()
-    return any(_fold(t.strip(lex.trim)) in lex.ordinals for t in text.split())
+    return any(_fold(_shave(t, lex)) in lex.ordinals for t in text.split())
 
 
 def extract_numbers(text: str) -> list[int | float]:
@@ -178,14 +178,14 @@ def extract_quantities(text: str) -> list[Quantity]:
     """As extract_numbers, but tagged with what each figure is about."""
     lex = _lexicon()
     tokens, markers = _tokenize(normalize_digits(text), lex)
-    folded = [_fold(t.strip(lex.trim)) for t in tokens]
+    folded = [_fold(_shave(t, lex)) for t in tokens]
 
     quantities = []
     for index, token in enumerate(tokens):
         if index in markers:
             # A list marker numbers an item; it does not state an amount.
             continue
-        match = _number_pattern().fullmatch(token.strip(lex.trim))
+        match = _number_pattern().fullmatch(_shave(token, lex))
         if match is None:
             continue
         body, suffix = match.group(1), _fold(match.group(2))
@@ -211,6 +211,26 @@ def extract_quantities(text: str) -> list[Quantity]:
 
 
 # ─────────────────────────────── parsing ───────────────────────────────
+
+
+def _shave(token: str, lex: _Lexicon) -> str:
+    """Strip decoration, including a sentence-final separator.
+
+    The decimal point and the thousands comma are held out of the trim set so
+    that 3.5 and 1,500 survive — and that also stopped a currency word with a
+    full stop welded to it from folding to the bare word. The marker was then
+    invisible, a four-digit figure inside the year range fell through
+    `_is_year`, and a fee ending a sentence was not a figure at all: an
+    invented amount in the commonest sentence shape the product writes would
+    have passed a zero-tolerance gate. Only 1900-2100 hits the heuristic, which
+    is why the decorated-hallucination regression test — written with 3000 —
+    never saw it.
+
+    Right-strip, because a separator only means anything between digits. It
+    cannot reach the point in 3.5, the comma in 1,500, or the period inside a
+    two-letter currency abbreviation.
+    """
+    return token.strip(lex.trim).rstrip(lex.separators)
 
 
 def _tokenize(text: str, lex: _Lexicon) -> tuple[list[str], set[int]]:

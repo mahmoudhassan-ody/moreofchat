@@ -206,3 +206,55 @@ def test_marks_approximated_figures():
 
 def test_multi_word_approximation_marker():
     assert extract_quantities("في حدود ٦ مليون")[0].approximate is True
+
+
+# ───────── a figure at the end of a sentence (found 2026-08-20) ─────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "رسوم التقديم 2000 جنيه.",
+        "الرسوم 2000 جنيه، وهي غير مستردة",
+        "the fee is 2000 EGP.",
+    ],
+    ids=["arabic-period", "arabic-comma", "english-period"],
+)
+def test_a_currency_marker_still_counts_with_punctuation_welded_to_it(text):
+    """`.` and `,` are stripped out of the trim set to protect `3.5` and
+    `1,500` — and that also stopped `جنيه.` from folding to `جنيه`.
+
+    So the currency marker was invisible, a four-digit figure in the year
+    range fell through `_is_year`, and 2000 at the end of a sentence was not a
+    figure at all. `check_numeric_grounding` would have passed an invented
+    2000 EGP fee in the commonest sentence shape the product writes.
+
+    3000 was caught, which is why nothing looked wrong: only figures inside
+    1900-2100 hit the year heuristic, and the decorated-hallucination
+    regression test happens to use 3000.
+    """
+    assert [q.value for q in extract_quantities(text)] == [2000]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("السعر 3.5 مليون", [3500000.0]),
+        ("السعر 1,500 جنيه", [1500]),
+        ("الرسوم 2000 ج.م", [2000]),
+        ("the fee is 2000 l.e", [2000]),
+    ],
+    ids=["decimal", "thousands", "arabic-abbrev", "latin-abbrev"],
+)
+def test_a_separator_inside_a_token_still_survives(text, expected):
+    """The reason `.` and `,` were taken out of the trim set in the first
+    place. Shaving them off the END of a token cannot reach a separator that
+    sits between digits, or the period inside `ج.م` and `l.e`."""
+    assert [q.value for q in extract_quantities(text)] == expected
+
+
+def test_a_year_at_the_end_of_a_sentence_is_still_a_year():
+    """The heuristic this restores must not be broken by restoring it. A bare
+    four-digit number with no currency or unit around it still qualifies a
+    fee rather than asserting one."""
+    assert extract_quantities("النسب المطلوبة لعام 2026.") == []

@@ -249,3 +249,25 @@ def test_a_marker_digit_elsewhere_in_the_line_is_still_a_claim():
     result = check_numeric_grounding("1. الرسوم 3000 جنيه", ["2000 جنيه"], [])
     assert not result.passed
     assert result.orphan_numbers == [3000], "the marker must not be counted"
+
+
+def test_an_invented_fee_ending_a_sentence_is_caught():
+    """The companion to the decorated-hallucination case, and it shipped for
+    the same length of time.
+
+    `check_numeric_grounding("الرسوم **3000** جنيه", …)` was the regression
+    test written when the gate could not see a decorated figure. It uses 3000,
+    and 3000 is outside the year range — so it never exercised the other half:
+    a figure inside 1900-2100 with punctuation welded to its currency word had
+    no currency marker, read as a year, and was not a figure at all.
+
+    2000 EGP is the fixture's real application fee, and this sentence shape is
+    the commonest one the product writes.
+    """
+    from moc.agent.guards import check_numeric_grounding
+
+    result = check_numeric_grounding(
+        "المصاريف الدراسية 2000 جنيه.", ["رسوم تغيير المسار 500 جنيه مصري"], []
+    )
+    assert not result.passed
+    assert result.orphan_numbers == [2000]

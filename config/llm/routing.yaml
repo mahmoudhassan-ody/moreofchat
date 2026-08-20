@@ -130,6 +130,23 @@ tasks:
       temperature: 0.0
     max_tokens: 512
 
+  # §19.3's claim-level figure gate. The cheap tier: the model proposes a
+  # verbatim span and code verifies it, so the work is extraction rather than
+  # reasoning — and this call sits on the customer-facing path, where the
+  # measured 940 ms median is a third of what composition already costs.
+  figure_audit:
+    primary:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      reasoning: none
+      temperature: 0.0
+    failover:
+      provider: openai
+      model: gpt-5.6-luna
+      reasoning: none
+      temperature: 0.0
+    max_tokens: 512
+
   query_rewriting:
     primary:
       provider: anthropic

@@ -53,6 +53,11 @@ class Task(enum.StrEnum):
 
     answer_composition = "answer_composition"
     slot_extraction = "slot_extraction"
+    #: §19.3's second figure gate — is this number labelled the way the
+    #: material labels it? Routed separately from extraction because it is on
+    #: the customer-facing path and its latency is a product cost, not a
+    #: background one.
+    figure_audit = "figure_audit"
     query_rewriting = "query_rewriting"
     eval_grading = "eval_grading"
     embedding = "embedding"
