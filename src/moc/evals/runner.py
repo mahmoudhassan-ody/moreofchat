@@ -31,9 +31,10 @@ are counted separately and excluded from the accuracy denominator.
 """
 
 import math
+import statistics
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,6 +112,11 @@ class TurnOutcome:
     #: experience — the number would then be wrong in the safe direction, which
     #: is the direction nobody checks.
     elapsed_ms: float | None = None
+    #: Where that time went — one entry per phase that ran, plus a measured
+    #: `total`. A phase the turn skipped is absent rather than zero: averaging
+    #: a scripted turn into composition as a very fast one is how a breakdown
+    #: comes to say the opposite of the truth.
+    timings: Mapping[str, float] = field(default_factory=dict)
     checks: tuple[CheckResult, ...] = ()
     verdict: JudgeVerdict | None = None
 
@@ -272,6 +278,7 @@ class CaseRunner:
                     passages=tuple(getattr(result, "passages", ()) or ()),
                     titles=tuple(getattr(result, "titles", ()) or ()),
                     elapsed_ms=elapsed_ms,
+                    timings=dict(getattr(result, "timings", {}) or {}),
                     checks=tuple(checks),
                     verdict=verdict,
                 )
@@ -671,6 +678,45 @@ def percentile(values: Sequence[float], rank: int) -> float:
     ordered = sorted(values)
     index = math.ceil(rank / 100 * len(ordered)) - 1
     return ordered[max(0, min(index, len(ordered) - 1))]
+
+
+def phase_breakdown(
+    timings: Sequence[Mapping[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Mean, p95 and turn count per phase, plus what no phase claimed.
+
+    **The remainder is the finding.** Composition and the figure audit were
+    each timed once by hand, and together they do not explain a whole turn:
+    §2.5's p95 came in at 7833 ms against a 7000 ms budget. A breakdown that
+    listed only the phases somebody thought to instrument would show a tidy
+    total and hide precisely the part nobody has looked at, so
+    `unattributed` — total minus the named phases, per turn — is computed and
+    reported like any other row.
+
+    Each phase averages over the turns that ran it. A clarification makes no
+    composition call, and folding it in as a zero would report composition as
+    twice as fast as it is on a suite where a third of turns are scripted.
+    """
+    rows: dict[str, list[float]] = {}
+    for turn in timings:
+        total = turn.get("total")
+        named = 0.0
+        for phase, value in turn.items():
+            if phase == "total":
+                continue
+            rows.setdefault(phase, []).append(value)
+            named += value
+        if total is not None:
+            rows.setdefault("total", []).append(total)
+            rows.setdefault("unattributed", []).append(max(0.0, total - named))
+    return {
+        phase: {
+            "mean": statistics.fmean(values),
+            "p95": percentile(values, _LATENCY_PERCENTILE),
+            "turns": float(len(values)),
+        }
+        for phase, values in rows.items()
+    }
 
 
 def summarize(outcomes: Sequence[CaseOutcome]) -> RunSummary:

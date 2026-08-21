@@ -28,7 +28,7 @@ from moc.config_store import load
 from moc.evals.judge import Judge
 from moc.evals.load import load_cases
 from moc.evals.repeatability import MetricSpread, default_runs, render_all, repeat, unmeasurable
-from moc.evals.runner import CaseRunner, metrics, summarize
+from moc.evals.runner import CaseRunner, metrics, phase_breakdown, summarize
 from moc.llm.anthropic_direct import AnthropicDirect
 from moc.llm.openai_direct import OpenAIDirect
 from moc.llm.router import Router
@@ -322,6 +322,21 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             print(f"      composed:  {t.composed[:180]!r}")
             for passage in t.passages[:2]:
                 print(f"      passage:   {passage[:180]!r}")
+        print(f"{'-' * 68}")
+        # Where the p95 goes. §2.5's budget was breached on its first
+        # measurement with no breakdown behind it, and a total that only lists
+        # the phases somebody instrumented hides the part nobody looked at —
+        # so `unattributed` is a row like any other.
+        rows = phase_breakdown(
+            [t.timings for o in runs[-1] for t in o.turns if t.timings]
+        )
+        print(f"  Phase breakdown, run {times} of {times} — ms:")
+        print(f"    {'phase':16} {'mean':>8} {'p95':>8} {'turns':>7}")
+        for phase, row in sorted(rows.items(), key=lambda kv: -kv[1]["mean"]):
+            print(
+                f"    {phase:16} {row['mean']:8.0f} {row['p95']:8.0f} "
+                f"{row['turns']:7.0f}"
+            )
         print(f"{'-' * 68}")
         # Per-case, from the LAST run only — labelled as such, because a case
         # that passes twice and fails once is not the same as one that fails

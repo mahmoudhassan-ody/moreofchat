@@ -1109,3 +1109,68 @@ async def test_the_composition_call_carries_the_conversation_s_slots(turn_sessio
     )
     system = composition_calls(anthropic)[0]["system"]
     assert "dentistry" in system, "the composer was not told what was narrowed to"
+
+
+# ───────── §2.5: where the 7833 ms goes ─────────
+
+
+async def test_a_turn_reports_the_time_each_phase_took(turn_session):
+    """A p95 over budget with no breakdown is a number nobody can act on.
+
+    Composition was timed once by hand and the audit once by hand, and 4551 +
+    940 does not account for a whole turn's p95 — which is the slowest turn,
+    not the median one. Everything between those two calls has never been
+    timed at all.
+    """
+    orchestrator, *_ = build()
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    assert set(result.timings) >= {"extraction", "retrieval", "composition", "audit"}
+    assert all(value >= 0 for value in result.timings.values())
+
+
+async def test_the_phases_do_not_account_for_the_whole_turn_by_construction(
+    turn_session,
+):
+    """`total` is measured, never summed.
+
+    A total built by adding the phases can only ever equal them, so the gap
+    that matters — ledger writes, state handling, whatever nobody thought to
+    time — would be invisible by construction. Reporting an unattributed
+    remainder is the whole point of the breakdown.
+    """
+    orchestrator, *_ = build()
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    named = sum(v for k, v in result.timings.items() if k != "total")
+    assert result.timings["total"] >= named
+
+
+async def test_a_scripted_turn_times_no_composition(turn_session):
+    """A clarification makes no completion call, and recording a zero for it
+    would put every scripted turn into the composition average as a very fast
+    one — which is how a phase breakdown comes to say the opposite of the
+    truth."""
+    orchestrator, *_ = build(intent="fees", slots={})
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المصاريف كام؟", channel=CHANNEL
+    )
+    assert result.action is Action.clarify
+    assert "composition" not in result.timings
+    assert "extraction" in result.timings
+
+
+async def test_a_reply_with_no_figure_times_no_audit(turn_session):
+    """Same rule for the audit, which is skipped on a reply that states no
+    figure — roughly a third of composed turns."""
+    orchestrator, *_ = build(reply="مفيش مصاريف مذكورة في البيانات المتاحة.")
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    assert "composition" in result.timings
+    assert "audit" not in result.timings

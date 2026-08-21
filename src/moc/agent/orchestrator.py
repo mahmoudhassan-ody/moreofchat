@@ -40,7 +40,9 @@ whole turn be tested without a network, and what stops this module from
 growing opinions about Qdrant.
 """
 
-from collections.abc import Sequence
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
@@ -58,6 +60,7 @@ from moc.llm.base import AllProvidersUnavailable, Completion, Message, Role, Tas
 from moc.llm.router import Router
 from moc.tenancy.metering import UsageKind, record_usage
 
+_MS = 1000.0
 _REPLIES = "agent/replies"
 
 # Keys in agent/replies. Named constants rather than inline strings so a
@@ -115,6 +118,56 @@ class Extractor(Protocol):
     async def extract(self, *, text: str, state: ConversationState) -> TurnInput: ...
 
 
+class Stopwatch:
+    """Wall-clock per phase of one turn, plus the whole turn.
+
+    `total` is measured rather than summed, and that is the point rather than
+    an implementation note: a total built by adding the phases can only equal
+    them, so the unattributed remainder — ledger writes, state handling,
+    whatever nobody thought to time — would be invisible by construction.
+    §2.5's p95 came in at 7833 ms against a 7000 ms budget, and 4551 ms of
+    composition plus 940 ms of audit does not explain it. The gap is what the
+    breakdown exists to show.
+
+    A phase that did not run records nothing. Writing a zero would put every
+    scripted turn into the composition average as a very fast one, which is
+    how a breakdown comes to say the opposite of the truth.
+    """
+
+    def __init__(self) -> None:
+        self._phases: dict[str, float] = {}
+        self._started = time.perf_counter()
+
+    @contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._phases[name] = (time.perf_counter() - started) * _MS
+
+    @contextmanager
+    def maybe(self, name: str) -> Iterator[list[bool]]:
+        """A phase that may turn out not to have happened.
+
+        The body appends True if it did. Used where the caller cannot know in
+        advance — the figure audit returns without a provider call on a reply
+        that states no figure, and asking that question here as well would put
+        the predicate in two places, where a drift between them makes the
+        breakdown lie rather than fail.
+        """
+        ran: list[bool] = []
+        started = time.perf_counter()
+        try:
+            yield ran
+        finally:
+            if ran:
+                self._phases[name] = (time.perf_counter() - started) * _MS
+
+    def timings(self) -> dict[str, float]:
+        return {**self._phases, "total": (time.perf_counter() - self._started) * _MS}
+
+
 @dataclass(frozen=True)
 class TurnResult:
     """Everything the caller needs to send the message and persist the thread.
@@ -149,6 +202,9 @@ class TurnResult:
     #: grades against passages, scored every scripted reply as unsupported for
     #: the crime of not being a retrieval result.
     authorised: tuple[str, ...] = ()
+    #: Wall-clock per phase, in milliseconds, plus a measured `total`. §2.5
+    #: budgets what the customer waits through; this says where it went.
+    timings: Mapping[str, float] = field(default_factory=dict)
     #: §3.1's figures the script itself may state. Carried alongside
     #: `passages` because together they are the full source set the delivered
     #: reply is graded against — without them a scripted fee reads as an
@@ -196,13 +252,16 @@ class Orchestrator:
         writes nothing rather than billing someone at random — and a caller
         cannot bill the wrong tenant if it is never holding an id to pass.
         """
+        clock = Stopwatch()
         redaction = redact(text)
         # `text` is not read again below. Everything downstream takes
         # `redaction.text`, which is the point of §7.3.
         await record_usage(session, kind=UsageKind.message_in, channel=channel)
 
-        turn = await self._extractor.extract(text=redaction.text, state=state)
-        retrieval = await self._retriever.search(query=redaction.text)
+        with clock.phase("extraction"):
+            turn = await self._extractor.extract(text=redaction.text, state=state)
+        with clock.phase("retrieval"):
+            retrieval = await self._retriever.search(query=redaction.text)
         # The extractor's own confidence, if it reported one, is discarded
         # here. `grounded` is the §7.5 gate's real input: a script constant
         # counts, because §3.1 lets the script state figures the corpus does
@@ -221,11 +280,13 @@ class Orchestrator:
         # only signal on a turn whose extraction failed.
         lang = turn.language or reply_language(redaction.text)
         result = await self._resolve(
-            session, decision, retrieval, redaction, channel, lang
+            session, decision, retrieval, redaction, channel, lang, clock
         )
 
         await record_usage(session, kind=UsageKind.message_out, channel=channel)
-        return result
+        # Stamped last, so `total` covers the ledger writes too. They are part
+        # of what the customer waits through and nothing else times them.
+        return replace(result, timings=clock.timings())
 
     # ─────────────────────────── the turn's branches ───────────────────────────
 
@@ -237,6 +298,7 @@ class Orchestrator:
         redaction: Redaction,
         channel: str,
         lang: str | None,
+        clock: Stopwatch,
     ) -> TurnResult:
         if decision.action is not Action.answer:
             return self._scripted(
@@ -244,9 +306,10 @@ class Orchestrator:
             )
 
         try:
-            completion = await self._compose(
-                session, decision, retrieval, channel, redaction.text, lang
-            )
+            with clock.phase("composition"):
+                completion = await self._compose(
+                    session, decision, retrieval, channel, redaction.text, lang
+                )
         except AllProvidersUnavailable:
             # §2.6: the customer gets a sentence and a human, not an error. The
             # router raised rather than inventing text precisely so this
@@ -280,7 +343,7 @@ class Orchestrator:
         # whatever else was wrong with it — but it cannot rescue one, and the
         # `or` below is ordered so the deterministic verdict is reported when
         # both fail. A figure with no source at all is the larger finding.
-        audit = await self._audit(session, completion, retrieval, channel)
+        audit = await self._audit(session, completion, retrieval, channel, clock)
         if not grounding.passed or not audit.passed:
             # §19.3. The reply is discarded whole rather than edited: a sentence
             # containing one ungrounded figure is a sentence built around a fact
@@ -381,6 +444,7 @@ class Orchestrator:
         completion: Completion,
         retrieval: Retrieval,
         channel: str,
+        clock: Stopwatch,
     ) -> FigureAudit:
         """§19.3's claim-level gate, metered.
 
@@ -389,17 +453,7 @@ class Orchestrator:
         it is. edu-0002 passed the first and failed the second: 1000 was in the
         retrieved set, as the fee for something else.
         """
-        audit = await audit_figures(
-            router=self._router,
-            reply=completion.text,
-            # Script constants are material (§3.1). Auditing against passages
-            # alone would refuse every calculator result the real-estate agent
-            # produces, none of which sits in a chunk.
-            material=[
-                *retrieval.passages,
-                *(str(c) for c in retrieval.script_constants),
-            ],
-        )
+        audit = await self._timed_audit(clock, completion, retrieval)
         # Metered here for the same reason composition is: an unmetered
         # provider call is a cost that appears in no report, and this one runs
         # on roughly two turns in three.
@@ -415,6 +469,33 @@ class Orchestrator:
                 cached_tokens=audit.completion.cached_tokens,
                 degraded=audit.completion.degraded,
             )
+        return audit
+
+    async def _timed_audit(
+        self, clock: Stopwatch, completion: Completion, retrieval: Retrieval
+    ) -> FigureAudit:
+        """Timed only when a provider call actually happened.
+
+        `audit_figures` returns without one on a reply that states no figure,
+        and recording a near-zero for those would drag the audit's average
+        toward the turns it skipped.
+        """
+        with clock.maybe("audit") as ran:
+            audit = await audit_figures(
+                router=self._router,
+                reply=completion.text,
+                # Script constants are material (§3.1). Auditing against
+                # passages alone would refuse every calculator result the
+                # real-estate agent produces, none of which sits in a chunk.
+                material=[
+                    *retrieval.passages,
+                    *(str(c) for c in retrieval.script_constants),
+                ],
+            )
+            # The authoritative signal that a call happened, from the thing
+            # that made it — not a second reading of the reply.
+            if audit.completion is not None:
+                ran.append(True)
         return audit
 
     # ─────────────────────────── scripted replies ───────────────────────────

@@ -900,3 +900,48 @@ def test_the_p95_is_the_slow_tail_not_the_mean():
     # Nineteen turns — the education suite — puts the 95th on the slowest,
     # which is the correct answer to "how long does a customer wait at worst".
     assert percentile([100.0] * 18 + [4000.0], 95) == 4000.0
+
+
+async def test_the_outcome_carries_the_phase_breakdown(session_tenant):
+    """§2.5's p95 is over budget and nothing says where it goes. The runner is
+    the only place that sees every turn, so it is where the breakdown has to
+    survive to."""
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcome = await run.run_case(a_case(), session=session)
+    assert set(outcome.turns[0].timings) >= {"extraction", "retrieval", "total"}
+
+
+def test_the_breakdown_reports_what_no_phase_claimed():
+    """The remainder is the finding, not a rounding artifact.
+
+    Composition and the audit were each timed once by hand and together they
+    do not explain a whole turn. A breakdown that only listed the phases
+    somebody thought to instrument would show a tidy total and hide exactly
+    the part nobody has looked at.
+    """
+    from moc.evals.runner import phase_breakdown
+
+    rows = phase_breakdown(
+        [
+            {"extraction": 100.0, "retrieval": 200.0, "total": 1000.0},
+            {"extraction": 150.0, "retrieval": 250.0, "total": 1200.0},
+        ]
+    )
+    assert rows["unattributed"]["mean"] == 750.0
+    assert rows["extraction"]["mean"] == 125.0
+    assert rows["total"]["p95"] == 1200.0
+
+
+def test_a_phase_is_averaged_over_the_turns_that_ran_it():
+    """A clarification makes no composition call. Averaging it in as a zero
+    would report composition as twice as fast as it is, on a suite where a
+    third of turns are scripted."""
+    from moc.evals.runner import phase_breakdown
+
+    rows = phase_breakdown(
+        [{"composition": 4000.0, "total": 4500.0}, {"total": 300.0}]
+    )
+    assert rows["composition"]["mean"] == 4000.0
+    assert rows["composition"]["turns"] == 1
+    assert rows["total"]["turns"] == 2
