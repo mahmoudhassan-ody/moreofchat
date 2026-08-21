@@ -250,11 +250,12 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
 
     cases = load_cases(CASES)
     times = default_runs()
+    grade = _grading()
     runs: list[list] = []
 
     async def once():
         async with tenant_session(app_engine, tenant.id) as session:
-            outcomes = await runner.run(cases, session=session)
+            outcomes = await runner.run(cases, session=session, grade=grade)
             # Commit, or the ledger is decorative. `tenant_session` closes
             # without committing, so every llm_call and embedding_call row a
             # run writes was rolled back — about 186 per invocation. "What did
@@ -285,6 +286,12 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         print(
             f"  EDUCATION SUITE — {len(cases)} cases, {chunk_count} chunks, "
             f"{times} runs"
+        )
+        print(
+            "  stage 2: the judge GRADED this run"
+            if grade
+            else f"  stage 2: NOT RUN — set {GRADE}=1 to grade. "
+            "Accuracy below is stage 1 only."
         )
         print(f"{'=' * 68}")
 
@@ -492,6 +499,26 @@ TIER_COMPARE = "MOC_JUDGE_TIER_COMPARE"
 # becomes that model for the run. Everything else — the failover, the judge,
 # the corpus, the cases — is untouched.
 COMPOSITION_MODEL = "MOC_COMPOSITION_MODEL"
+
+
+# ─────────────────────────── stage 2, opt-in ───────────────────────────
+#
+# Stage 1 always runs and costs nothing beyond the turn itself. Stage 2 is the
+# judge, and the judge is the single largest provider cost a run has: 19 calls
+# on gpt-5.6-sol at $0.203 against $0.074 for all 40 Anthropic calls the turns
+# made. Repeating it N times over unchanged code buys N independent verdicts on
+# the same replies, which is one measurement paid for three times.
+#
+# So it is asked for: MOC_GRADE=1 for a full graded run — a baseline, a nightly,
+# a PR gate — and nothing for the cheap loop. What keeps the cheap loop honest
+# is that a stage-1-only run reports `stage_one_accuracy` rather than
+# `overall_accuracy`, and every judge-fed gate reads "not measured" rather than
+# passing by default.
+GRADE = "MOC_GRADE"
+
+
+def _grading() -> bool:
+    return os.environ.get(GRADE, "") not in ("", "0", "false", "no")
 
 
 def _composition_routing() -> dict:

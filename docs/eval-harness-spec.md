@@ -350,6 +350,44 @@ tokenizes less efficiently than English. The levers are therefore fewer tokens
 (the channel formatting rules already ask for short) or a faster model, and the
 second is measurable on this suite rather than arguable.
 
+#### Stage 2 is opt-in, and what stage 1 alone costs
+
+The judge is the largest provider cost a run has, and repeating it across N
+runs of unchanged code buys N independent verdicts on the same replies rather
+than N measurements. It is therefore asked for: `MOC_GRADE=1` grades,
+everything else runs stage 1 only.
+
+**Measured, three runs, education suite, 2026-08-21:**
+
+| | stage 1 only | graded |
+|---|---|---|
+| cost per run | **$0.101** | ~$0.30 |
+| Anthropic (extraction, composition, audit) | $0.101 | $0.101 |
+| OpenAI judge | **$0** — 0 calls | $0.203, 19 calls |
+| embeddings | $0.000055 | $0.000055 |
+
+**A stage-1-only run is a third of a graded one, not near zero.** The judge is
+about two thirds of the bill and it does vanish — the ledger shows no OpenAI
+`llm_call` row at all — but the turns themselves are the customer path and
+still make every provider call they make in production: 19 extractions, 12
+compositions, 8 audits. Embeddings are already effectively free at $0.000055 a
+run, which is the content-addressed cache doing its job on an unchanged corpus.
+
+**The accuracy it reports is a different number, so it has a different name.**
+Three stage-1-only runs read **94.1%, three times over**, against 80.4%
+(76.5–88.2, n=3) for the same code graded. Those 13.7 points are the failures
+stage 1 cannot see — register misses, ungrounded claims, forbidden claims —
+and reported under `overall_accuracy` they would read as a large improvement.
+So `metrics` emits `stage_one_accuracy` instead and leaves `overall_accuracy`
+unmeasured, every judge-fed gate reads "not measured" rather than passing by
+default, and `RunMetadata.graded` makes an ungraded run incomparable to a
+judged baseline under §2.3's existing rule — which is what keeps the PR gate
+from passing on a run the judge never saw.
+
+The identical 94.1% three times is itself the point: with stage 2 off the
+suite is nearly deterministic, and the run-to-run spread this suite reports is
+mostly the judge.
+
 #### claude-haiku-4-5 for composition: attempted 2026-08-21, unfinished
 
 **The question.** Composition is 2632 ms of a 3105 ms mean turn and the larger

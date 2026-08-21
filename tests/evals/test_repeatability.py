@@ -174,15 +174,32 @@ def test_no_threshold_is_a_literal_in_the_module():
 # ─────────────────── what one run of each suite contributes ───────────────────
 
 
-def _outcome(case_id, *, passed=True, errored=False, recall=None, checks=()):
+def _outcome(case_id, *, passed=True, errored=False, recall=None, checks=(), graded=True):
+    """A run that was graded, because that is what a suite run is.
+
+    `graded` decides whether the turn carries a verdict, and that decides
+    which accuracy `metrics` reports: a run holding no verdict measured no
+    stage 2, so its number is `stage_one_accuracy` and not comparable to a
+    judged one. Default True — these fixtures stand in for full runs.
+    """
+    from moc.evals.judge import JudgeVerdict
     from moc.evals.runner import CaseOutcome, TurnOutcome
 
+    verdict = (
+        JudgeVerdict(
+            provider="openai", model="m", grounding=3, register=3,
+            helpfulness=3, meets_rubric=passed, fact_coverage={},
+        )
+        if graded
+        else None
+    )
     return CaseOutcome(
         case_id=case_id,
         vertical="education",
         category="factual_retrieval",
         turns=() if errored else (TurnOutcome(turn_index=0, reply="r", action="answer",
-                                              state=None, checks=tuple(checks)),),
+                                              state=None, checks=tuple(checks),
+                                              verdict=verdict),),
         errored=errored,
         recall_at_5=recall,
     )

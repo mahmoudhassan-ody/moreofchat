@@ -229,12 +229,26 @@ class CaseRunner:
 
     # ─────────────────────────── one case ───────────────────────────
 
-    async def run_case(self, case: EvalCase, *, session: AsyncSession) -> CaseOutcome:
+    async def run_case(
+        self, case: EvalCase, *, session: AsyncSession, grade: bool = True
+    ) -> CaseOutcome:
         """Run every turn, then measure. Never feeds the case's answers in.
 
         The orchestrator receives the customer's words, the conversation state
         and the channel. Nothing else from the case is in scope here — the
         expectations are for grading, and grading happens after.
+
+        `grade=False` runs stage 1 only. Stage 2 is the largest provider cost
+        in a suite run, and three repeats of unchanged code buy three
+        independent verdicts on the same replies rather than three
+        measurements — so it is asked for per run rather than assumed.
+
+        **It defaults to on here, and off at the invocation that spends money.**
+        A library default of off would make "no verdict" the ordinary state,
+        and a judge path that had quietly broken would look exactly like one
+        nobody asked for. What keeps the cheap mode honest is downstream:
+        `metrics` renames the accuracy a stage-1-only run produces, so the
+        number cannot be read as, or compared against, a graded one.
         """
         state = self._engine.start()
         turns: list[TurnOutcome] = []
@@ -282,7 +296,11 @@ class CaseRunner:
             retrieved = await self._retriever.chunk_ids_for(query=turn.user)
             checks = self._stage_one(turn, result)
             statements = _script_statements(result)
-            verdict = await self._stage_two(turn, result, checks, statements)
+            verdict = (
+                await self._stage_two(turn, result, checks, statements)
+                if grade
+                else None
+            )
             # The largest provider cost in a suite run, and it reached no
             # ledger: §5.2 puts every judge call on the OpenAI failover, and a
             # run that spent $0.46 reported $0.31 because of this one line.
@@ -402,7 +420,7 @@ class CaseRunner:
     # ─────────────────────────── a whole run ───────────────────────────
 
     async def run(
-        self, cases: Sequence[EvalCase], *, session: AsyncSession
+        self, cases: Sequence[EvalCase], *, session: AsyncSession, grade: bool = True
     ) -> list[CaseOutcome]:
         """Every case, in order.
 
@@ -412,14 +430,17 @@ class CaseRunner:
         reproduce. The judge is where a full run's cost lives, and batching it
         is a change to the judge rather than to this loop.
         """
-        return [await self.run_case(case, session=session) for case in cases]
+        return [
+            await self.run_case(case, session=session, grade=grade) for case in cases
+        ]
 
-    def metadata(self, *, git_sha: str) -> RunMetadata:
+    def metadata(self, *, git_sha: str, graded: bool = True) -> RunMetadata:
         """§2.3: what the run was measured under.
 
         The judge's prompt version travels with it, so a run graded under a
         reworded rubric is not silently compared against one graded under the
-        old wording.
+        old wording — and `graded` travels with it for the stronger version of
+        the same problem, a run the judge never saw at all.
         """
         from moc.agent.composition import prompt_version as composition_version
         from moc.agent.extraction import LlmSlotExtractor
@@ -459,7 +480,7 @@ class CaseRunner:
                     model="unknown",
                 )
             )
-        return capture(git_sha=git_sha, tasks=tuple(tasks))
+        return capture(git_sha=git_sha, tasks=tuple(tasks), graded=graded)
 
 
 def _turns_claiming(case: EvalCase, chunk_id: str) -> tuple[int, ...]:
@@ -721,7 +742,23 @@ def metrics(outcomes: Sequence[CaseOutcome]) -> dict[str, float | None]:
     # Overlaid after the gate loop, not before it. `retrieval_recall_at_5` is
     # a gate name whose value comes from `CaseOutcome.recall_at_5` rather than
     # from any check, so the loop would otherwise write None over it.
-    values["overall_accuracy"] = summary.accuracy if summary.scored else None
+    # **One accuracy per run, named for what produced it.** Stage 1 alone
+    # cannot see a register miss, an ungrounded claim or a forbidden claim, so
+    # the number it produces is higher than a judged one by exactly the
+    # failures it is blind to — reported under `overall_accuracy` that is a
+    # free five to ten points, and it would be compared against judged
+    # baselines by everyone reading the column. Both keys are always present,
+    # exactly one of them measured, so a spread over N runs keeps both rows.
+    #
+    # Read from the outcomes rather than from a flag: a run that asked for
+    # grading and produced no verdict measured no stage 2, whatever it
+    # intended.
+    graded = any(
+        turn.verdict is not None for outcome in outcomes for turn in outcome.turns
+    )
+    scored = summary.accuracy if summary.scored else None
+    values["overall_accuracy"] = scored if graded else None
+    values["stage_one_accuracy"] = None if graded else scored
     # Milliseconds, not a proportion — `gates.yaml` declares the unit, and the
     # renderer reads it there. This gate has printed "not measured" on every
     # run the suite has ever produced, while §2.5's budget was set from six

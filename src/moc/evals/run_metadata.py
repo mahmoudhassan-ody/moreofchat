@@ -49,6 +49,11 @@ class RunMetadata:
     config_hash: str
     lexicon_version: Any
     tasks: tuple[TaskBinding, ...]
+    #: Whether stage 2 ran. Part of the conditions for the same reason the
+    #: config hash is: a stage-1-only run cannot see a register miss, an
+    #: ungrounded claim or a forbidden claim, so its accuracy is higher than a
+    #: judged one by exactly the failures it is blind to.
+    graded: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +61,7 @@ class RunMetadata:
             "config_hash": self.config_hash,
             "lexicon_version": self.lexicon_version,
             "tasks": [t.to_dict() for t in self.tasks],
+            "graded": self.graded,
         }
 
     @classmethod
@@ -66,6 +72,10 @@ class RunMetadata:
             config_hash=record["config_hash"],
             lexicon_version=record["lexicon_version"],
             tasks=tuple(TaskBinding(**task) for task in record["tasks"]),
+            # Defaults True: every run persisted before stage 2 became
+            # optional ran the judge, so True is what those records mean
+            # rather than what is convenient to assume.
+            graded=bool(record.get("graded", True)),
         )
 
     def is_comparable_to(self, baseline: RunMetadata) -> bool:
@@ -79,6 +89,15 @@ class RunMetadata:
         caveat means someone reads the number; refusing the number means they
         read the caveat.
         """
+        if self.graded != baseline.graded:
+            cheap, full = ("run", "baseline") if baseline.graded else ("baseline", "run")
+            return (
+                f"stage 2 did not run on the {cheap} and did on the {full}. "
+                "Stage 1 cannot see a register miss, an ungrounded claim or a "
+                "forbidden claim, so the ungraded accuracy is higher by exactly "
+                "the failures it is blind to — the delta would report the "
+                "judge's absence as an improvement (§2.3)."
+            )
         if self.is_comparable_to(baseline):
             return None
         return (
@@ -93,6 +112,7 @@ def capture(
     git_sha: str,
     tasks: tuple[TaskBinding, ...],
     config_root: Path | None = None,
+    graded: bool = True,
 ) -> RunMetadata:
     """Snapshot the conditions of a run.
 
@@ -105,4 +125,5 @@ def capture(
         config_hash=config_store.config_hash(root=config_root),
         lexicon_version=config_store.load(_LEXICON, root=config_root)["version"],
         tasks=tuple(tasks),
+        graded=graded,
     )

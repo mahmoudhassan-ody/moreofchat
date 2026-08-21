@@ -1131,3 +1131,76 @@ def test_a_run_set_with_no_turns_at_all_still_reports_something():
                         errored=True, error="boom")]
     index, runs = detail_run([dead, dead])
     assert (index, runs) == (2, dead)
+
+
+async def test_stage_two_does_not_run_when_grading_is_off(session_tenant):
+    """Opt-in per run. Three runs of unchanged code do not need three
+    independent verdicts on the same replies — that is 3x for one
+    measurement, and the judge is the largest line item in a run."""
+    session, _ = session_tenant
+    run, _, judge = build()
+    outcome = await run.run([a_case()], session=session, grade=False)
+
+    assert judge.calls == []
+    assert all(t.verdict is None for o in outcome for t in o.turns)
+
+
+async def test_an_ungraded_run_reports_stage_one_accuracy_not_overall(session_tenant):
+    """The number stage 1 alone produces is a different number, so it gets a
+    different name.
+
+    Reported under `overall_accuracy` it would be a free 5-10 points — every
+    stage-2 failure simply absent — and it would be compared against judged
+    baselines by anyone reading the column.
+    """
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcomes = await run.run([a_case()], session=session, grade=False)
+    values = metrics(outcomes)
+
+    assert values["overall_accuracy"] is None
+    assert values["stage_one_accuracy"] is not None
+
+
+async def test_an_ungraded_run_measures_no_register(session_tenant):
+    """not measured, never 100%. register_accuracy is a judge metric, and a
+    suite that switched the judge off while still reporting 98.2% register
+    would be reporting a number nothing produced."""
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcomes = await run.run([a_case()], session=session, grade=False)
+
+    assert metrics(outcomes)["register_accuracy"] is None
+
+
+async def test_a_graded_run_reports_overall_accuracy_and_no_stage_one(session_tenant):
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcomes = await run.run([a_case()], session=session, grade=True)
+    values = metrics(outcomes)
+
+    assert values["overall_accuracy"] is not None
+    assert values["stage_one_accuracy"] is None, "one accuracy per run, named for what fed it"
+
+
+async def test_an_ungraded_run_still_meters_the_turn_but_not_the_judge(session_tenant):
+    """Stage 1 is free of judge cost, not free. Extraction, composition and
+    the figure audit all still make provider calls — the guess that a
+    stage-1-only run costs near zero is a guess about the judge's share, not
+    about the run."""
+    from sqlalchemy import text as sql
+
+    session, _ = session_tenant
+    run, _, _ = build()
+    await run.run([a_case()], session=session, grade=False)
+
+    models = [
+        r[0]
+        for r in (
+            await session.execute(
+                sql("SELECT model FROM usage_ledger WHERE kind = 'llm_call'")
+            )
+        ).all()
+    ]
+    assert models, "the turn itself still calls providers"
+    assert "judge-model" not in models

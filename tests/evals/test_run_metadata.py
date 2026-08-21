@@ -23,7 +23,15 @@ def test_capture_records_the_lexicon_version():
 
 def test_records_every_field_the_spec_names():
     record = capture(git_sha="abc1234", tasks=TASKS).to_dict()
-    assert set(record) == {"git_sha", "config_hash", "lexicon_version", "tasks"}
+    assert set(record) == {
+        "git_sha",
+        "config_hash",
+        "lexicon_version",
+        "tasks",
+        # Not in §2.3's list, because §2.3 was written when the judge always
+        # ran. Whether it ran is a condition of the run like any other.
+        "graded",
+    }
     assert record["tasks"][0] == {
         "task": "answer",
         "prompt_version": "p7",
@@ -91,3 +99,46 @@ def test_the_prompts_that_live_under_src_are_recorded():
 
     assert versions["answer_composition"].startswith("composition_v1+")
     assert versions["slot_extraction"].startswith("extraction_v1+")
+
+
+def test_a_stage_one_run_is_not_comparable_to_a_graded_baseline():
+    """§2.3's rule, applied to the judge being optional.
+
+    A stage-1-only run's accuracy is higher than a judged one by exactly the
+    failures stage 1 cannot see — register misses, ungrounded claims,
+    forbidden claims. Subtracting it from a judged baseline reports the
+    judge's absence as an improvement, and the PR gate would pass on it.
+    """
+    from moc.evals.run_metadata import RunMetadata
+
+    graded = RunMetadata(git_sha="a", config_hash="h", lexicon_version=1, tasks=())
+    cheap = RunMetadata(
+        git_sha="b", config_hash="h", lexicon_version=1, tasks=(), graded=False
+    )
+
+    error = cheap.comparability_error(graded)
+    assert error is not None
+    assert "stage 2" in error
+
+
+def test_two_stage_one_runs_are_comparable_to_each_other():
+    from moc.evals.run_metadata import RunMetadata
+
+    one = RunMetadata(
+        git_sha="a", config_hash="h", lexicon_version=1, tasks=(), graded=False
+    )
+    two = RunMetadata(
+        git_sha="b", config_hash="h", lexicon_version=1, tasks=(), graded=False
+    )
+    assert two.comparability_error(one) is None
+
+
+def test_a_baseline_written_before_the_field_existed_reads_as_graded():
+    """Every run persisted before stage 2 became optional ran the judge, so
+    True is the honest default rather than a convenient one."""
+    from moc.evals.run_metadata import RunMetadata
+
+    restored = RunMetadata.from_dict(
+        {"git_sha": "a", "config_hash": "h", "lexicon_version": 1, "tasks": []}
+    )
+    assert restored.graded is True
