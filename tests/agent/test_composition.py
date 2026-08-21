@@ -279,3 +279,88 @@ def test_the_referral_rule_says_when_the_sentence_must_not_appear():
     assert "must not appear" in system[system.index(rule):], (
         "the rule states when to include the sentence and never when not to"
     )
+
+
+# ───────── edu-0007 turn 3: what the customer narrowed to ─────────
+
+
+def test_the_prompt_carries_the_slots_the_conversation_has_accumulated():
+    """The composer was given the last message and nothing else.
+
+    edu-0007 turn 3 is `ثانوية عامة، طب أسنان`. The branch was said on turn 2
+    and correctly retained — `slot_retention_accuracy` has been 100% through
+    every baseline — but it never reached composition, so the model was
+    answering the only question it was actually asked: what are the thresholds
+    for general secondary dentistry? The passage covers both branches, so it
+    said "it varies by branch" and listed both, one of which the case forbids.
+
+    Not a model failure. The turn's narrowing was discarded on the way to the
+    call, and every multi-turn case in the suite composed as though only the
+    last fragment had been said.
+    """
+    system = render_composition(
+        message="ثانوية عامة، طب أسنان",
+        register=Register.msa,
+        channel="whatsapp",
+        slots={"branch": "arish", "certificate": "general_secondary", "faculty": "dentistry"},
+    )
+    for value in ("arish", "general_secondary", "dentistry"):
+        assert value in system, f"{value} was narrowed to and the composer was not told"
+
+
+def test_the_prompt_says_the_unnarrowed_alternatives_are_not_the_answer():
+    """Knowing the branch is not enough on its own — the material still names
+    the other one, and a model told only "the branch is Arish" will happily
+    give both "for completeness". The instruction has to say that answering
+    for the others is answering a question nobody asked."""
+    system = render_composition(
+        message="ثانوية عامة، طب أسنان",
+        register=Register.msa,
+        channel="whatsapp",
+        slots={"branch": "arish"},
+    )
+    narrowed = system[system.index("arish") :]
+    assert "nobody asked" in narrowed
+
+
+def test_a_turn_with_no_slots_renders_no_placeholder():
+    """A browse turn narrows nothing, and `{slots}` in front of a model is
+    worse than the section being absent."""
+    system = render_composition(
+        message="المصاريف كام؟", register=Register.msa, channel="whatsapp"
+    )
+    assert "{slots}" not in system
+
+
+def test_the_figure_rule_asks_for_the_qualifier_the_material_attaches():
+    """edu-0007's other finding, and a different cause.
+
+    f2 requires the year the thresholds apply to; the passage states 2026 and
+    the reply omitted it. The judge's own rubric scores that a 2 — "all claims
+    traceable, but the reply omits an important qualifier, a fee without the
+    academic year it applies to" — so the standard already existed and nothing
+    asked the composer to meet it.
+
+    Extended onto the existing figure bullet rather than added as a rule of its
+    own: it is the same instruction, and a second competing one is how the
+    referral became a sign-off.
+    """
+    system = render_composition(
+        message="المصاريف كام؟", register=Register.msa, channel="whatsapp"
+    )
+    lines = system.splitlines()
+    # The bullet, not the first line that happens to mention the material — the
+    # LANGUAGE section's own explanation contains that phrase too, and selecting
+    # on it read a rule three sections away.
+    start = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("- ") and "Say what each figure is" in line
+    )
+    # To the next bullet, not to the next newline — the rule wraps over several
+    # lines, and a one-line slice would report it missing however it was worded.
+    end = next(
+        (i for i, line in enumerate(lines[start + 1 :], start + 1) if line.startswith("- ")),
+        len(lines),
+    )
+    assert "qualifier" in "\n".join(lines[start:end]).lower()

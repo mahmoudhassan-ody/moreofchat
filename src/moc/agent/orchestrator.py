@@ -349,6 +349,12 @@ class Orchestrator:
                 # Where this script sends a turn it cannot answer. edu-0001's
                 # reply was truthful, grounded and a dead end.
                 referral=self._engine.referral(lang),
+                # What the conversation has established. Without it the
+                # composer sees the last message alone, so edu-0007 turn 3 —
+                # `ثانوية عامة، طب أسنان` — was composed as though the branch
+                # named on turn 2 had never been said, and the reply gave both
+                # branches because the passage covers both.
+                slots=decision.state.slots,
             ),
             cache_blocks=list(retrieval.passages),
         )

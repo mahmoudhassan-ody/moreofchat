@@ -1098,3 +1098,14 @@ async def test_a_composed_reply_records_the_referral_it_was_given(turn_session):
     )
     assert result.action is Action.answer
     assert result.authorised == (ScriptEngine.from_config(SCRIPT).referral("ar"),)
+
+
+async def test_the_composition_call_carries_the_conversation_s_slots(turn_session):
+    """The wiring. `render_composition` takes the slots and the state has
+    them; nothing joined the two until edu-0007 turn 3."""
+    orchestrator, anthropic, *_ = build(intent="fees", slots={"faculty": "dentistry"})
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المصاريف كام؟", channel=CHANNEL
+    )
+    system = composition_calls(anthropic)[0]["system"]
+    assert "dentistry" in system, "the composer was not told what was narrowed to"

@@ -18,7 +18,7 @@ language the customer's.
 """
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -59,6 +59,7 @@ def render_composition(
     passages: Sequence[str] = (),
     lang: str | None = None,
     referral: str | None = None,
+    slots: Mapping[str, Any] | None = None,
 ) -> str:
     """Fill the template for one turn.
 
@@ -80,6 +81,38 @@ def render_composition(
         .replace("{register}", _REGISTERS.get(speaks, _REGISTERS[Register.masri]))
         .replace("{formatting}", " ".join(formatting_for(channel).split()))
         .replace("{referral}", _referral_rule(referral))
+        .replace("{slots}", _narrowed(slots))
+    )
+
+
+def _narrowed(slots: Mapping[str, Any] | None) -> str:
+    """What the conversation has established, for a turn that is not the first.
+
+    The composer used to receive the current message and nothing else, so
+    edu-0007 turn 3 — `ثانوية عامة، طب أسنان` — was composed as though the
+    branch named on turn 2 had never been said. It was retained the whole time;
+    `slot_retention_accuracy` never dropped. It simply did not reach the call,
+    and the model answered the only question it was actually asked: the passage
+    covers both branches, so it gave both.
+
+    The second sentence is the half that does the work. Told only "the branch
+    is Arish", a model still lists the other one for completeness — it has to
+    be told that answering for the alternatives is answering a question nobody
+    asked.
+
+    Canonical values, not display names. The material names the branches in
+    Arabic and the model reads both; inventing a second display vocabulary here
+    would be a mapping that drifts, for a gain the passages already provide.
+    """
+    if not slots:
+        return "Nothing yet — this is the whole question."
+    lines = "\n".join(f"- {name}: {value}" for name, value in sorted(slots.items()))
+    return (
+        "The customer said these in earlier messages, and they still hold:\n"
+        f"{lines}\n"
+        "Answer for these only. Where the material covers several and the "
+        "customer has named one, the others are not part of the answer — "
+        "naming them is answering a question nobody asked."
     )
 
 
