@@ -31,8 +31,12 @@ from typing import Any
 from moc.config_store import load
 
 _REPEAT = "evals/repeat"
+_GATES = "evals/gates"
 _PERCENT = 100.0
 _MIN_RUNS = 2
+#: The unit a gate is reported in when `gates.yaml` does not say otherwise.
+#: Everything but `p95_latency_ms` is a share of something.
+_PROPORTION = "proportion"
 
 #: One suite run's metrics: name -> value, or None where that run measured
 #: nothing. A key absent and a key present as None mean the same thing.
@@ -52,8 +56,39 @@ class MetricSpread:
 
     @staticmethod
     def measurable_spread_pp() -> float:
-        """The bar above which a metric is reported as not yet measurable."""
+        """The bar above which a proportion is reported as not yet measurable."""
         return float(load(_REPEAT)["measurable_spread_pp"])
+
+    @property
+    def _gate(self) -> Mapping[str, Any]:
+        gates = load(_GATES)
+        for group in ("hard_gates", "soft_gates"):
+            entry = (gates.get(group) or {}).get(self.metric)
+            if isinstance(entry, dict):
+                return entry
+        return {}
+
+    @property
+    def unit(self) -> str:
+        """From `gates.yaml`, never from the metric's name.
+
+        A renderer that keys on an `_ms` suffix breaks the first time someone
+        names a gate sensibly, and the cost of getting it wrong is not
+        cosmetic: every renderer here multiplies by 100 and appends a percent
+        sign, so 4200 ms printed as 420000.0%.
+        """
+        return str(self._gate.get("unit", _PROPORTION))
+
+    @property
+    def _bar(self) -> float:
+        """The measurable bar in this metric's own unit.
+
+        Percentage points mean nothing for a latency: a 1200 ms spread is not
+        120000 points of anything, and comparing it to the 10-point bar would
+        mark every p95 unmeasurable forever.
+        """
+        declared = self._gate.get("measurable_spread")
+        return float(declared) if declared is not None else self.measurable_spread_pp()
 
     @property
     def measured(self) -> tuple[float, ...]:
@@ -84,25 +119,36 @@ class MetricSpread:
 
     @property
     def spread_pp(self) -> float:
-        """Min-max in percentage points. Zero when fewer than two runs fed it,
-        which is why `measurable` cannot be derived from this alone."""
+        """Min-max in the metric's own unit — percentage points, or ms.
+
+        Zero when fewer than two runs fed it, which is why `measurable` cannot
+        be derived from this alone.
+        """
         if self.runs < _MIN_RUNS:
             return 0.0
-        return (self.maximum - self.minimum) * _PERCENT
+        scale = _PERCENT if self.unit == _PROPORTION else 1.0
+        return (self.maximum - self.minimum) * scale
 
     @property
     def measurable(self) -> bool:
-        return self.runs >= _MIN_RUNS and self.spread_pp <= self.measurable_spread_pp()
+        return self.runs >= _MIN_RUNS and self.spread_pp <= self._bar
 
     def render(self) -> str:
         if not self.measured:
             return f"{self.metric:26} not measured  (0 of {self.attempts} runs)"
-        body = (
+        flag = "" if self.measurable else "  ← not measurable at this suite size"
+        return f"{self.metric:26} {self._body()}{flag}"
+
+    def _body(self) -> str:
+        if self.unit != _PROPORTION:
+            return (
+                f"{self.mean:.0f} ms "
+                f"({self.minimum:.0f}–{self.maximum:.0f}, {self._n()})"
+            )
+        return (
             f"{self.mean * _PERCENT:.1f}% "
             f"({self.minimum * _PERCENT:.1f}–{self.maximum * _PERCENT:.1f}, {self._n()})"
         )
-        flag = "" if self.measurable else "  ← not measurable at this suite size"
-        return f"{self.metric:26} {body}{flag}"
 
     def _n(self) -> str:
         if self.runs == self.attempts:
@@ -117,6 +163,7 @@ class MetricSpread:
             "min": self.minimum,
             "max": self.maximum,
             "spread_pp": self.spread_pp,
+            "unit": self.unit,
             "runs": self.runs,
             "attempts": self.attempts,
             "measurable": self.measurable,

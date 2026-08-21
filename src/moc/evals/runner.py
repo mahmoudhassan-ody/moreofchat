@@ -30,6 +30,8 @@ comparison against that baseline is measuring the outage too. Errored cases
 are counted separately and excluded from the accuracy denominator.
 """
 
+import math
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -52,6 +54,10 @@ from moc.evals.run_metadata import RunMetadata, TaskBinding, capture
 from moc.evals.schema import EvalCase, Turn
 
 _RECALL_K = 5
+_MS = 1000.0
+#: §2.5 budgets the slow tail, not the average. A mean over nineteen turns
+#: hides the one that took four seconds, and that turn is the whole point.
+_LATENCY_PERCENTILE = 95
 
 
 class ChunkSource(Protocol):
@@ -95,6 +101,16 @@ class TurnOutcome:
     #: reply text cannot tell those apart — edu-0009 read as the first for two
     #: runs while it was the second.
     titles: tuple[str, ...] = ()
+    #: Wall-clock for the whole turn — extraction, retrieval, composition, both
+    #: figure gates, the lot. §2.5 budgets what the customer waits through, not
+    #: what any one call costs, so this is measured around `handle` rather than
+    #: summed from the parts.
+    #:
+    #: The judge is deliberately outside it. Stage 2 is grading, and a budget
+    #: that included it would report a latency no customer will ever
+    #: experience — the number would then be wrong in the safe direction, which
+    #: is the direction nobody checks.
+    elapsed_ms: float | None = None
     checks: tuple[CheckResult, ...] = ()
     verdict: JudgeVerdict | None = None
 
@@ -203,12 +219,19 @@ class CaseRunner:
 
         for index, turn in enumerate(case.turns):
             try:
+                # Around `handle` and nothing else. §2.5 budgets what the
+                # customer waits through, so the measurement has to bracket
+                # exactly the work a real turn does — and stop before the
+                # judge, which is grading and would report a latency no
+                # customer will ever experience.
+                started = time.perf_counter()
                 result = await self._orchestrator.handle(
                     session=session,
                     state=state,
                     text=turn.user,
                     channel=self._channel,
                 )
+                elapsed_ms = (time.perf_counter() - started) * _MS
             except Exception as exc:  # noqa: BLE001 - an outage is not a quality signal
                 return CaseOutcome(
                     case_id=case.id,
@@ -248,6 +271,7 @@ class CaseRunner:
                     composed=_composed(result),
                     passages=tuple(getattr(result, "passages", ()) or ()),
                     titles=tuple(getattr(result, "titles", ()) or ()),
+                    elapsed_ms=elapsed_ms,
                     checks=tuple(checks),
                     verdict=verdict,
                 )
@@ -616,11 +640,37 @@ def metrics(outcomes: Sequence[CaseOutcome]) -> dict[str, float | None]:
     # a gate name whose value comes from `CaseOutcome.recall_at_5` rather than
     # from any check, so the loop would otherwise write None over it.
     values["overall_accuracy"] = summary.accuracy if summary.scored else None
+    # Milliseconds, not a proportion — `gates.yaml` declares the unit, and the
+    # renderer reads it there. This gate has printed "not measured" on every
+    # run the suite has ever produced, while §2.5's budget was set from six
+    # hand-run samples and never checked against the thing it bounds.
+    latencies = [
+        turn.elapsed_ms
+        for outcome in outcomes
+        for turn in outcome.turns
+        if turn.elapsed_ms is not None
+    ]
+    values["p95_latency_ms"] = (
+        percentile(latencies, _LATENCY_PERCENTILE) if latencies else None
+    )
     values["retrieval_recall_at_5"] = summary.recall_at_5
     # A rate, not a count. Everything here is rendered as a percentage, and a
     # count sent through that renderer prints numbers above 100.
     values["errored_rate"] = summary.errored / summary.total if summary.total else None
     return values
+
+
+def percentile(values: Sequence[float], rank: int) -> float:
+    """Nearest-rank, which for a suite this size is the honest one.
+
+    Interpolating between the two turns either side of the 95th invents a
+    duration nothing took. Nineteen turns put the 95th at the slowest one, and
+    that is the correct answer to "how long does a customer wait at worst" —
+    a smoothed value would report a turn that never happened.
+    """
+    ordered = sorted(values)
+    index = math.ceil(rank / 100 * len(ordered)) - 1
+    return ordered[max(0, min(index, len(ordered) - 1))]
 
 
 def summarize(outcomes: Sequence[CaseOutcome]) -> RunSummary:
@@ -640,6 +690,7 @@ def summarize(outcomes: Sequence[CaseOutcome]) -> RunSummary:
 
 
 __all__ = [
+    "percentile",
     "CaseOutcome",
     "CaseRunner",
     "RunSummary",

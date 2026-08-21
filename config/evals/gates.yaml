@@ -92,6 +92,16 @@ soft_gates:
     # Design §2.5, measured 2026-08-17. Replaces an unmeasured 4000 that the
     # answer-composition call alone exceeded at the median.
     threshold: 7000
+    # The one gate whose value is not a share of anything. Declared rather than
+    # inferred from the name: a renderer that keys on an `_ms` suffix breaks
+    # the first time someone names a gate sensibly, and every other renderer
+    # here multiplies by 100 — 4200 ms printed as 420000.0%.
+    #
+    # `measurable_spread` is in the metric's own unit, so this one is read
+    # against milliseconds instead of the 10-point bar. 1500 ms is the width
+    # above which a p95 is noise at this suite size.
+    unit: milliseconds
+    measurable_spread: 1500
     description: reported in milliseconds, not a proportion
 
 # Reported on every run, never gated.

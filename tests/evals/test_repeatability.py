@@ -328,3 +328,37 @@ def test_every_metric_a_run_contributes_is_a_proportion(extract):
     )
     for metric, value in fn(outcomes).items():
         assert value is None or 0.0 <= value <= 1.0, f"{metric} is not a proportion"
+
+
+# ───────── a metric that is not a proportion (§2.5) ─────────
+
+
+def test_a_latency_metric_renders_as_milliseconds():
+    """`p95_latency_ms` is the one gate whose value is not a share of
+    anything, and every renderer here multiplies by 100 and appends a percent
+    sign. 4200 ms would have printed as 420000.0%.
+
+    The unit comes from `gates.yaml`, not from the metric's name — a renderer
+    that keys on a suffix is a renderer that breaks the first time someone
+    names a gate sensibly.
+    """
+    spread = MetricSpread(metric="p95_latency_ms", values=(4200.0, 3900.0, 5100.0))
+    line = spread.render()
+    assert "ms" in line
+    assert "%" not in line
+    assert "4400" in line, "the mean should read in milliseconds"
+
+
+def test_a_latency_spread_is_measured_against_its_own_bar():
+    """Percentage points mean nothing here. A 1200 ms spread is not 120000
+    points of anything, and comparing it to the 10-point bar would mark every
+    latency reading unmeasurable forever."""
+    tight = MetricSpread(metric="p95_latency_ms", values=(4200.0, 4300.0))
+    assert tight.measurable
+
+
+def test_a_proportion_still_renders_as_a_percentage():
+    """The control. Adding a second unit must not change the first."""
+    spread = MetricSpread(metric="overall_accuracy", values=(0.8, 0.9))
+    assert "%" in spread.render()
+    assert "ms" not in spread.render()

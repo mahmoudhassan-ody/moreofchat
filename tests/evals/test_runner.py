@@ -32,7 +32,7 @@ from moc.config_store import load
 from moc.evals import runner as runner_module
 from moc.evals.judge import JudgeVerdict
 from moc.evals.load import load_cases
-from moc.evals.runner import CaseRunner, recall_at_k
+from moc.evals.runner import CaseRunner, metrics, recall_at_k
 from moc.evals.schema import Action, EvalCase, Turn
 from moc.llm.base import AllProvidersUnavailable
 from moc.llm.fake import FakeProvider
@@ -851,3 +851,52 @@ async def test_the_script_statements_carry_the_constants_and_the_authorised_text
     statements = list(judge.calls[0]["script_statements"])
     referral = ScriptEngine.from_config(SCRIPT).referral("ar")
     assert referral in statements, "the configured referral was not offered as a source"
+
+
+# ───────── §2.5: the latency budget, from the suite ─────────
+
+
+async def test_every_turn_records_how_long_it_took(session_tenant):
+    """`p95_latency_ms` has read "not measured" on every run the suite has ever
+    produced. §2.5's 7000 ms budget was set from six hand-run samples, and
+    nothing since has checked it against the thing it bounds."""
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcome = await run.run_case(a_case(), session=session)
+    assert outcome.turns[0].elapsed_ms is not None
+    assert outcome.turns[0].elapsed_ms >= 0
+
+
+async def test_the_run_reports_a_p95_in_milliseconds(session_tenant):
+    """Not a proportion. Everything else in `metrics()` is a share of
+    something, and this one is the reason `gates.yaml` declares a unit."""
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcome = await run.run_case(a_case(), session=session)
+    value = metrics([outcome])["p95_latency_ms"]
+    assert value is not None
+    assert value >= 0
+
+
+def test_a_run_with_no_turns_reports_no_p95():
+    """Unmeasured, not zero — and zero is the number a latency gate most wants
+    to print when nothing ran."""
+    assert metrics([])["p95_latency_ms"] is None
+
+
+def test_the_p95_is_the_slow_tail_not_the_mean():
+    """A budget is about the turn the customer waits through. A mean over
+    nineteen turns hides the one that took four seconds, which is the only
+    one §2.5 is about."""
+    from moc.evals.runner import percentile
+
+    # Ten slow turns in a hundred: the 95th is inside the tail.
+    assert percentile([100.0] * 90 + [5000.0] * 10, 95) == 5000.0
+    # Exactly five in a hundred puts rank 95 on the boundary, and nearest-rank
+    # answers with the boundary rather than interpolating one that nothing
+    # took. Pinned because it looks like an off-by-one and is not.
+    assert percentile([100.0] * 95 + [5000.0] * 5, 95) == 100.0
+    assert percentile([100.0], 95) == 100.0
+    # Nineteen turns — the education suite — puts the 95th on the slowest,
+    # which is the correct answer to "how long does a customer wait at worst".
+    assert percentile([100.0] * 18 + [4000.0], 95) == 4000.0
