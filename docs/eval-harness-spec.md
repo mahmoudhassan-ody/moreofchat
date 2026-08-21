@@ -208,19 +208,39 @@ comparing two different systems measured by two different harnesses.
 | real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
 | real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
-| education | `overall_accuracy` | 72.5% (70.6–76.5) — spread 5.9, **measurable** |
-| education | `expected_action_accuracy` | 94.7% (94.7–94.7) |
+| education | `overall_accuracy` | 80.4% (76.5–88.2) — spread 11.7, **not measurable at 17 cases** |
+| education | `expected_action_accuracy` | 96.5% (94.7–100.0) |
 | education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
-| education | `register_accuracy` | 98.2% (94.7–100.0) |
-| education | `forbidden_claim_violations` | 10.5% (5.3–15.8) — **not measurable** |
+| education | `register_accuracy` | 93.0% (89.5–94.7) |
+| education | `forbidden_claim_violations` | 5.3% (5.3–5.3) |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
-| education | `hallucinated_figure_rate` | 3.5% (0.0–5.6) — **breaches its zero-tolerance gate** |
+| education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
 | education | `errored_rate` | 0.0% (0.0–0.0) |
 
+**Fresh baseline, 2026-08-20**, after the claim-level figure audit (§19.3) and
+after the judge was given what the turn was authorised to state. Both move
+`prompt_version` or `config_hash`, so §2.3 applies with full force: the 72.5%
+that precedes this line is not a number this may be compared against, and the
+8-point gap is mostly the judge no longer penalising scripted replies for not
+being retrieval results.
+
+`hallucinated_figure_rate` is back at 0.0% from 3.5%, and the reason is not
+that the audit caught edu-0002 — it never fired. The reply stopped producing
+the second figure at all. One run in three still stated it under the previous
+baseline, so 0.0% across three runs is weaker evidence than it looks: the
+class is rare rather than absent, and the audit is now the thing standing
+between it and a customer.
+
+Two cases fail and neither is a figure fault. edu-0013 answers correctly in
+MSA where its node pins Masri; edu-0007 turn 3 states the Qantara threshold
+its case forbids, and omits the year — the same two findings as the previous
+three baselines.
+
 **Education re-measured 2026-08-20 after the four defects the non-answer facts
-exposed were fixed**: the node a bare slot value returns to, the fallback's
+exposed were fixed** (superseded by the fresh baseline above, and kept because
+it is the last measurement made under the old judge): the node a bare slot value returns to, the fallback's
 option list, per-node refusals, and a composed reply that names where to ask.
 `overall_accuracy` is measurable for the first time — 5.9 points of spread
 against the 10-point bar — which is a bigger result than the level it settled
