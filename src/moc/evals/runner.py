@@ -97,6 +97,12 @@ class TurnOutcome:
     #: at 100% recall is either wrong or working on unusable passages, and
     #: those have opposite fixes.
     passages: tuple[str, ...] = ()
+    #: What the judge was given besides the passages (§3.1). Recorded because a
+    #: verdict is only reproducible if the evidence behind it is: re-grading a
+    #: run with a different judge has to hand the second one exactly what the
+    #: first saw, or the difference between two inputs is reported as
+    #: disagreement between two graders.
+    script_statements: tuple[str, ...] = ()
     #: What those passages were about. A clarification that names nothing is
     #: either a node with no options or a retrieval that returned none, and the
     #: reply text cannot tell those apart — edu-0009 read as the first for two
@@ -264,7 +270,8 @@ class CaseRunner:
             state = result.state
             retrieved = await self._retriever.chunk_ids_for(query=turn.user)
             checks = self._stage_one(turn, result)
-            verdict = await self._stage_two(turn, result, checks)
+            statements = _script_statements(result)
+            verdict = await self._stage_two(turn, result, checks, statements)
             checks.extend(checks_from_verdict(verdict, reply=result.reply))
             turns.append(
                 TurnOutcome(
@@ -277,6 +284,7 @@ class CaseRunner:
                     composed=_composed(result),
                     passages=tuple(getattr(result, "passages", ()) or ()),
                     titles=tuple(getattr(result, "titles", ()) or ()),
+                    script_statements=tuple(statements),
                     elapsed_ms=elapsed_ms,
                     timings=dict(getattr(result, "timings", {}) or {}),
                     checks=tuple(checks),
@@ -318,7 +326,11 @@ class CaseRunner:
         ]
 
     async def _stage_two(
-        self, turn: Turn, result: Any, checks: Sequence[CheckResult]
+        self,
+        turn: Turn,
+        result: Any,
+        checks: Sequence[CheckResult],
+        script_statements: Sequence[str],
     ) -> JudgeVerdict | None:
         """The judge, when stage 1 passed — or failed on the action alone.
 
@@ -351,15 +363,7 @@ class CaseRunner:
             question=turn.user,
             reply=result.reply,
             retrieved_passages=list(result.passages),
-            # §3.1: a figure held in a script node is as legitimate a source as
-            # a retrieved chunk, and so is the sentence around it. Passing only
-            # the passages made every scripted reply read as an unsupported
-            # claim — edu-0017 scored grounding 1 with both expected facts
-            # present, for offering something a human had written into config.
-            script_statements=[
-                *(str(c) for c in getattr(result, "script_constants", ()) or ()),
-                *(getattr(result, "authorised", ()) or ()),
-            ],
+            script_statements=list(script_statements),
             expected_facts=list(turn.expected_facts),
             forbidden_claims=list(turn.forbidden_claims),
             expected_register=turn.expected_register,
@@ -665,6 +669,20 @@ def metrics(outcomes: Sequence[CaseOutcome]) -> dict[str, float | None]:
     # count sent through that renderer prints numbers above 100.
     values["errored_rate"] = summary.errored / summary.total if summary.total else None
     return values
+
+
+def _script_statements(result: Any) -> tuple[str, ...]:
+    """§3.1: a figure held in a script node is as legitimate a source as a
+    retrieved chunk, and so is the sentence around it.
+
+    Assembled once and both graded against and recorded, rather than built
+    inside the grading call — a re-grade that rebuilds it differently compares
+    two judges on two inputs and reports the difference as disagreement.
+    """
+    return (
+        *(str(c) for c in getattr(result, "script_constants", ()) or ()),
+        *(getattr(result, "authorised", ()) or ()),
+    )
 
 
 def percentile(values: Sequence[float], rank: int) -> float:

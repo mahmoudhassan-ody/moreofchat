@@ -945,3 +945,21 @@ def test_a_phase_is_averaged_over_the_turns_that_ran_it():
     assert rows["composition"]["mean"] == 4000.0
     assert rows["composition"]["turns"] == 1
     assert rows["total"]["turns"] == 2
+
+
+async def test_the_outcome_records_what_the_judge_was_given(session_tenant):
+    """A verdict is only reproducible if the evidence behind it is recorded.
+
+    Re-grading a run with a different judge — to find out whether a cheaper
+    tier reaches the same verdicts — has to hand the second judge exactly what
+    the first one saw. `passages` was already kept; the script statements were
+    assembled inside `_stage_two` and discarded, so a re-grade would have
+    silently compared two judges on two different inputs and reported the
+    difference as disagreement.
+    """
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcome = await run.run_case(a_case(), session=session)
+
+    referral = ScriptEngine.from_config(SCRIPT).referral("ar")
+    assert referral in outcome.turns[0].script_statements

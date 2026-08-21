@@ -15,6 +15,7 @@ would report failures that measure the missing connector rather than quality.
 """
 
 import collections
+import copy
 import os
 from pathlib import Path
 
@@ -340,6 +341,7 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             for passage in t.passages[:2]:
                 print(f"      passage:   {passage[:180]!r}")
         print(f"{'-' * 68}")
+        await _compare_judge_tier(runs[-1], cases, capsys)
         # Where the p95 goes. §2.5's budget was breached on its first
         # measurement with no breakdown behind it, and a total that only lists
         # the phases somebody instrumented hides the part nobody looked at —
@@ -406,3 +408,110 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
     assert len(runs) == times
     assert all(len(outcomes) == len(cases) for outcomes in runs)
     assert spreads["overall_accuracy"].attempts == times
+
+
+# ───────── is a cheaper judge the same judge? (§5.2, and the OpenAI bill) ─────────
+#
+# `eval_grading` routes to Opus first, but §5.2 excludes the answering provider
+# and composition runs on Anthropic — so every judge call in the suite lands on
+# the OpenAI failover. ~57 per invocation at ~1,450 input tokens each, which by
+# volume is ten times all embedding traffic combined and is the largest OpenAI
+# line item the project has.
+#
+# §5.2 constrains the provider, not the tier, and a judge grading against a
+# rubric with the passages in front of it is not the hardest task in the
+# system. So a cheaper tier may reach the same verdicts — but "may" is not a
+# measurement, and switching on the assumption is how a suite quietly starts
+# applying a different standard while every baseline still claims comparability.
+#
+# Off unless asked. Set MOC_JUDGE_TIER_COMPARE to a model name and the run
+# re-grades every turn it already graded, printing agreement. Costs one extra
+# judge call per graded turn and changes nothing about the run's own numbers —
+# the incumbent's verdicts are what the report is built from either way.
+TIER_COMPARE = "MOC_JUDGE_TIER_COMPARE"
+
+
+def _judge_for(model: str) -> Judge:
+    """A judge whose eval_grading FAILOVER is `model`.
+
+    The failover, not the primary: `grade` passes `exclude_provider=anthropic`,
+    so for a reply Anthropic composed the Anthropic primary is never reachable
+    and the failover slot is the one that answers.
+    """
+    config = copy.deepcopy(ROUTING)
+    config["tasks"]["eval_grading"]["failover"]["model"] = model
+    return Judge.from_config(
+        router=Router(
+            config=config,
+            providers={
+                "anthropic": AnthropicDirect(
+                    api_key=key("MOC_ANTHROPIC_API_KEY"), http=config["http"]
+                ),
+                "openai": OpenAIDirect(
+                    api_key=key("MOC_OPENAI_API_KEY"), http=config["http"]
+                ),
+            },
+        )
+    )
+
+
+def _agrees(a, b) -> tuple[bool, int]:
+    """`reconcile`'s definition, reused rather than restated."""
+    gap = max(abs(a.scores()[d] - b.scores()[d]) for d in a.scores())
+    within = gap <= load("evals/judge")["disagreement"]["max_score_gap"]
+    return bool(within and a.meets_rubric == b.meets_rubric), gap
+
+
+async def _compare_judge_tier(outcomes, cases, capsys) -> None:
+    candidate = os.environ.get(TIER_COMPARE)
+    if not candidate:
+        return
+    by_id = {case.id: case for case in cases}
+    challenger = _judge_for(candidate)
+    rows = []
+    for outcome in outcomes:
+        case = by_id[outcome.case_id]
+        for turn_outcome, turn in zip(outcome.turns, case.turns, strict=False):
+            verdict = turn_outcome.verdict
+            if verdict is None or verdict.malformed:
+                continue
+            other = await challenger.grade(
+                question=turn.user,
+                reply=turn_outcome.reply,
+                retrieved_passages=list(turn_outcome.passages),
+                expected_facts=list(turn.expected_facts),
+                forbidden_claims=list(turn.forbidden_claims),
+                expected_register=turn.expected_register,
+                answer_provider="anthropic",
+                # Exactly what the incumbent saw. A re-grade on different
+                # evidence reports the difference between two inputs as
+                # disagreement between two graders.
+                script_statements=list(turn_outcome.script_statements),
+            )
+            if other.malformed:
+                rows.append((f"{outcome.case_id} t{turn_outcome.turn_index}", None, None))
+                continue
+            ok, gap = _agrees(verdict, other)
+            rows.append(
+                (
+                    f"{outcome.case_id} t{turn_outcome.turn_index}",
+                    gap,
+                    (ok, verdict.meets_rubric, other.meets_rubric),
+                )
+            )
+
+    with capsys.disabled():
+        graded = [r for r in rows if r[2] is not None]
+        malformed = len(rows) - len(graded)
+        agreed = sum(1 for _, _, d in graded if d[0])
+        flips = [(n, d[1], d[2]) for n, _, d in graded if d[1] != d[2]]
+        print(f"  JUDGE TIER — incumbent vs {candidate}, {len(graded)} graded turns")
+        print(f"    agreement    : {agreed}/{len(graded)}")
+        print(f"    widest gap   : {max((g for _, g, _ in graded), default=0)} rubric points")
+        print(f"    verdict flips: {len(flips)}")
+        for name, was, now in flips:
+            print(f"      {name:16} incumbent={was}  {candidate}={now}")
+        if malformed:
+            print(f"    malformed    : {malformed} — a judge that returned prose graded nothing")
+        print("    Only a flip costs anything: a gap that crosses no floor changes no case.")
+        print(f"{'-' * 68}")
