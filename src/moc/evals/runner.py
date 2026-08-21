@@ -33,6 +33,7 @@ are counted separately and excluded from the accuracy denominator.
 import math
 import statistics
 import time
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -109,6 +110,15 @@ class TurnOutcome:
     #: reply text cannot tell those apart — edu-0009 read as the first for two
     #: runs while it was the second.
     titles: tuple[str, ...] = ()
+    #: Which model produced `composed`, on the turn that produced it. None on a
+    #: scripted turn, which no model wrote.
+    #:
+    #: Recorded rather than read off the config the run was launched with,
+    #: because §2.6 fails composition over silently: an arm of a model
+    #: comparison that lost its primary mid-run would report the failover's
+    #: quality under the candidate's name, and every printed number would still
+    #: look like a clean result.
+    composition_model: str | None = None
     #: Wall-clock for the whole turn — extraction, retrieval, composition, both
     #: figure gates, the lot. §2.5 budgets what the customer waits through, not
     #: what any one call costs, so this is measured around `handle` rather than
@@ -302,6 +312,7 @@ class CaseRunner:
                     composed=_composed(result),
                     passages=tuple(getattr(result, "passages", ()) or ()),
                     titles=tuple(getattr(result, "titles", ()) or ()),
+                    composition_model=_composed_by(result),
                     script_statements=tuple(statements),
                     elapsed_ms=elapsed_ms,
                     timings=dict(getattr(result, "timings", {}) or {}),
@@ -614,9 +625,51 @@ def _composed(result: Any) -> str:
     return completions[0].text if completions else getattr(result, "reply", "")
 
 
+def _composed_by(result: Any) -> str | None:
+    """The model behind `_composed`, or None when nothing composed.
+
+    Reads the same slot `_composed` does: `completions` carries the
+    composition call and only that one — extraction, the figure audit and the
+    judge are metered where they happen and never land here.
+    """
+    completions = getattr(result, "completions", ()) or ()
+    return completions[0].model if completions else None
+
+
 def _provider_of(result: Any) -> str:
     completions = getattr(result, "completions", ())
     return completions[0].provider if completions else "anthropic"
+
+
+def detail_run(runs: Sequence[Sequence[CaseOutcome]]) -> tuple[int, Sequence[CaseOutcome]]:
+    """The run the report should render its per-case detail from, 1-indexed.
+
+    The last one that produced turns, not simply the last one. A run that died
+    to an outage has nothing to show, and rendering it discards the per-case
+    replies, the phase breakdown and the composed-by count that an earlier run
+    already measured — which is how a model comparison came back with one
+    accuracy figure and no register number, having collected both.
+
+    Falls back to the last run when no run produced turns: every run erroring
+    is itself the finding, and a report that raises rather than renders is a
+    report that says nothing about the outage that caused it.
+    """
+    for index in range(len(runs) - 1, -1, -1):
+        if any(outcome.turns for outcome in runs[index]):
+            return index + 1, runs[index]
+    return len(runs), runs[-1]
+
+
+def composition_models(outcomes: Sequence[TurnOutcome]) -> Counter[str]:
+    """How many turns each model composed, over a whole run.
+
+    One line of output that makes a silent failover visible. Two names here
+    when a comparison pinned one model means the arm is a blend, and its
+    accuracy belongs to neither.
+    """
+    return Counter(
+        turn.composition_model for turn in outcomes if turn.composition_model
+    )
 
 
 def gate_directions() -> dict[str, str]:

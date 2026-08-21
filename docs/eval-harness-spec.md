@@ -297,8 +297,51 @@ Three things this rules out and one it does not:
 - **Acknowledge immediately, then send the vetted reply.** This is a UX change
   rather than streaming, it keeps the guarantee intact, and it addresses the
   actual complaint — nine seconds of silence reads worse than nine seconds of
-  "seen, typing". Whether the current Twilio Programmable Messaging adapter can
-  send a typing indicator is unverified; the WhatsApp Cloud API can.
+  "seen, typing". **Twilio can send one** — checked 2026-08-21, see below.
+
+##### The typing indicator: available, checked 2026-08-21
+
+Twilio ships it, on a resource the adapter does not currently talk to:
+
+    POST https://messaging.twilio.com/v3/Indicators/Typing.json
+    Content-Type: application/json
+    {"messageId": "SM…", "channel": "WHATSAPP"}   ->  {"success": true}
+
+`messageId` is required and must be the inbound message's SID — `SM…` for text,
+`MM…` for media. **That is the one input this would have needed and it is
+already carried**: `parse_inbound` puts Twilio's `MessageSid` on
+`InboundMessage.provider_message_id` (§6.1's normalized shape), and the webhook
+already holds it before dispatch, where it claims it for dedupe. So the call
+would fire from a place that has the value rather than a place that has to go
+looking for it.
+
+The indicator clears **on delivery or after 25 seconds, whichever comes first**.
+A p95 turn is 8990 ms, so one call covers a whole turn with 16 seconds spare;
+only a turn waiting on a human — a handoff — would need a second call to extend
+it, and a handoff is exactly the case where "typing" would be a lie.
+
+Two things to decide before building it, neither of them technical:
+
+- **It marks the customer's message read.** Twilio's WhatsApp path does that as
+  part of sending the indicator; it is not separable. Every inbound message we
+  acknowledge gets a blue tick, including the ones we then hand off or fail to
+  answer, and a read receipt followed by silence is a worse signal than no
+  receipt at all.
+- **Status is contradictory in the vendor's own docs.** The changelog dated
+  2026-06-14 announces it GA for RCS and WhatsApp; the WhatsApp resource page
+  still carries the Public Beta banner and "subject to change". Treated as beta
+  here — a product claim in a demo should not rest on the more flattering of two
+  vendor pages. It is also documented as neither HIPAA-eligible nor
+  PCI-compliant, which neither vertical touches.
+
+What it costs to build: a second HTTP client on the adapter. The endpoint is a
+different host *and* a different API version from everything `TwilioWhatsApp`
+sends today (`api.twilio.com/2010-04-01/Accounts/{sid}`), it takes JSON rather
+than form encoding, and the docs specify Basic auth with an API key/secret pair
+where the adapter holds an account SID and auth token — whether SID/token also
+authenticates against `messaging.twilio.com/v3` is not stated and was not
+tested. The base URL is config either way (§2.4), so the Meta migration §6.2
+anticipates stays a new adapter plus a config edit.
 
 **What is left of the latency problem is composition's output length.**
 `answer_composition` already runs with `reasoning: none`, so 5613 ms is not
@@ -306,6 +349,51 @@ thinking — it is generating roughly 330+ output tokens of Arabic, which
 tokenizes less efficiently than English. The levers are therefore fewer tokens
 (the channel formatting rules already ask for short) or a faster model, and the
 second is measurable on this suite rather than arguable.
+
+#### claude-haiku-4-5 for composition: attempted 2026-08-21, unfinished
+
+**The question.** Composition is 2632 ms of a 3105 ms mean turn and the larger
+of the two Anthropic rates ($2/$10 against haiku's $1/$5). If haiku holds
+register, it is a latency win and a cost win at once; if it does not, register
+is exactly the thing this suite can measure, so the answer is a number rather
+than an argument.
+
+**The result is one run, and one run is a sample.** The Anthropic account ran
+out of credit after run 1 of 3; runs 2 and 3 returned `400 Your credit balance…`
+on all 17 cases. What exists:
+
+| | sonnet-5 (incumbent) | haiku-4-5 |
+|---|---|---|
+| overall_accuracy | 80.4% (76.5–88.2, n=3) | 82.4% (n=1) |
+| register_accuracy | 98.2% (94.7–100.0, n=3) | not measured |
+| composition mean / p95 | 2632 / 4603 ms | not measured |
+
+**82.4% sits inside the incumbent's 76.5–88.2 spread, so it is not a result** —
+`overall_accuracy` is flagged unmeasurable at 17 cases over 3 runs, and a single
+haiku run cannot clear a bar three sonnet runs could not. Nothing here says
+haiku is as good, and nothing says it is worse. It is unmeasured.
+
+Both arms were run the same day against the same corpus rather than compared to
+a baseline from a previous session, because that is the only way the comparison
+controls for judge weather — and note the incumbent re-baselined at 80.4% today
+against 88.2% two days ago on the same commit, which is the spread being the
+spread.
+
+Two harness defects this exposed, both fixed:
+
+- **The report rendered `runs[-1]` unconditionally.** Run 1 measured haiku's
+  register accuracy, phase breakdown and composed-by count; the report then
+  rendered run 3, which had errored, and printed empty tables. `detail_run`
+  now renders the last run that produced turns, and labels which one it was.
+- **`usage_ledger` is truncated by the `corpus` fixture**, so the second arm's
+  run erases the first arm's cost rows. The haiku arm's own numbers survive —
+  40 Anthropic calls at $0.074325 for one run, against 19 judge calls on
+  gpt-5.6-sol at $0.203307 — but the two arms cannot both be costed from one
+  session as this stands, and the composition rows are not separable from
+  extraction and audit because all three now run on the same model and the
+  ledger carries no task column.
+
+Not rerun. It needs Anthropic credit, which is a billing action.
 
 #### §2.5's budget, measured for the first time
 

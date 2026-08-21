@@ -1016,3 +1016,118 @@ def test_a_dotted_phase_is_detail_inside_a_counted_one():
     )
     assert rows["unattributed"]["mean"] == 200.0
     assert rows["intake.extraction"]["mean"] == 950.0, "the detail is still reported"
+
+
+async def test_the_outcome_records_which_model_composed(session_tenant):
+    """Which model produced the reply, on the turn it produced.
+
+    Written for the haiku-vs-sonnet comparison, where the whole result is a
+    claim about one model: an arm that quietly composed on something else
+    reports that model's accuracy under the other one's name, and nothing in
+    the output would say so.
+    """
+    session, _ = session_tenant
+    run, _, _ = build()
+    outcome = await run.run_case(a_case(), session=session)
+
+    primary = load("llm/routing")["tasks"]["answer_composition"]["primary"]["model"]
+    assert outcome.turns[0].composition_model == primary
+
+
+async def test_a_composition_that_failed_over_names_the_failover_model(session_tenant):
+    """The contamination case, and the only reason the field is worth having.
+
+    §2.6 fails composition over to OpenAI, silently and by design. During a
+    model comparison that is a run measuring the failover while the report
+    names the candidate — so the model is recorded per turn rather than
+    assumed from the config the run was launched with.
+    """
+    from moc.llm.base import ProviderUnavailable
+
+    session, _ = session_tenant
+    retriever = RecordingRetriever()
+    providers = {
+        "anthropic": FakeProvider(
+            "anthropic", text=GROUNDED,
+            fail_with=ProviderUnavailable("down"), fail_kinds=("complete",),
+        ),
+        "openai": FakeProvider("openai", text=GROUNDED),
+    }
+    run = CaseRunner(
+        orchestrator=Orchestrator(
+            engine=ScriptEngine.from_config(SCRIPT),
+            router=Router(config=load("llm/routing"), providers=providers),
+            retriever=retriever,
+            extractor=FixedExtractor(),
+        ),
+        retriever=retriever,
+        judge=RecordingJudge(),
+        script=SCRIPT,
+    )
+    outcome = await run.run_case(a_case(), session=session)
+
+    failover = load("llm/routing")["tasks"]["answer_composition"]["failover"]["model"]
+    assert outcome.turns[0].composition_model == failover
+
+
+def test_a_scripted_turn_names_no_composing_model():
+    """None, not the configured primary. A scripted reply is the tenant's
+    words — attributing it to the model that never ran would credit a model
+    for text it did not write, and inflate its share of a run."""
+    from moc.evals.runner import TurnOutcome, composition_models
+
+    rows = composition_models(
+        [
+            TurnOutcome(turn_index=0, reply="a", action="answer",
+                        state=ScriptEngine.from_config(SCRIPT).start(),
+                        composition_model="claude-haiku-4-5-20251001"),
+            TurnOutcome(turn_index=1, reply="b", action="handoff",
+                        state=ScriptEngine.from_config(SCRIPT).start()),
+        ]
+    )
+    assert dict(rows) == {"claude-haiku-4-5-20251001": 1}
+
+
+def test_the_detail_run_is_the_last_one_that_produced_turns():
+    """The report renders per-case detail, phases and composed-by from one run.
+
+    Blindly the last one throws away everything the earlier ones collected when
+    a run dies: the haiku comparison lost its register number and its phase
+    breakdown to an outage in run 2, having already measured both in run 1.
+    """
+    from moc.evals.runner import CaseOutcome, TurnOutcome, detail_run
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    good = [CaseOutcome(case_id="a", vertical="education", category="c",
+                        turns=(TurnOutcome(turn_index=0, reply="r", action="answer",
+                                           state=state),))]
+    dead = [CaseOutcome(case_id="a", vertical="education", category="c",
+                        errored=True, error="ProviderRequestError")]
+
+    index, runs = detail_run([good, dead, dead])
+    assert (index, runs) == (1, good), "run 1 is the last one with anything to show"
+
+
+def test_the_detail_run_is_the_last_run_when_every_run_has_turns():
+    from moc.evals.runner import CaseOutcome, TurnOutcome, detail_run
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    def run(reply):
+        return [CaseOutcome(case_id="a", vertical="education", category="c",
+                            turns=(TurnOutcome(turn_index=0, reply=reply,
+                                               action="answer", state=state),))]
+
+    index, runs = detail_run([run("first"), run("second")])
+    assert index == 2
+    assert runs[0].turns[0].reply == "second"
+
+
+def test_a_run_set_with_no_turns_at_all_still_reports_something():
+    """Every run errored. The report must still render — a harness that
+    raises on an outage reports nothing about the outage."""
+    from moc.evals.runner import CaseOutcome, detail_run
+
+    dead = [CaseOutcome(case_id="a", vertical="education", category="c",
+                        errored=True, error="boom")]
+    index, runs = detail_run([dead, dead])
+    assert (index, runs) == (2, dead)

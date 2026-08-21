@@ -29,7 +29,14 @@ from moc.config_store import load
 from moc.evals.judge import Judge
 from moc.evals.load import load_cases
 from moc.evals.repeatability import MetricSpread, default_runs, render_all, repeat, unmeasurable
-from moc.evals.runner import CaseRunner, metrics, phase_breakdown, summarize
+from moc.evals.runner import (
+    CaseRunner,
+    composition_models,
+    detail_run,
+    metrics,
+    phase_breakdown,
+    summarize,
+)
 from moc.llm.anthropic_direct import AnthropicDirect
 from moc.llm.openai_direct import OpenAIDirect
 from moc.llm.router import Router
@@ -220,7 +227,7 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         ),
         "openai": OpenAIDirect(api_key=key("MOC_OPENAI_API_KEY"), http=ROUTING["http"]),
     }
-    router = Router(config=ROUTING, providers=providers)
+    router = Router(config=_composition_routing(), providers=providers)
     retriever = FusionRetriever(
         lexical=lexical,
         dense=dense,
@@ -307,6 +314,14 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             )
             print("  That is measurability, not gate compliance — read the values above.")
         print(f"{'-' * 68}")
+        # Everything below renders ONE run, and it is the last run that
+        # produced turns rather than simply the last. A run killed by an
+        # outage has nothing to show, and rendering it silently discards the
+        # replies, the phases and the composed-by count an earlier run already
+        # measured — which cost the haiku comparison its register number on
+        # 2026-08-21 after run 1 had measured it.
+        shown, detail = detail_run(runs)
+        print(f"{'-' * 68}")
         # The two producers of `hallucinated_figure_rate`, split. The
         # deterministic one sees every turn that stated a figure; the judge
         # sees the subset that also cleared stage 1, and only it can catch a
@@ -316,14 +331,14 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         for name in ("hallucinated_figure", "figure_labelling"):
             fed = [
                 c
-                for o in runs[-1]
+                for o in detail
                 for t in o.turns
                 for c in t.checks
                 if c.name == name and not c.skipped
             ]
             failed = [c for c in fed if not c.passed]
             print(
-                f"  {name:20} {len(failed)}/{len(fed)} failed, run {times} of {times}"
+                f"  {name:20} {len(failed)}/{len(fed)} failed, run {shown} of {times}"
             )
         print(f"{'-' * 68}")
         # Compositions the RUNTIME gate discarded (§19.3). These never reached
@@ -337,16 +352,16 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         # a count cannot tell them apart.
         rejected = [
             (o.case_id, t)
-            for o in runs[-1]
+            for o in detail
             for t in o.turns
             if t.grounding is not None and not t.grounding.passed
         ]
         attempted = [
-            t for o in runs[-1] for t in o.turns if t.grounding is not None
+            t for o in detail for t in o.turns if t.grounding is not None
         ]
         print(
             f"  the runtime gate discarded {len(rejected)} of {len(attempted)} "
-            f"compositions, run {times} of {times}:"
+            f"compositions, run {shown} of {times}:"
         )
         for case_id, t in rejected:
             print(f"    {case_id} t{t.turn_index}")
@@ -357,15 +372,27 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             for passage in t.passages[:2]:
                 print(f"      passage:   {passage[:180]!r}")
         print(f"{'-' * 68}")
-        await _compare_judge_tier(runs[-1], cases, capsys)
+        # WHICH model actually composed, counted over the turns rather than
+        # read off the config the run was launched with. §2.6 fails composition
+        # over silently: an arm of a model comparison that lost its primary
+        # mid-run reports the failover's quality under the candidate's name,
+        # and every other line of this report still looks clean.
+        composed_by = composition_models([t for o in detail for t in o.turns])
+        print(f"  Composed by, run {shown} of {times}:")
+        for model, count in composed_by.most_common():
+            print(f"    {model:34} {count:3} turns")
+        if len(composed_by) > 1:
+            print("    MIXED — this run measured no single model. Do not compare it.")
+        print(f"{'-' * 68}")
+        await _compare_judge_tier(detail, cases, capsys)
         # Where the p95 goes. §2.5's budget was breached on its first
         # measurement with no breakdown behind it, and a total that only lists
         # the phases somebody instrumented hides the part nobody looked at —
         # so `unattributed` is a row like any other.
         rows = phase_breakdown(
-            [t.timings for o in runs[-1] for t in o.turns if t.timings]
+            [t.timings for o in detail for t in o.turns if t.timings]
         )
-        print(f"  Phase breakdown, run {times} of {times} — ms:")
+        print(f"  Phase breakdown, run {shown} of {times} — ms:")
         print(f"    {'phase':16} {'mean':>8} {'p95':>8} {'turns':>7}")
         # Counted phases first, then the dotted details of each — a detail is
         # inside its parent, not beside it, and interleaving them by size reads
@@ -381,12 +408,12 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         # Per-case, from the LAST run only — labelled as such, because a case
         # that passes twice and fails once is not the same as one that fails
         # every time, and this table cannot tell them apart.
-        print(f"  Per-case detail, run {times} of {times}:")
-        for outcome in runs[-1]:
+        print(f"  Per-case detail, run {shown} of {times}:")
+        for outcome in detail:
             mark = "err " if outcome.errored else ("PASS" if outcome.passed else "fail")
             failed = [c.name for t in outcome.turns for c in t.checks if not c.passed]
-            detail = outcome.error[:60] if outcome.errored else (",".join(failed) or "-")
-            print(f"  {mark}  {outcome.case_id:12} {outcome.category:22} {detail}")
+            note = outcome.error[:60] if outcome.errored else (",".join(failed) or "-")
+            print(f"  {mark}  {outcome.case_id:12} {outcome.category:22} {note}")
             # The reply, for any check that failed. A check name says which
             # gate moved; only the text says why, and reconstructing it meant
             # a second full run every time.
@@ -450,6 +477,43 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
 # judge call per graded turn and changes nothing about the run's own numbers —
 # the incumbent's verdicts are what the report is built from either way.
 TIER_COMPARE = "MOC_JUDGE_TIER_COMPARE"
+
+
+# ─────────────────────── the composition model, swapped ───────────────────────
+#
+# Composition is the largest line item in both bills the project has: 2684 ms of
+# a 3429 ms mean turn, and sonnet-5 at $2/$10 against haiku-4-5 at $1/$5. So the
+# question of whether a cheaper, faster model composes as well is worth a
+# measurement rather than an argument — and worth one that cannot be run by
+# accident, because the answer only means anything against a baseline taken the
+# same day on the same corpus.
+#
+# Set MOC_COMPOSITION_MODEL to a model name and answer_composition's PRIMARY
+# becomes that model for the run. Everything else — the failover, the judge,
+# the corpus, the cases — is untouched.
+COMPOSITION_MODEL = "MOC_COMPOSITION_MODEL"
+
+
+def _composition_routing() -> dict:
+    """ROUTING, or a copy with answer_composition repinned.
+
+    **`effort` is dropped with the model, not carried onto it.** It is passed
+    to the provider verbatim and is therefore provider-native and per-model:
+    claude-haiku-4-5 answers a request carrying `output_config.effort` with a
+    400, and a 400 is a ProviderRequestError, which does not fail over. Keeping
+    the incumbent's `effort: medium` while swapping the model would end every
+    composition turn in the run — which at least fails loudly. `reasoning: none`
+    stays, because that is task policy for the latency path (§2.5) rather than
+    a property of sonnet.
+    """
+    candidate = os.environ.get(COMPOSITION_MODEL)
+    if not candidate:
+        return ROUTING
+    config = copy.deepcopy(ROUTING)
+    task = config["tasks"]["answer_composition"]["primary"]
+    task["model"] = candidate
+    task.pop("effort", None)
+    return config
 
 
 def _judge_for(model: str) -> Judge:
