@@ -122,7 +122,15 @@ class UsageLedger(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     output_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     cached_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    #: Mirrors 0010. Cache *writes*, which bill higher than base input where
+    #: `cached_tokens` — reads — bill far lower. One column for both was wrong
+    #: in whichever direction the turn went.
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     provider_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    #: Mirrors 0010. Which rate block priced this row. NULL on rows written
+    #: before the column existed, and on rows whose model has no confirmed
+    #: rate — recoverable from nothing else once a vendor moves a threshold.
+    pricing_tier: Mapped[str | None] = mapped_column(Text, nullable=True)
     degraded: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

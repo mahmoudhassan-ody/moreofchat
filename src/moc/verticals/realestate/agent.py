@@ -574,6 +574,7 @@ async def _meter(session: Any, channel: str, completion: Any) -> None:
         input_tokens=completion.input_tokens,
         output_tokens=completion.output_tokens,
         cached_tokens=completion.cached_tokens,
+        cache_write_tokens=getattr(completion, "cache_write_tokens", 0),
         degraded=completion.degraded,
     )
 

@@ -205,9 +205,25 @@ async def test_a_priced_call_lands_with_its_cost(app_engine, two_tenants):
 
 
 async def test_an_unpriced_model_lands_null_rather_than_zero(app_engine, two_tenants):
-    """Every judge call in the suite runs on an OpenAI chat model and nothing
-    here carries a confirmed rate for one. A zero would make the run total look
-    complete while understating its largest line item."""
+    """Every rate routing can reach is now confirmed, so this is asserted on a
+    model that carries an explicit null — the shape has to keep working, or the
+    next unlooked-up model prices as free."""
+    a, _ = two_tenants
+    cost = await _cost_of(
+        app_engine,
+        a,
+        kind=UsageKind.embedding_call,
+        model="text-embedding-3-large",
+        provider="openai",
+        cached_tokens=1000,
+    )
+    assert cost is None, "the vendor lists no cache tier for embeddings"
+
+
+async def test_a_judge_call_now_prices(app_engine, two_tenants):
+    """The largest OpenAI line item the project has, and it read NULL until
+    the rates were sourced. ~57 judge calls an invocation, all on the failover
+    because §5.2 excludes the answering provider."""
     a, _ = two_tenants
     cost = await _cost_of(
         app_engine,
@@ -218,7 +234,46 @@ async def test_an_unpriced_model_lands_null_rather_than_zero(app_engine, two_ten
         input_tokens=1450,
         output_tokens=90,
     )
-    assert cost is None
+    # 1450 in at 4.00/M plus 90 out at 20.00/M.
+    assert cost == Decimal("0.0076")
+
+
+async def test_a_long_prompt_records_the_tier_that_priced_it(app_engine, two_tenants):
+    """Which side of the 272K line a row fell on cannot be recovered from its
+    token counts once the vendor moves the threshold."""
+    a, _ = two_tenants
+    async with tenant_session(app_engine, a.id) as s:
+        await record_usage(
+            s,
+            kind=UsageKind.llm_call,
+            model="gpt-5.6-sol",
+            provider="openai",
+            input_tokens=300_000,
+            output_tokens=100,
+        )
+        await s.commit()
+    async with tenant_session(app_engine, a.id) as s:
+        row = (
+            await s.execute(
+                text("SELECT pricing_tier, provider_cost_usd FROM usage_ledger")
+            )
+        ).one()
+    assert row.pricing_tier == "long"
+    assert row.provider_cost_usd == Decimal("2.403")
+
+
+async def test_a_cache_write_is_billed_above_input_not_below(app_engine, two_tenants):
+    """The direction that made one column for both rates dangerous."""
+    a, _ = two_tenants
+    cost = await _cost_of(
+        app_engine,
+        a,
+        kind=UsageKind.llm_call,
+        model="claude-sonnet-5",
+        provider="anthropic",
+        cache_write_tokens=1_000_000,
+    )
+    assert cost == Decimal("2.50")
 
 
 async def test_an_explicit_cost_wins_over_the_table(app_engine, two_tenants):

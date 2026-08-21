@@ -176,5 +176,6 @@ def _to_completion(body: dict[str, Any], model: str) -> Completion:
         input_tokens=usage.get("input_tokens", 0),
         output_tokens=usage.get("output_tokens", 0),
         cached_tokens=usage.get("cache_read_input_tokens", 0),
+        cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
         stop_reason=body.get("stop_reason"),
     )

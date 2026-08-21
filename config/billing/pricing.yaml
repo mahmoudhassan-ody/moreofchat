@@ -1,64 +1,123 @@
 # Provider prices, for `usage_ledger.provider_cost_usd` (design §19).
 #
-# The ledger has carried a `provider_cost_usd` column since migration 0004 and
-# nothing ever populated it, so "what did that run cost" was an estimate rather
-# than a query. This is the table that makes it a query.
+# **Read from the vendors' own pricing pages on 2026-08-21.** The date is not
+# decoration: rates change without notice, and a table with no read date cannot
+# be audited against an invoice. Re-read it and move `read_on` when you do.
 #
-# **An unpriced model is null, never zero.** A missing rate is a rate nobody
-# has confirmed, and writing 0.0 for it produces a total that looks complete
-# and understates the bill — the same failure as a gate that reads 0.0% because
-# nothing fed it. `cost_usd` returns None for anything absent or null here, the
-# ledger stores NULL, and a sum over the run reports how many rows it could not
-# price. Filling one in is a config edit with an audit trail.
+# Sources:
+#   OpenAI     https://developers.openai.com/api/docs/pricing
+#              https://developers.openai.com/api/docs/models/gpt-5.6  (threshold)
+#   Anthropic  supplied by the project owner from the published price list
 #
-# Rates are USD per million tokens, as published by the provider. `cached_input`
-# is the read rate for a prompt-cache hit; where a provider does not offer one,
-# leave it null and the base input rate applies.
+# **An unpriced model is null, never zero.** A missing rate is a rate nobody has
+# confirmed, and writing 0.0 for it produces a run total that looks complete and
+# understates the bill — the same failure as a gate reading 0.0% because nothing
+# fed it. `price()` returns None for anything absent or null here, the ledger
+# stores NULL, and `priced_models()` names what can be costed so a report can
+# say how much of itself it could not price.
+#
+# ── The four rates, and why input alone was wrong ────────────────────────────
+#
+# `cached_input` is a cache *read* and `cache_write` is a cache *fill*, and they
+# move in opposite directions from base input: a read is a tenth of it on
+# Anthropic, a write is a quarter more. Pricing `cached_tokens` at the full
+# input rate overstated a cache hit by 10x, and this workload caches the tenant
+# script and policy preamble on every composed turn — so the overstatement was
+# on almost every row.
+#
+# `Completion.cached_tokens` is reads only, on both adapters: Anthropic's
+# `cache_read_input_tokens`, OpenAI's `prompt_tokens_details.cached_tokens`.
+# `cache_write_tokens` carries Anthropic's `cache_creation_input_tokens`. **It
+# is always 0 for OpenAI**, because the field name their API reports it under is
+# not documented on any page reachable from here — so OpenAI cache writes are
+# currently billed by the vendor and invisible to this table. That understates
+# an OpenAI turn that fills the cache. Recorded here rather than guessed at.
+#
+# ── Long context ─────────────────────────────────────────────────────────────
+#
+# OpenAI charges 2x input and 1.5x output for a request whose prompt exceeds the
+# threshold, and it applies to the *whole* request rather than the excess:
+# "Prompts with >272K input tokens are priced at 2x input and 1.5x output for
+# the full request." The published long-context rates are exactly those
+# multiples of the short ones, on every one of the three models, which is what
+# makes the threshold trustworthy — the tables corroborate the sentence.
+#
+# The threshold counts the prompt, so `input_tokens + cached_tokens +
+# cache_write_tokens` — tokens served from cache are still tokens you sent.
+# Output is not counted toward it.
+#
+# Anthropic has no long-context tier on these models and declares none here. A
+# model without a `long_context` block is priced at one rate at any size, which
+# is different from a model whose long rates nobody has looked up.
 
-version: 1
+version: 2
 currency: usd
+read_on: 2026-08-21
 
 per_million_tokens:
   # ── Anthropic ────────────────────────────────────────────────────────────
-  # Published list prices, 2026-06-24. Cache reads are a tenth of base input.
+  # `cache_write` is the 5-minute TTL rate. A 1-hour TTL bills higher and this
+  # table does not carry it; nothing here requests one, and if something starts
+  # to, this row understates it.
   claude-opus-5:
     input: 5.00
-    output: 25.00
     cached_input: 0.50
+    cache_write: 6.25
+    output: 25.00
   claude-sonnet-5:
-    input: 3.00
-    output: 15.00
-    cached_input: 0.30
+    # **Introductory pricing, and it expires.** The list rate is 3.00 / 15.00;
+    # these are the promotional rates running to 2026-08-31. From 2026-09-01
+    # every composition row this table prices is understated by a third until
+    # someone edits these two lines.
+    input: 2.00
+    cached_input: 0.20
+    cache_write: 2.50
+    output: 10.00
   claude-haiku-4-5-20251001:
     input: 1.00
-    output: 5.00
     cached_input: 0.10
+    cache_write: 1.25
+    output: 5.00
 
   # ── OpenAI ───────────────────────────────────────────────────────────────
-  # text-embedding-3-large is the published rate. The chat models are NOT
-  # filled in: nothing in this repository or in the working notes carries a
-  # confirmed rate for gpt-5.6-sol or gpt-5.6-luna, and inventing one would put
-  # a fabricated number in a billing column that reads as authoritative.
-  #
-  # This is the expensive gap, not a cosmetic one. `eval_grading` routes to
-  # anthropic first, but §5.2 excludes the answering provider and composition
-  # runs on Anthropic — so every judge call in the suite lands on sol, ~57 per
-  # invocation at ~1,450 input tokens each. Until these two lines are filled
-  # from the provider's billing page, the largest line item in an eval run
-  # prices as NULL and `unpriced_rows` says so.
+  gpt-5.6-sol:
+    input: 4.00
+    cached_input: 0.40
+    cache_write: 5.00
+    output: 20.00
+    long_context:
+      threshold_input_tokens: 272000
+      input: 8.00
+      cached_input: 0.80
+      cache_write: 10.00
+      output: 30.00
+  gpt-5.6-terra:
+    input: 2.00
+    cached_input: 0.20
+    cache_write: 2.50
+    output: 12.00
+    long_context:
+      threshold_input_tokens: 272000
+      input: 4.00
+      cached_input: 0.40
+      cache_write: 5.00
+      output: 18.00
+  gpt-5.6-luna:
+    input: 0.20
+    cached_input: 0.02
+    cache_write: 0.25
+    output: 1.20
+    long_context:
+      threshold_input_tokens: 272000
+      input: 0.40
+      cached_input: 0.04
+      cache_write: 0.50
+      output: 1.80
+
+  # Confirmed on the OpenAI pricing page, 2026-08-21. Embeddings return no
+  # output tokens and the vendor lists no cache tier for them.
   text-embedding-3-large:
     input: 0.13
+    cached_input: null
+    cache_write: null
     output: 0.00
-    cached_input: null
-  gpt-5.6-sol:
-    input: null
-    output: null
-    cached_input: null
-  gpt-5.6-luna:
-    input: null
-    output: null
-    cached_input: null
-  gpt-5.6-terra:
-    input: null
-    output: null
-    cached_input: null

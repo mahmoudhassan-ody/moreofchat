@@ -82,6 +82,15 @@ class Completion:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
+    #: Tokens written INTO the cache, which bill higher than base input where
+    #: `cached_tokens` bills far lower — opposite directions, so one field for
+    #: both would be wrong whichever rate it took.
+    #:
+    #: Anthropic's `cache_creation_input_tokens`. **Always 0 for OpenAI**: the
+    #: field their API reports it under is not documented on any page reachable
+    #: from here, so an OpenAI turn that fills the cache is billed by the vendor
+    #: and invisible to the ledger. Left at zero and stated rather than guessed.
+    cache_write_tokens: int = 0
     # True when this came from the failover provider. §2.6 requires the turn to
     # be logged as degraded so a quality regression is attributable to the
     # fallback path rather than blamed on a prompt change.

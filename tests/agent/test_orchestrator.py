@@ -1326,3 +1326,27 @@ async def test_an_outage_before_the_engine_still_answers_in_the_customer_s_langu
         channel=CHANNEL,
     )
     assert result.reply == load("agent/replies")["replies"]["provider_unavailable"]["english"]
+
+
+async def test_a_cache_write_is_metered_at_its_own_rate(two_tenants, app_engine):
+    """The prompt cache is on the composition path — the passages are the
+    stable prefix — so a fill happens on the first turn of every new prefix.
+    Billed above base input where a read is billed far below it, and one column
+    for both was wrong whichever way the turn went."""
+    tenant, _ = two_tenants
+    orchestrator, anthropic, *_ = build()
+    anthropic.cache_write_tokens = 500
+    async with tenant_session(app_engine, tenant.id) as s:
+        await orchestrator.handle(
+            session=s, state=start_state(), text="كام رسوم الساعة؟", channel=CHANNEL
+        )
+        await s.commit()
+        writes = [
+            r[0]
+            for r in (
+                await s.execute(
+                    sql("SELECT cache_write_tokens FROM usage_ledger WHERE kind='llm_call'")
+                )
+            ).all()
+        ]
+    assert any(w == 500 for w in writes), "the cache fill never reached the ledger"

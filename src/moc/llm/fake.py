@@ -31,6 +31,7 @@ class FakeProvider:
         input_tokens: int = 0,
         output_tokens: int = 0,
         cached_tokens: int = 0,
+        cache_write_tokens: int = 0,
         stop_reason: str | None = None,
         text_by_model: dict[str, str] | None = None,
     ) -> None:
@@ -56,6 +57,7 @@ class FakeProvider:
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.cached_tokens = cached_tokens
+        self.cache_write_tokens = cache_write_tokens
         self.stop_reason = stop_reason
         self.calls: list[dict[str, Any]] = []
 
@@ -103,6 +105,7 @@ class FakeProvider:
             input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
             cached_tokens=self.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens,
             stop_reason=self.stop_reason,
         )
 
