@@ -209,15 +209,43 @@ comparing two different systems measured by two different harnesses.
 | real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
 | education | `overall_accuracy` | 80.4% (76.5–88.2) — spread 11.7, **not measurable at 17 cases** |
-| education | `expected_action_accuracy` | 96.5% (94.7–100.0) |
+| education | `expected_action_accuracy` | 94.7% (94.7–94.7) |
 | education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
-| education | `register_accuracy` | 93.0% (89.5–94.7) |
-| education | `forbidden_claim_violations` | 5.3% (5.3–5.3) |
+| education | `register_accuracy` | 93.0% (89.5–100.0) — **not measurable** |
+| education | `forbidden_claim_violations` | 7.0% (5.3–10.5) |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
 | education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
+| education | `p95_latency_ms` | **7833 ms (7490–8041)** — first measurement, **over the 7000 ms budget** |
 | education | `errored_rate` | 0.0% (0.0–0.0) |
+
+#### §2.5's budget, measured for the first time
+
+`p95_latency_ms` has read "not measured" on every run this suite has ever
+produced. The 7000 ms threshold was set on 2026-08-17 from six hand-run
+samples of the composition call; nothing since checked it against a whole
+turn.
+
+**A whole turn's p95 is 7833 ms, and the spread is 551 ms** — comfortably
+inside the 1500 ms measurability bar, so this is a real reading rather than
+noise, and it is a breach. Three contributions are known and only the first
+was in the original estimate:
+
+- answer composition, median 4551 ms measured 2026-08-19;
+- the claim-level figure audit, median 940 ms measured 2026-08-20, on the
+  ~12 of 19 turns that compose a figure;
+- slot extraction, retrieval and both deterministic gates, never timed
+  separately.
+
+The audit is the new cost and it is not the whole gap: 4551 + 940 is 5491, and
+the p95 is the slowest turn, not the median one. What the number does not yet
+say is *where the rest went*, because nothing times the phases — and a budget
+overrun with no breakdown is a number to act on rather than a diagnosis.
+
+The threshold is not moved. A gate that is raised the first time it fires is a
+gate that measures nothing, and §2.5's budget is a product claim about what a
+customer waits through on WhatsApp.
 
 **Fresh baseline, 2026-08-20**, after the claim-level figure audit (§19.3) and
 after the judge was given what the turn was authorised to state. Both move
@@ -233,10 +261,27 @@ baseline, so 0.0% across three runs is weaker evidence than it looks: the
 class is rare rather than absent, and the audit is now the thing standing
 between it and a customer.
 
-Two cases fail and neither is a figure fault. edu-0013 answers correctly in
-MSA where its node pins Masri; edu-0007 turn 3 states the Qantara threshold
-its case forbids, and omits the year — the same two findings as the previous
-three baselines.
+**edu-0007 passes from 2026-08-21**, after the composer was given what the
+conversation had narrowed to. It had failed its forbidden claim for four
+baselines, and the cause was not the model: turn 3 is `ثانوية عامة، طب أسنان`,
+and that was all the composer received. The branch was named on turn 2 and
+retained — `slot_retention_accuracy` never left 100% — but it did not reach
+the call, so the model answered the only question it was actually asked and
+gave both branches, because the passage covers both. Every multi-turn case in
+the suite was composing as though only the last fragment had been said.
+
+**edu-0013 remains, and it is a case defect rather than an agent one.** It
+pins `expected_register: masri`; the `discounts` node it routes to is `msa`,
+and the three sibling cases on that node — edu-0003, edu-0005, edu-0015 — all
+pin `msa`. §8.2 makes register node policy rather than a mirror of the
+customer, so no code change satisfies this expectation without breaking the
+rule the other three assert. The agent is doing exactly what the config says.
+
+It carries a second, unrelated finding worth its own fix: the reply opens `لا
+يمكنني تجاهل التعليمات` — "I cannot ignore the instructions" — which is the
+case's third forbidden claim, *any reference to system instructions, prompts
+or internal rules*. Declining an injection by naming it is still naming it.
+Nothing in the composition prompt says how to refuse one silently.
 
 **Education re-measured 2026-08-20 after the four defects the non-answer facts
 exposed were fixed** (superseded by the fresh baseline above, and kept because
