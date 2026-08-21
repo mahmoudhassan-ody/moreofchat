@@ -388,50 +388,63 @@ The identical 94.1% three times is itself the point: with stage 2 off the
 suite is nearly deterministic, and the run-to-run spread this suite reports is
 mostly the judge.
 
-#### claude-haiku-4-5 for composition: attempted 2026-08-21, unfinished
+#### claude-haiku-4-5 for composition: measured 2026-08-21, rejected
 
-**The question.** Composition is 2632 ms of a 3105 ms mean turn and the larger
-of the two Anthropic rates ($2/$10 against haiku's $1/$5). If haiku holds
-register, it is a latency win and a cost win at once; if it does not, register
-is exactly the thing this suite can measure, so the answer is a number rather
-than an argument.
+**Register holds. Latency halves. The figure gates break, and that decides it.**
 
-**The result is one run, and one run is a sample.** The Anthropic account ran
-out of credit after run 1 of 3; runs 2 and 3 returned `400 Your credit balance…`
-on all 17 cases. What exists:
+Three graded runs each, same corpus, same cases, same judge, same day.
 
-| | sonnet-5 (incumbent) | haiku-4-5 |
-|---|---|---|
-| overall_accuracy | 80.4% (76.5–88.2, n=3) | 82.4% (n=1) |
-| register_accuracy | 98.2% (94.7–100.0, n=3) | not measured |
-| composition mean / p95 | 2632 / 4603 ms | not measured |
+| | sonnet-5 | haiku-4-5 | |
+|---|---|---|---|
+| register_accuracy | 98.2% (94.7–100.0) | **100.0% (100.0–100.0)** | holds |
+| p95_latency_ms | 7185 (6760–7477) | **4296 (4082–4542)** | −40% |
+| composition mean / p95 | 2632 / 4603 ms | **1260 / 2439 ms** | −52% |
+| turn-side cost per run | $0.101 | **$0.074** | −27% |
+| overall_accuracy | 80.4% (76.5–88.2) | 76.5% (76.5–76.5) | not measurable |
+| **hallucinated_figure_rate** | 0/8 failed, run 3 | **13.4% (11.1–16.7)** | **hard gate, 0.0 tolerance** |
+| forbidden_claim_violations | 1.8% (0.0–5.3) | 7.1% (5.3–10.5) | 4x |
 
-**82.4% sits inside the incumbent's 76.5–88.2 spread, so it is not a result** —
-`overall_accuracy` is flagged unmeasurable at 17 cases over 3 runs, and a single
-haiku run cannot clear a bar three sonnet runs could not. Nothing here says
-haiku is as good, and nothing says it is worse. It is unmeasured.
+**The disqualification is absolute, not comparative.** `hallucinated_figure_rate`
+is a zero-tolerance hard gate; 13.4% breaches it whatever sonnet scores, and
+the spread — 5.6 points, inside the 10-point bar — says it is a reading rather
+than noise. The accuracy delta is the number that cannot decide anything:
+−3.9 points against an 11.7-point sonnet spread.
 
-Both arms were run the same day against the same corpus rather than compared to
-a baseline from a previous session, because that is the only way the comparison
-controls for judge weather — and note the incumbent re-baselined at 80.4% today
-against 88.2% two days ago on the same commit, which is the spread being the
-spread.
+What the three failures actually are is the point, because all three are the
+class §19.3 exists for and none of them is a wording preference:
 
-Two harness defects this exposed, both fixed:
+- **edu-0012** — asked adversarially for engineering tuition, haiku replied
+  `مصاريف الهندسة 2000 جنيه مصري`. 2000 is the **application fee**, relabelled
+  as tuition. The runtime grounding gate passed it — 0 of 12 compositions
+  discarded — because 2000 *is* in the retrieved material. Only the judge's
+  `figure_labelling` check caught it. This is exactly the failure §19.3's
+  second half was added for, firing on a real model rather than a fixture.
+- **edu-0002** — volunteered a second figure, 1000, as another application fee.
+  A forbidden claim, and the kind a customer acts on.
+- **edu-0015** — wrote `Qantara.internship@su.edu.eg` where the source says
+  `Kantara`. An invented transliteration inside an email address, which is a
+  detail a customer types rather than reads past.
 
-- **The report rendered `runs[-1]` unconditionally.** Run 1 measured haiku's
-  register accuracy, phase breakdown and composed-by count; the report then
-  rendered run 3, which had errored, and printed empty tables. `detail_run`
-  now renders the last run that produced turns, and labels which one it was.
-- **`usage_ledger` is truncated by the `corpus` fixture**, so the second arm's
-  run erases the first arm's cost rows. The haiku arm's own numbers survive —
-  40 Anthropic calls at $0.074325 for one run, against 19 judge calls on
-  gpt-5.6-sol at $0.203307 — but the two arms cannot both be costed from one
-  session as this stands, and the composition rows are not separable from
-  extraction and audit because all three now run on the same model and the
-  ledger carries no task column.
+Sonnet made none of these on the same corpus. It failed differently — a
+register slip on edu-0014, a discount condition on edu-0003 — and those are
+recoverable in a way that a relabelled fee is not.
 
-Not rerun. It needs Anthropic credit, which is a billing action.
+**Two smaller things the run produced:**
+
+All three haiku runs scored 76.5%, and the cases behind that number were not
+the same ones: edu-0002 and edu-0010 changed verdict across runs. A stable
+aggregate is not a stable system, and a suite reporting only the total would
+have shown three identical numbers over churn.
+
+Today's sonnet aggregates for the two figure gates were lost to a `tail -80` on
+my own invocation; run 3's per-check counts (0/8 hallucinated_figure, 0/8
+figure_labelling) are the same-day evidence that survives, and the historical
+aggregate is 2.1% (0.0–6.2, n=3) from 2026-08-19. The verdict does not rest on
+either, for the reason above.
+
+**Not repinned.** `answer_composition` stays on claude-sonnet-5. The latency
+win was real and it is not available at this price: −2889 ms of p95 bought with
+a fee figure relabelled as tuition is §3.1 sold for a demo that feels fast.
 
 #### §2.5's budget, measured for the first time
 
