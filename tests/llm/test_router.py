@@ -204,7 +204,7 @@ async def test_breaker_is_per_provider_not_global(router, routing, anthropic, op
 
 
 async def test_embeddings_route_to_the_configured_provider(router, openai, routing):
-    vectors = await router.embed(texts=["رسوم الساعة"])
+    vectors = (await router.embed(texts=["رسوم الساعة"])).vectors
     assert len(vectors) == 1
     assert openai.calls[0]["model"] == routing["tasks"]["embedding"]["primary"]["model"]
 
@@ -338,7 +338,7 @@ async def test_fake_fails_only_the_configured_number_of_times(anthropic):
 
 
 async def test_fake_embeddings_have_the_requested_dimension(openai):
-    vectors = await openai.embed(model="m", texts=["a", "b"], dimensions=1024)
+    vectors = (await openai.embed(model="m", texts=["a", "b"], dimensions=1024)).vectors
     assert [len(v) for v in vectors] == [1024, 1024]
 
 

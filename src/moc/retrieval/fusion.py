@@ -46,7 +46,7 @@ missing so a quality dip is attributable rather than mysterious.
 
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from moc.config_store import load
@@ -126,6 +126,14 @@ class FusionResult:
     #: depend on the agent layer. Satisfying the shape rather than the name is
     #: what keeps the dependency pointing agent -> retrieval.
     script_constants: tuple[str, ...] = ()
+    #: What the query embedding cost, for the ledger. Zero when the dense arm
+    #: did not run — a lexical-only deployment, or an embedding outage (§7.3).
+    #:
+    #: Carried rather than metered here for the same reason `Completion` is:
+    #: the retrieval layer has no session and no tenant, and a ledger write
+    #: outside the caller's transaction would survive a turn that rolled back.
+    embedding_model: str = ""
+    embedding_tokens: int = 0
 
     @property
     def passages(self) -> tuple[str, ...]:
@@ -377,8 +385,11 @@ class FusionRetriever:
         ]
 
         dense: list[Candidate] | None = None
+        embedding_model, embedding_tokens = "", 0
         if self._dense is not None and self._embedder is not None:
-            vector = (await self._embedder.embed(texts=[query]))[0]
+            embedding = await self._embedder.embed(texts=[query])
+            vector = embedding.vectors[0]
+            embedding_model, embedding_tokens = embedding.model, embedding.input_tokens
             dense = [
                 Candidate(
                     chunk_id=point.chunk_id,
@@ -398,8 +409,9 @@ class FusionRetriever:
                 )
             ]
 
-        self._last = await fuse(
-            query=query, dense=dense, sparse=sparse, config=self._config
+        fused = await fuse(query=query, dense=dense, sparse=sparse, config=self._config)
+        self._last = replace(
+            fused, embedding_model=embedding_model, embedding_tokens=embedding_tokens
         )
         return self._last
 

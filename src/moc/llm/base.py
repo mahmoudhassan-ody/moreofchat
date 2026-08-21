@@ -90,6 +90,26 @@ class Completion:
 
 
 @dataclass(frozen=True)
+class Embedding:
+    """Vectors plus what they cost, the same shape `Completion` already had.
+
+    Embedding was the one provider call that returned no usage, which is
+    exactly why embedding spend was invisible in the ledger: `embedding_call`
+    existed as a `UsageKind` and nothing could write a row worth reading,
+    because there was no token count to price.
+
+    `input_tokens` covers every text in the batch — providers bill an embedding
+    request whole, and splitting it per text would invent a division the
+    invoice does not make.
+    """
+
+    vectors: list[Vector]
+    provider: str
+    model: str
+    input_tokens: int = 0
+
+
+@dataclass(frozen=True)
 class UsageEvent:
     """What the router hands its usage sink after every completion.
 
@@ -130,7 +150,7 @@ class LLMProvider(Protocol):
 
     async def embed(
         self, *, model: str, texts: Sequence[str], dimensions: int
-    ) -> list[Vector]: ...
+    ) -> Embedding: ...
 
 
 class LLMError(Exception):

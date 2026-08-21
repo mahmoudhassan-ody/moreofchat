@@ -386,10 +386,10 @@ async def test_embeddings_truncate_to_the_configured_dimension():
     import json
 
     captured = []
-    vectors = await openai(responder(OPENAI_EMBEDDING, capture=captured)).embed(
+    embedding = await openai(responder(OPENAI_EMBEDDING, capture=captured)).embed(
         model="text-embedding-3-large", texts=["رسوم الساعة"], dimensions=1024
     )
-    assert [len(v) for v in vectors] == [1024]
+    assert [len(v) for v in embedding.vectors] == [1024]
     assert json.loads(captured[0].content)["dimensions"] == 1024
 
 
@@ -403,10 +403,10 @@ async def test_embeddings_preserve_input_order():
         ],
         "usage": {"prompt_tokens": 4},
     }
-    vectors = await openai(responder(payload)).embed(
+    embedding = await openai(responder(payload)).embed(
         model="m", texts=["first", "second"], dimensions=1
     )
-    assert vectors == [[1.0], [2.0]]
+    assert embedding.vectors == [[1.0], [2.0]]
 
 
 async def test_anthropic_has_no_embedding_api():
@@ -621,3 +621,32 @@ async def test_openai_sends_temperature_only_when_configured():
         temperature=0.0,
     )
     assert json.loads(captured[1].content)["temperature"] == 0.0
+
+
+async def test_the_embedding_carries_the_tokens_it_was_billed_for():
+    """The usage block was read and discarded, which is why `embedding_call`
+    could never be a row worth writing: a ledger entry with no token count
+    prices as NULL, and a NULL cost is indistinguishable from an unpriced
+    model. The provider bills the request whole, so the count is the batch's,
+    not per text."""
+    payload = {
+        "model": "text-embedding-3-large",
+        "data": [{"embedding": [1.0], "index": 0}, {"embedding": [2.0], "index": 1}],
+        "usage": {"prompt_tokens": 37},
+    }
+    embedding = await openai(responder(payload)).embed(
+        model="text-embedding-3-large", texts=["a", "b"], dimensions=1
+    )
+    assert embedding.input_tokens == 37
+    assert embedding.model == "text-embedding-3-large"
+    assert embedding.provider == "openai"
+
+
+async def test_an_embedding_response_without_usage_reports_zero_not_a_guess():
+    """A provider that omits the block has told us nothing, and estimating
+    from character counts would put a fabricated number in a billing column."""
+    payload = {"model": "m", "data": [{"embedding": [1.0], "index": 0}]}
+    embedding = await openai(responder(payload)).embed(
+        model="m", texts=["a"], dimensions=1
+    )
+    assert embedding.input_tokens == 0

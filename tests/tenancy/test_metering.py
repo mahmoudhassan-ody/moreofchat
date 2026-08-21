@@ -170,3 +170,77 @@ async def test_usage_kind_covers_the_metered_events():
         "embedding_call",
         "tool_call",
     ]
+
+
+# ───────── the column that nothing filled ─────────
+
+
+async def _cost_of(app_engine, tenant, **usage):
+    async with tenant_session(app_engine, tenant.id) as s:
+        await record_usage(s, **usage)
+        await s.commit()
+    async with tenant_session(app_engine, tenant.id) as s:
+        return (
+            await s.execute(text("SELECT provider_cost_usd FROM usage_ledger"))
+        ).scalar()
+
+
+async def test_a_priced_call_lands_with_its_cost(app_engine, two_tenants):
+    """`provider_cost_usd` has existed since migration 0004 and every caller
+    left it null, so "what did that run cost" was an estimate reconstructed
+    from code paths. Priced inside `record_usage` rather than at each call
+    site: four callers would be four chances to forget, and the one that
+    forgot would be invisible."""
+    a, _ = two_tenants
+    cost = await _cost_of(
+        app_engine,
+        a,
+        kind=UsageKind.llm_call,
+        model="claude-haiku-4-5-20251001",
+        provider="anthropic",
+        input_tokens=281,
+        output_tokens=82,
+    )
+    assert cost == Decimal("0.000691")
+
+
+async def test_an_unpriced_model_lands_null_rather_than_zero(app_engine, two_tenants):
+    """Every judge call in the suite runs on an OpenAI chat model and nothing
+    here carries a confirmed rate for one. A zero would make the run total look
+    complete while understating its largest line item."""
+    a, _ = two_tenants
+    cost = await _cost_of(
+        app_engine,
+        a,
+        kind=UsageKind.llm_call,
+        model="gpt-5.6-sol",
+        provider="openai",
+        input_tokens=1450,
+        output_tokens=90,
+    )
+    assert cost is None
+
+
+async def test_an_explicit_cost_wins_over_the_table(app_engine, two_tenants):
+    """A caller holding the provider's own reported figure — a batch discount,
+    a negotiated rate — must not have it recomputed from a list price."""
+    a, _ = two_tenants
+    cost = await _cost_of(
+        app_engine,
+        a,
+        kind=UsageKind.llm_call,
+        model="claude-sonnet-5",
+        provider="anthropic",
+        input_tokens=1_000_000,
+        provider_cost_usd=Decimal("0.5"),
+    )
+    assert cost == Decimal("0.5")
+
+
+async def test_a_row_with_no_model_is_not_priced(app_engine, two_tenants):
+    """message_in and message_out name no model and cost nothing here — the
+    channel bills those, and inventing a zero would put them in the same column
+    as provider spend."""
+    a, _ = two_tenants
+    cost = await _cost_of(app_engine, a, kind=UsageKind.message_in, channel="whatsapp")
+    assert cost is None

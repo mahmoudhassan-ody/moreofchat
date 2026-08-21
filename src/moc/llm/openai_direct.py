@@ -28,7 +28,7 @@ from typing import Any
 
 import httpx
 
-from moc.llm.base import Completion, Message, Reasoning, Vector
+from moc.llm.base import Completion, Embedding, Message, Reasoning
 from moc.llm.http import Sleep, build_client, request_with_retries
 
 BASE_URL = "https://api.openai.com"
@@ -101,7 +101,7 @@ class OpenAIDirect:
 
     async def embed(
         self, *, model: str, texts: Sequence[str], dimensions: int
-    ) -> list[Vector]:
+    ) -> Embedding:
         """Matryoshka truncation to `dimensions` (§7.3: 1024, from config).
 
         The provider does the truncation, so the returned vector is already the
@@ -119,7 +119,16 @@ class OpenAIDirect:
         # Sort by index rather than trusting order: a reordered response would
         # silently attach every chunk to the wrong vector.
         rows = sorted(body.get("data") or [], key=lambda row: row.get("index", 0))
-        return [row["embedding"] for row in rows]
+        # The usage block was discarded here, which is the whole reason
+        # embedding spend never reached the ledger — `embedding_call` had no
+        # token count to price and would have stored NULL on every row.
+        usage = body.get("usage") or {}
+        return Embedding(
+            vectors=[row["embedding"] for row in rows],
+            provider=self.name,
+            model=model,
+            input_tokens=int(usage.get("prompt_tokens") or 0),
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

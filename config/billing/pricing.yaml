@@ -1,0 +1,64 @@
+# Provider prices, for `usage_ledger.provider_cost_usd` (design §19).
+#
+# The ledger has carried a `provider_cost_usd` column since migration 0004 and
+# nothing ever populated it, so "what did that run cost" was an estimate rather
+# than a query. This is the table that makes it a query.
+#
+# **An unpriced model is null, never zero.** A missing rate is a rate nobody
+# has confirmed, and writing 0.0 for it produces a total that looks complete
+# and understates the bill — the same failure as a gate that reads 0.0% because
+# nothing fed it. `cost_usd` returns None for anything absent or null here, the
+# ledger stores NULL, and a sum over the run reports how many rows it could not
+# price. Filling one in is a config edit with an audit trail.
+#
+# Rates are USD per million tokens, as published by the provider. `cached_input`
+# is the read rate for a prompt-cache hit; where a provider does not offer one,
+# leave it null and the base input rate applies.
+
+version: 1
+currency: usd
+
+per_million_tokens:
+  # ── Anthropic ────────────────────────────────────────────────────────────
+  # Published list prices, 2026-06-24. Cache reads are a tenth of base input.
+  claude-opus-5:
+    input: 5.00
+    output: 25.00
+    cached_input: 0.50
+  claude-sonnet-5:
+    input: 3.00
+    output: 15.00
+    cached_input: 0.30
+  claude-haiku-4-5-20251001:
+    input: 1.00
+    output: 5.00
+    cached_input: 0.10
+
+  # ── OpenAI ───────────────────────────────────────────────────────────────
+  # text-embedding-3-large is the published rate. The chat models are NOT
+  # filled in: nothing in this repository or in the working notes carries a
+  # confirmed rate for gpt-5.6-sol or gpt-5.6-luna, and inventing one would put
+  # a fabricated number in a billing column that reads as authoritative.
+  #
+  # This is the expensive gap, not a cosmetic one. `eval_grading` routes to
+  # anthropic first, but §5.2 excludes the answering provider and composition
+  # runs on Anthropic — so every judge call in the suite lands on sol, ~57 per
+  # invocation at ~1,450 input tokens each. Until these two lines are filled
+  # from the provider's billing page, the largest line item in an eval run
+  # prices as NULL and `unpriced_rows` says so.
+  text-embedding-3-large:
+    input: 0.13
+    output: 0.00
+    cached_input: null
+  gpt-5.6-sol:
+    input: null
+    output: null
+    cached_input: null
+  gpt-5.6-luna:
+    input: null
+    output: null
+    cached_input: null
+  gpt-5.6-terra:
+    input: null
+    output: null
+    cached_input: null

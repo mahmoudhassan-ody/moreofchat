@@ -60,6 +60,9 @@ from moc.llm.base import AllProvidersUnavailable, Completion, Message, Role, Tas
 from moc.llm.router import Router
 from moc.tenancy.metering import UsageKind, record_usage
 
+#: §7.3 pins embeddings to one provider by design — there is no failover, so
+#: the ledger can name it without asking the router which one answered.
+_EMBEDDING_PROVIDER = "openai"
 _MS = 1000.0
 _REPLIES = "agent/replies"
 
@@ -93,6 +96,12 @@ class Retrieval:
     #: that reads, which is a different claim from "looked and found nothing".
     confidence: float | None = None
     script_constants: Sequence[float | str] = ()
+    #: What the query embedding cost. Zero when the dense arm did not run — a
+    #: lexical-only deployment, or an embedding outage (§7.3) — and a zero
+    #: writes no ledger row, because a call that never happened must not enter
+    #: the count that answers "how many times did we embed".
+    embedding_model: str = ""
+    embedding_tokens: int = 0
     #: What each passage is *about*, in the corpus's own words. Only the
     #: fallback clarification reads this (edu-0009): a body does not say which
     #: question it answers, so without titles the only honest reply to an
@@ -262,6 +271,20 @@ class Orchestrator:
             turn = await self._extractor.extract(text=redaction.text, state=state)
         with clock.phase("retrieval"):
             retrieval = await self._retriever.search(query=redaction.text)
+        # `embedding_call` existed as a UsageKind from migration 0004 and
+        # nothing wrote one, so embedding spend could only ever be estimated
+        # from code paths. Metered here rather than in the retrieval layer:
+        # that layer has no session and no tenant, and a write outside this
+        # transaction would survive a turn that rolled back.
+        if getattr(retrieval, "embedding_tokens", 0):
+            await record_usage(
+                session,
+                kind=UsageKind.embedding_call,
+                channel=channel,
+                model=retrieval.embedding_model,
+                provider=_EMBEDDING_PROVIDER,
+                input_tokens=retrieval.embedding_tokens,
+            )
         # The extractor's own confidence, if it reported one, is discarded
         # here. `grounded` is the §7.5 gate's real input: a script constant
         # counts, because §3.1 lets the script state figures the corpus does

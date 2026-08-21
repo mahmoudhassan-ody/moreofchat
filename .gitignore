@@ -12,3 +12,7 @@ htmlcov/
 dist/
 build/
 .DS_Store
+
+# Content-addressed embedding cache. Survives between runs on purpose —
+# that is the saving — and is never a build input.
+.cache/

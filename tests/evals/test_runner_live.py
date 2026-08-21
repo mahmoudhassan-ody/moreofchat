@@ -33,6 +33,7 @@ from moc.llm.anthropic_direct import AnthropicDirect
 from moc.llm.openai_direct import OpenAIDirect
 from moc.llm.router import Router
 from moc.retrieval.chunker import embedding_text
+from moc.retrieval.embedding_cache import EmbeddingCache
 from moc.retrieval.fusion import FusionRetriever
 from moc.retrieval.lexical import (
     LexicalDocument,
@@ -47,6 +48,9 @@ pytestmark = pytest.mark.live
 ROUTING = load("llm/routing")
 LEXICAL = load("retrieval/lexical")
 CASES = Path(__file__).parents[2] / "evals" / "cases" / "education.yaml"
+#: Gitignored. Survives between invocations on purpose — that is the saving.
+CACHE_ROOT = Path(__file__).parents[2] / ".cache" / "embeddings"
+EMBEDDING = ROUTING["tasks"]["embedding"]["primary"]
 SCRIPT_ID = "scripts/education/fees"
 SINAI = Path(__file__).parents[2] / "evals" / "fixtures" / "sinai_demo" / "chunks.jsonl"
 
@@ -144,9 +148,15 @@ async def corpus(app_engine, engine):
             },
         )
     )
-    vectors = await embedder.embed(
-        texts=[embedding_text(title=r["title"], content=r["content"]) for r in records]
-    )
+    texts = [embedding_text(title=r["title"], content=r["content"]) for r in records]
+    # The 102 chunks do not change between invocations and were paid for on
+    # every one. Content-addressed and per text, so editing one chunk of the
+    # fixture costs one embedding rather than a hundred and two.
+    vectors = await EmbeddingCache(
+        root=CACHE_ROOT,
+        model=EMBEDDING["model"],
+        dimensions=EMBEDDING["dimensions"],
+    ).embed(embedder, texts)
     await dense.upsert(
         tenant_id=tenant.id,
         vertical="education",
@@ -221,6 +231,13 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
     async def once():
         async with tenant_session(app_engine, tenant.id) as session:
             outcomes = await runner.run(cases, session=session)
+            # Commit, or the ledger is decorative. `tenant_session` closes
+            # without committing, so every llm_call and embedding_call row a
+            # run writes was rolled back — about 186 per invocation. "What did
+            # that run cost" was then answerable only by reading code paths
+            # and estimating tokens, which is how a billing table comes to
+            # have a `provider_cost_usd` column that has never held a value.
+            await session.commit()
         runs.append(outcomes)
         with capsys.disabled():
             summary = summarize(outcomes)

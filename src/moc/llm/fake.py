@@ -13,7 +13,7 @@ arguments are recorded.
 from collections.abc import Sequence
 from typing import Any
 
-from moc.llm.base import Completion, Message, Reasoning, Vector
+from moc.llm.base import Completion, Embedding, Message, Reasoning
 
 
 class FakeProvider:
@@ -108,11 +108,18 @@ class FakeProvider:
 
     async def embed(
         self, *, model: str, texts: Sequence[str], dimensions: int
-    ) -> list[Vector]:
+    ) -> Embedding:
         self.calls.append(
             {"kind": "embed", "model": model, "texts": list(texts), "dimensions": dimensions}
         )
         self._maybe_fail("embed")
         # Distinct but deterministic vectors: identical ones would let a bug
         # that returns the same embedding for every chunk pass unnoticed.
-        return [[float(index)] * dimensions for index, _ in enumerate(texts)]
+        return Embedding(
+            vectors=[[float(index)] * dimensions for index, _ in enumerate(texts)],
+            provider=self.name,
+            model=model,
+            # Proportional to the input, so a test asserting the ledger saw
+            # the batch cannot pass on a hard-coded constant.
+            input_tokens=sum(len(text) for text in texts),
+        )

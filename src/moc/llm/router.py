@@ -30,6 +30,7 @@ from typing import Any
 from moc.llm.base import (
     AllProvidersUnavailable,
     Completion,
+    Embedding,
     LLMProvider,
     Message,
     NoFailoverConfigured,
@@ -38,7 +39,6 @@ from moc.llm.base import (
     Task,
     UnknownTask,
     UsageEvent,
-    Vector,
 )
 
 UsageSink = Callable[[UsageEvent], Awaitable[None]]
@@ -211,7 +211,7 @@ class Router:
         texts: Sequence[str],
         task: Task | str = Task.embedding,
         force_failover: bool = False,
-    ) -> list[Vector]:
+    ) -> Embedding:
         """Embed `texts`. Never fails over — §7.3.
 
         A second embedding provider returns vectors from a different space.

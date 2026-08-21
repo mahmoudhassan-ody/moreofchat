@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from moc.llm.base import Completion, Message, Reasoning, Vector
+from moc.llm.base import Completion, Embedding, Message, Reasoning
 from moc.llm.http import Sleep, build_client, request_with_retries
 
 # The one endpoint. Design §2.4: a region change (Bedrock eu-central-1, Vertex
@@ -105,7 +105,7 @@ class AnthropicDirect:
 
     async def embed(
         self, *, model: str, texts: Sequence[str], dimensions: int
-    ) -> list[Vector]:
+    ) -> Embedding:
         raise NotImplementedError(
             "Anthropic exposes no embedding API. §7.3 pins embeddings to one "
             "provider and one dimension count anyway — a second embedding space "
