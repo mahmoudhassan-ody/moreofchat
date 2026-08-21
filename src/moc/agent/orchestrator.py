@@ -40,11 +40,12 @@ whole turn be tested without a network, and what stops this module from
 growing opinions about Qdrant.
 """
 
+import asyncio
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -267,9 +268,27 @@ class Orchestrator:
         # `redaction.text`, which is the point of §7.3.
         await record_usage(session, kind=UsageKind.message_in, channel=channel)
 
+        async def extract() -> TurnInput:
+            with clock.phase("intake.extraction"):
+                return await self._extractor.extract(text=redaction.text, state=state)
+
+        async def search() -> Any:
+            with clock.phase("intake.retrieval"):
+                return await self._retriever.search(query=redaction.text)
+
         try:
-            with clock.phase("extraction"):
-                turn = await self._extractor.extract(text=redaction.text, state=state)
+            # Concurrently. Both consume `redaction.text` and neither reads the
+            # other's output, so running them in series bought nothing and cost
+            # the smaller of the two on every turn — against a p95 already over
+            # §2.5's budget.
+            #
+            # One counted phase with two dotted details, because `unattributed`
+            # is total minus the named phases: two overlapping phases each
+            # reporting their full duration would push it negative, and a
+            # clamped zero reads as "fully accounted for" on the very change
+            # that made the accounting wrong.
+            with clock.phase("intake"):
+                turn, retrieval = await asyncio.gather(extract(), search())
         except AllProvidersUnavailable:
             # §2.6, at the other end of the turn. Composition has always caught
             # this; extraction never did, so a total outage raised out of
@@ -282,8 +301,6 @@ class Orchestrator:
         # Extraction runs on every turn, where composition runs on about two in
         # three, and it was metered in neither vertical.
         await self._meter(session, channel, getattr(turn, "usage", None))
-        with clock.phase("retrieval"):
-            retrieval = await self._retriever.search(query=redaction.text)
         # `embedding_call` existed as a UsageKind from migration 0004 and
         # nothing wrote one, so embedding spend could only ever be estimated
         # from code paths. Metered here rather than in the retrieval layer:

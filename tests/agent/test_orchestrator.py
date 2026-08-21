@@ -1164,7 +1164,13 @@ async def test_a_turn_reports_the_time_each_phase_took(turn_session):
         session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
         channel=CHANNEL,
     )
-    assert set(result.timings) >= {"extraction", "retrieval", "composition", "audit"}
+    assert set(result.timings) >= {
+        "intake",
+        "intake.extraction",
+        "intake.retrieval",
+        "composition",
+        "audit",
+    }
     assert all(value >= 0 for value in result.timings.values())
 
 
@@ -1198,7 +1204,7 @@ async def test_a_scripted_turn_times_no_composition(turn_session):
     )
     assert result.action is Action.clarify
     assert "composition" not in result.timings
-    assert "extraction" in result.timings
+    assert "intake.extraction" in result.timings
 
 
 async def test_a_reply_with_no_figure_times_no_audit(turn_session):
@@ -1350,3 +1356,63 @@ async def test_a_cache_write_is_metered_at_its_own_rate(two_tenants, app_engine)
             ).all()
         ]
     assert any(w == 500 for w in writes), "the cache fill never reached the ledger"
+
+
+# ───────── extraction and retrieval, concurrently ─────────
+
+
+async def test_extraction_and_retrieval_run_concurrently(turn_session):
+    """Both consume `redaction.text` and neither reads the other's output, so
+    running them in series bought nothing and cost the smaller of the two —
+    about 230 ms of every turn against a p95 already over budget.
+
+    Asserted on wall-clock against the two sleeps, because the only thing that
+    distinguishes a gather from two awaits is elapsed time. A structural test
+    would pass on `await gather(a); await gather(b)`.
+    """
+    import asyncio
+    import time
+
+    orchestrator, *_ = build()
+    slow_extract = orchestrator._extractor.extract
+    slow_search = orchestrator._retriever.search
+
+    async def extract(**kwargs):
+        await asyncio.sleep(0.20)
+        return await slow_extract(**kwargs)
+
+    async def search(**kwargs):
+        await asyncio.sleep(0.20)
+        return await slow_search(**kwargs)
+
+    orchestrator._extractor.extract = extract
+    orchestrator._retriever.search = search
+
+    started = time.perf_counter()
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    elapsed = time.perf_counter() - started
+    assert elapsed < 0.38, f"the two ran in series: {elapsed:.3f}s of 0.40s of sleeps"
+
+
+async def test_the_breakdown_still_accounts_for_every_millisecond(turn_session):
+    """Overlapping phases must not make the sum lie.
+
+    `unattributed` is total minus the named phases, and two concurrent phases
+    both reporting their full duration would push it negative — clamped to
+    zero, which reads as "fully accounted for" on the one change that made the
+    accounting wrong. The pair is reported under one counted phase with each
+    half as a dotted detail.
+    """
+    orchestrator, *_ = build()
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    assert "intake" in result.timings
+    assert "intake.extraction" in result.timings
+    assert "intake.retrieval" in result.timings
+    counted = sum(v for k, v in result.timings.items() if k != "total" and "." not in k)
+    assert counted <= result.timings["total"] + 1e-6

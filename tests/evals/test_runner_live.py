@@ -367,7 +367,12 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         )
         print(f"  Phase breakdown, run {times} of {times} — ms:")
         print(f"    {'phase':16} {'mean':>8} {'p95':>8} {'turns':>7}")
-        for phase, row in sorted(rows.items(), key=lambda kv: -kv[1]["mean"]):
+        # Counted phases first, then the dotted details of each — a detail is
+        # inside its parent, not beside it, and interleaving them by size reads
+        # as double counting.
+        for phase, row in sorted(
+            rows.items(), key=lambda kv: ("." in kv[0], -kv[1]["mean"])
+        ):
             print(
                 f"    {phase:16} {row['mean']:8.0f} {row['p95']:8.0f} "
                 f"{row['turns']:7.0f}"

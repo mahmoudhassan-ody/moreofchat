@@ -43,7 +43,7 @@ from typing import Any
 from moc.config_store import load
 from moc.evals.run_metadata import TaskBinding
 from moc.evals.schema import ExpectedFact, Register
-from moc.llm.base import Message, Role, Task
+from moc.llm.base import Completion, Message, Role, Task
 from moc.llm.router import Router
 
 _JUDGE = "evals/judge"
@@ -87,6 +87,19 @@ class JudgeVerdict:
     meets_rubric: bool = False
     malformed: bool = False
     raw: str = ""
+    #: The call that produced this verdict, for the ledger.
+    #:
+    #: `eval_grading` is the largest provider cost the project has — §5.2
+    #: excludes the answering provider and composition runs on Anthropic, so
+    #: every judge call lands on the failover — and nothing metered it. A run
+    #: that spent $0.46 reported $0.31, and the whole of the difference was
+    #: this. Carried rather than metered here for the same reason `FigureAudit`
+    #: and `TurnInput` carry theirs: no session, no tenant.
+    #:
+    #: Present on a malformed verdict too. It cost money whatever it returned,
+    #: and dropping it on a parse failure would make the ledger cheapest
+    #: exactly when the harness was working worst.
+    completion: Completion | None = None
 
     def scores(self) -> dict[str, int]:
         return {name: getattr(self, name) for name in _DIMENSIONS}
@@ -185,7 +198,7 @@ class Judge:
             # preferring: a preference is satisfied by failover.
             exclude_provider=answer_provider,
         )
-        return self._parse(completion.text, completion.provider, completion.model, expected_facts)
+        return self._parse(completion, expected_facts)
 
     def _system_for(self, judge_provider: str | None, answer_provider: str) -> str:
         """Per provider family (§2.6).
@@ -238,17 +251,20 @@ class Judge:
     # ─────────────────────────── parsing ───────────────────────────
 
     def _parse(
-        self,
-        text: str,
-        provider: str,
-        model: str,
-        expected_facts: Sequence[ExpectedFact],
+        self, completion: Completion, expected_facts: Sequence[ExpectedFact]
     ) -> JudgeVerdict:
         # The flag matters as much as the failure. Without it an unparseable
         # verdict lands as a well-formed all-zeros grade, and the report reads
         # "the model wrote a terrible reply" where the truth is "the judge did
         # not answer" — a grading-harness fault charged to the model under test.
-        malformed = JudgeVerdict(provider=provider, model=model, raw=text, malformed=True)
+        text, provider, model = completion.text, completion.provider, completion.model
+        malformed = JudgeVerdict(
+            provider=provider,
+            model=model,
+            raw=text,
+            malformed=True,
+            completion=completion,
+        )
         fenced = _FENCE.match(text)
         try:
             document = json.loads(fenced.group(1) if fenced else text)
@@ -283,6 +299,7 @@ class Judge:
             reasoning=str(document.get("reasoning", "")),
             meets_rubric=self._meets_rubric(scores, coverage, violated, expected_facts),
             raw=text,
+            completion=completion,
             **scores,
         )
 

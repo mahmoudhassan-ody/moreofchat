@@ -34,7 +34,7 @@ from moc.evals.judge import JudgeVerdict
 from moc.evals.load import load_cases
 from moc.evals.runner import CaseRunner, metrics, recall_at_k
 from moc.evals.schema import Action, EvalCase, Turn
-from moc.llm.base import AllProvidersUnavailable
+from moc.llm.base import AllProvidersUnavailable, Completion
 from moc.llm.fake import FakeProvider
 from moc.llm.router import Router
 from moc.tenancy.context import tenant_session
@@ -103,11 +103,25 @@ class FixedExtractor:
 
 
 class RecordingJudge:
+    """Reports a completion because the real judge does.
+
+    A double that returned a bare verdict would let the runner drop the
+    ledger row while every test passed — the same mismatch `FakeExtractor`
+    hid until it started making a real call.
+    """
+
     def __init__(self, verdict: JudgeVerdict | None = None):
         self.calls: list[dict] = []
         self._verdict = verdict or JudgeVerdict(
             provider="openai", model="m", grounding=3, register=3,
             helpfulness=3, meets_rubric=True, fact_coverage={},
+            completion=Completion(
+                text="{}",
+                provider="openai",
+                model="judge-model",
+                input_tokens=1450,
+                output_tokens=90,
+            ),
         )
 
     async def grade(self, **kwargs) -> JudgeVerdict:
@@ -909,7 +923,12 @@ async def test_the_outcome_carries_the_phase_breakdown(session_tenant):
     session, _ = session_tenant
     run, _, _ = build()
     outcome = await run.run_case(a_case(), session=session)
-    assert set(outcome.turns[0].timings) >= {"extraction", "retrieval", "total"}
+    assert set(outcome.turns[0].timings) >= {
+        "intake",
+        "intake.extraction",
+        "intake.retrieval",
+        "total",
+    }
 
 
 def test_the_breakdown_reports_what_no_phase_claimed():
@@ -963,3 +982,37 @@ async def test_the_outcome_records_what_the_judge_was_given(session_tenant):
 
     referral = ScriptEngine.from_config(SCRIPT).referral("ar")
     assert referral in outcome.turns[0].script_statements
+
+
+async def test_the_judge_call_reaches_the_ledger(session_tenant):
+    """The fifth and largest metering gap. Every judge call in a suite run
+    lands on the OpenAI failover — §5.2 excludes the answering provider — and
+    the ledger showed none of them: a run that spent $0.46 reported $0.31."""
+    from sqlalchemy import text as sql
+
+    session, _ = session_tenant
+    run, _, _ = build()
+    await run.run_case(a_case(), session=session)
+
+    models = [
+        r[0]
+        for r in (
+            await session.execute(
+                sql("SELECT model FROM usage_ledger WHERE kind = 'llm_call'")
+            )
+        ).all()
+    ]
+    assert "judge-model" in models, "the judge call was never metered"
+
+
+def test_a_dotted_phase_is_detail_inside_a_counted_one():
+    """`intake.extraction` sits within `intake`, so counting both would
+    double-charge the turn and drive `unattributed` negative."""
+    from moc.evals.runner import phase_breakdown
+
+    rows = phase_breakdown(
+        [{"intake": 1000.0, "intake.extraction": 950.0, "intake.retrieval": 300.0,
+          "total": 1200.0}]
+    )
+    assert rows["unattributed"]["mean"] == 200.0
+    assert rows["intake.extraction"]["mean"] == 950.0, "the detail is still reported"

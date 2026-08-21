@@ -53,6 +53,7 @@ from moc.evals.judge import JudgeVerdict
 from moc.evals.report import CaseResult
 from moc.evals.run_metadata import RunMetadata, TaskBinding, capture
 from moc.evals.schema import EvalCase, Turn
+from moc.tenancy.metering import UsageKind, record_usage
 
 _RECALL_K = 5
 _MS = 1000.0
@@ -272,6 +273,23 @@ class CaseRunner:
             checks = self._stage_one(turn, result)
             statements = _script_statements(result)
             verdict = await self._stage_two(turn, result, checks, statements)
+            # The largest provider cost in a suite run, and it reached no
+            # ledger: §5.2 puts every judge call on the OpenAI failover, and a
+            # run that spent $0.46 reported $0.31 because of this one line.
+            # Metered here rather than in `Judge` — that module has no session
+            # and no tenant, the same reason the other four carry their calls.
+            if verdict is not None and verdict.completion is not None:
+                await record_usage(
+                    session,
+                    kind=UsageKind.llm_call,
+                    model=verdict.completion.model,
+                    provider=verdict.completion.provider,
+                    input_tokens=verdict.completion.input_tokens,
+                    output_tokens=verdict.completion.output_tokens,
+                    cached_tokens=verdict.completion.cached_tokens,
+                    cache_write_tokens=verdict.completion.cache_write_tokens,
+                    degraded=verdict.completion.degraded,
+                )
             checks.extend(checks_from_verdict(verdict, reply=result.reply))
             turns.append(
                 TurnOutcome(
@@ -723,7 +741,14 @@ def phase_breakdown(
             if phase == "total":
                 continue
             rows.setdefault(phase, []).append(value)
-            named += value
+            # A dotted name is a detail *inside* a counted phase, not a phase
+            # beside it. Concurrent work reports its parts as details so the
+            # remainder stays honest: two overlapping phases each adding their
+            # full duration would push `unattributed` negative, and a clamped
+            # zero reads as "fully accounted for" on exactly the change that
+            # broke the accounting.
+            if "." not in phase:
+                named += value
         if total is not None:
             rows.setdefault("total", []).append(total)
             rows.setdefault("unattributed", []).append(max(0.0, total - named))

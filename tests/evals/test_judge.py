@@ -411,3 +411,33 @@ def test_the_script_statements_are_not_folded_into_the_passages():
     assert prompt.index("RETRIEVED") < prompt.index("SCRIPTED")
     between = prompt[prompt.index("RETRIEVED") : prompt.index("SCRIPTED")]
     assert "script" in between.lower(), "nothing separates the two sources"
+
+
+# ───────── the largest line item, and it was invisible ─────────
+
+
+async def test_a_verdict_carries_the_call_that_produced_it():
+    """`eval_grading` is the biggest OpenAI cost the project has — §5.2
+    excludes the answering provider and composition runs on Anthropic, so every
+    judge call lands on the failover — and nothing metered it. A run that spent
+    $0.46 reported $0.31, and the whole of the difference was this.
+
+    Carried on the verdict rather than metered here, for the third time and the
+    same reason: this module has no session and no tenant.
+    """
+    judge, _ = build(openai_text=verdict_json())
+    graded = await grade(judge)
+    assert graded.completion is not None
+    assert graded.completion.model
+    assert graded.completion.provider == graded.provider
+
+
+async def test_a_malformed_verdict_still_carries_its_call():
+    """It cost money whatever it returned. A judge that answered with prose is
+    a row on the invoice, and dropping it because the parse failed would make
+    the ledger cheapest exactly when the harness was working worst.
+    """
+    judge, _ = build(openai_text="I think this reply looks fine.")
+    graded = await grade(judge)
+    assert graded.malformed
+    assert graded.completion is not None
