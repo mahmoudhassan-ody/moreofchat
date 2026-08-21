@@ -271,6 +271,42 @@ perceived latency is what §2.5 is actually about.
 The threshold is unchanged in this commit. A gate moved the first time it fires
 measures nothing, and this one needs re-deriving rather than relaxing.
 
+#### Streaming composition: costed 2026-08-21, not built
+
+**Streaming the composed reply to the customer is incompatible with §19.3, not
+merely hard.** Both figure gates take the *complete* text — `check_numeric_
+grounding(completion.text, …)` and `audit_figures(reply=completion.text, …)` —
+and §19.3 discards a failing composition **whole**, on the stated reasoning
+that a sentence built around an unsourceable figure cannot be repaired by
+deleting the figure. A token already delivered to WhatsApp cannot be recalled;
+the platform has no edit or retract. So the first streamed token is a
+commitment to a reply no gate has seen yet, and the guarantee the whole
+script-first design exists to provide is the thing streaming spends.
+
+The claim-level audit makes it worse, not better: it is a second provider call
+that cannot start until composition has finished, and it measured 1281 ms mean.
+Even a perfectly streamed composition cannot show a customer a *vetted* reply
+before composition ends plus the audit returns.
+
+Three things this rules out and one it does not:
+
+- **Stream to the customer.** Gives up §19.3. Not available.
+- **Stream only replies that state no figure.** Whether a reply states a figure
+  is not knowable before it is written.
+- **Send then retract.** WhatsApp has neither.
+- **Acknowledge immediately, then send the vetted reply.** This is a UX change
+  rather than streaming, it keeps the guarantee intact, and it addresses the
+  actual complaint — nine seconds of silence reads worse than nine seconds of
+  "seen, typing". Whether the current Twilio Programmable Messaging adapter can
+  send a typing indicator is unverified; the WhatsApp Cloud API can.
+
+**What is left of the latency problem is composition's output length.**
+`answer_composition` already runs with `reasoning: none`, so 5613 ms is not
+thinking — it is generating roughly 330+ output tokens of Arabic, which
+tokenizes less efficiently than English. The levers are therefore fewer tokens
+(the channel formatting rules already ask for short) or a faster model, and the
+second is measurable on this suite rather than arguable.
+
 #### §2.5's budget, measured for the first time
 
 `p95_latency_ms` has read "not measured" on every run this suite has ever
