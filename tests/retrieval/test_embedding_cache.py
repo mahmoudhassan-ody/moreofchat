@@ -52,7 +52,7 @@ async def test_a_second_run_over_the_same_corpus_embeds_nothing(cache):
     first = await cache.embed(embedder, texts)
     second = await cache.embed(embedder, texts)
 
-    assert first == second
+    assert first.vectors == second.vectors
     assert len(embedder.batches) == 1, "the corpus was paid for twice"
 
 
@@ -73,7 +73,7 @@ async def test_vectors_come_back_in_the_order_they_were_asked_for(cache):
     await cache.embed(embedder, ["bb"])
     mixed = await cache.embed(embedder, ["aaa", "bb", "c"])
 
-    assert [v[0] for v in mixed] == [3.0, 2.0, 1.0]
+    assert [v[0] for v in mixed.vectors] == [3.0, 2.0, 1.0]
 
 
 async def test_a_different_model_is_a_different_cache(cache, tmp_path):
@@ -103,7 +103,7 @@ async def test_a_different_dimension_is_a_different_cache(cache, tmp_path):
 
 async def test_an_empty_request_calls_nothing(cache):
     embedder = CountingEmbedder()
-    assert await cache.embed(embedder, []) == []
+    assert (await cache.embed(embedder, [])).vectors == []
     assert embedder.batches == []
 
 
@@ -117,7 +117,7 @@ async def test_a_corrupt_entry_is_reembedded_rather_than_raising(cache, tmp_path
         path.write_text("{not json", encoding="utf-8")
 
     again = await cache.embed(embedder, ["x"])
-    assert again == [[1.0] * 4]
+    assert again.vectors == [[1.0] * 4]
     assert len(embedder.batches) == 2
 
 
@@ -136,5 +136,31 @@ async def test_the_batch_preserves_duplicates_without_paying_twice(cache):
     """A corpus with two identical chunks is one embedding and two rows."""
     embedder = CountingEmbedder()
     result = await cache.embed(embedder, ["same", "same"])
-    assert result == [[4.0] * 4, [4.0] * 4]
+    assert result.vectors == [[4.0] * 4, [4.0] * 4]
     assert embedder.batches == [["same"]]
+
+
+async def test_the_result_reports_only_what_was_actually_billed(cache):
+    """A cached corpus costs nothing, and the ledger has to say so.
+
+    The point of metering ingest is to answer "what does onboarding a tenant
+    cost". If a cache hit reported the tokens it would have spent, the answer
+    would be the same on the hundredth run as on the first — a number that
+    describes the corpus rather than the bill.
+    """
+    embedder = CountingEmbedder()
+    first = await cache.embed(embedder, ["الرسوم 2000", "السكن متاح"])
+    assert first.input_tokens > 0
+    assert first.model == "text-embedding-3-large"
+
+    again = await cache.embed(embedder, ["الرسوم 2000", "السكن متاح"])
+    assert again.input_tokens == 0, "a cache hit was reported as spend"
+    assert again.vectors == first.vectors
+
+
+async def test_a_partial_hit_reports_only_the_miss(cache):
+    """One edited chunk in a hundred is one chunk's worth of spend."""
+    embedder = CountingEmbedder()
+    await cache.embed(embedder, ["a", "b"])
+    partial = await cache.embed(embedder, ["a", "b", "cccc"])
+    assert partial.input_tokens == len("cccc")

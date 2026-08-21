@@ -114,7 +114,10 @@ async def live_runner(engine, app_engine, tenant_tables):
             ),
             snapshot=snapshot_from_fixture(FIXTURE),
             script=SCRIPT,
-        )
+            # The agent cannot meter a turn without one, and for as long as
+            # nobody passed a session this whole vertical billed nothing.
+            session=session,
+        ), session
 
     async with AsyncSession(engine, expire_on_commit=False) as s:
         for table in tenant_tables:
@@ -128,8 +131,13 @@ async def test_live_the_realestate_suite_produces_a_report(live_runner, capsys):
     times = default_runs()
     runs: list[list] = []
 
+    live_runner, live_session = live_runner
+
     async def once():
         outcomes = await live_runner.run(cases)
+        # Commit, or the ledger is decorative — the same gap the education
+        # suite had. `tenant_session` closes without committing.
+        await live_session.commit()
         runs.append(outcomes)
         with capsys.disabled():
             scored = [o for o in outcomes if not o.errored]

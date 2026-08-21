@@ -721,3 +721,49 @@ def test_the_prompt_asks_for_the_language_and_says_franco_is_arabic():
     text = PROMPT.read_text(encoding="utf-8")
     assert "language" in text
     assert "franco" in text.lower()
+
+
+# ───────── the provider call nobody metered ─────────
+
+
+async def test_the_extracted_turn_carries_the_call_that_produced_it():
+    """Slot extraction runs on every turn — 19 of 19, where composition runs
+    on 12 — and was metered in neither vertical. The education orchestrator
+    recorded composition and the figure audit; the real-estate agent recorded
+    nothing at all, and extraction is its *only* provider call, so its ledger
+    would have shown a tenant using the product for free.
+
+    Carried on `TurnInput` rather than metered here for the same reason
+    `FigureAudit` carries its completion: this module has no session and no
+    tenant, and a ledger write outside the caller's transaction would survive
+    a turn that rolled back.
+    """
+    extractor = LlmSlotExtractor(
+        router=FakeRouter('{"intent": "fees", "slots": {"faculty": "engineering"}}'),
+        script=EDUCATION,
+    )
+    turn = await extractor.extract(text="المصاريف كام لكلية الهندسة؟", state=state())
+
+    assert turn.usage is not None
+    assert turn.usage.model
+    assert turn.usage.provider
+
+
+def test_the_engine_never_reads_the_usage():
+    """It is bookkeeping riding on the turn contract, and the flow must not
+    become a function of it. Asserted structurally because the failure would
+    be silent: a decision that varied with token counts would still return a
+    valid Decision.
+    """
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).parents[2] / "src" / "moc" / "agent" / "script_engine.py"
+    ).read_text(encoding="utf-8")
+    names = {
+        node.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Attribute)
+    }
+    assert "usage" not in names

@@ -32,6 +32,7 @@ from moc.agent.replies import Voice, refusal
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
 from moc.retrieval.inventory import UnitQuery
+from moc.tenancy.metering import UsageKind, record_usage
 from moc.verticals.realestate.calculator import (
     PaymentPlanUnavailable,
     PaymentSchedule,
@@ -233,13 +234,32 @@ def _budget_in(text: str) -> int | None:
 class InventoryAgent:
     """One real-estate turn, end to end."""
 
-    def __init__(self, *, repository: Any, engine: Any, extractor: Any) -> None:
+    def __init__(
+        self, *, repository: Any, engine: Any, extractor: Any, channel: str = "whatsapp"
+    ) -> None:
         self._repository = repository
         self._engine = engine
         self._extractor = extractor
+        self._channel = channel
 
-    async def handle(self, *, state: ConversationState, text: str) -> InventoryTurn:
+    async def handle(
+        self, *, state: ConversationState, text: str, session: Any = None
+    ) -> InventoryTurn:
+        """One turn, metered when a session is given.
+
+        `record_usage` had four call sites and every one of them was in the
+        education orchestrator, so this vertical wrote nothing to the ledger at
+        all — and extraction is its only provider call, which meant a broker
+        tenant's usage read as free. The session is optional because the
+        connector tests drive this agent without one and a required argument
+        would make metering a reason to rewrite them.
+        """
         turn = await self._extractor.extract(text=text, state=state)
+        if session is not None:
+            await record_usage(
+                session, kind=UsageKind.message_in, channel=self._channel
+            )
+            await _meter(session, self._channel, getattr(turn, "usage", None))
         decision = self._engine.advance(state, turn)
         slots = decision.state.slots
         # Register is the node's; language is the customer's. Resolved once,
@@ -248,6 +268,10 @@ class InventoryAgent:
         voice = Voice.of(decision.register, text)
 
         if decision.action is not Action.answer:
+            if session is not None:
+                await record_usage(
+                    session, kind=UsageKind.message_out, channel=self._channel
+                )
             return InventoryTurn(
                 reply=_non_answer(decision, voice),
                 action=decision.action,
@@ -256,12 +280,18 @@ class InventoryAgent:
             )
 
         if decision.node == "staleness":
-            return self._data_currency(decision, voice)
-        if decision.node == "delivery_date":
-            return await self._delivery_date(decision, slots, voice)
-        if decision.node == "payment_plan":
-            return await self._payment_plan(decision, slots, voice)
-        return await self._lookup(decision, slots, voice)
+            result = self._data_currency(decision, voice)
+        elif decision.node == "delivery_date":
+            result = await self._delivery_date(decision, slots, voice)
+        elif decision.node == "payment_plan":
+            result = await self._payment_plan(decision, slots, voice)
+        else:
+            result = await self._lookup(decision, slots, voice)
+        if session is not None:
+            await record_usage(
+                session, kind=UsageKind.message_out, channel=self._channel
+            )
+        return result
 
     # ─────────────────────────── staleness ───────────────────────────
 
@@ -525,6 +555,26 @@ def _answer(
         named_compounds=(unit.compound,) if unit.compound else (),
         script_constants=_figures(reply),
         as_of=str(unit.as_of),
+    )
+
+
+async def _meter(session: Any, channel: str, completion: Any) -> None:
+    """One provider call, on the ledger. The education orchestrator's
+    `_meter`, restated here rather than shared: the two agents are separate
+    verticals with no common base, and a helper module for six lines would be
+    a dependency neither of them needs."""
+    if completion is None:
+        return
+    await record_usage(
+        session,
+        kind=UsageKind.llm_call,
+        channel=channel,
+        model=completion.model,
+        provider=completion.provider,
+        input_tokens=completion.input_tokens,
+        output_tokens=completion.output_tokens,
+        cached_tokens=completion.cached_tokens,
+        degraded=completion.degraded,
     )
 
 

@@ -169,10 +169,22 @@ class InventoryCaseRunner:
     out of `kb_chunks` to prevent.
     """
 
-    def __init__(self, *, agent: Any, snapshot: InventorySnapshot, script: str) -> None:
+    def __init__(
+        self,
+        *,
+        agent: Any,
+        snapshot: InventorySnapshot,
+        script: str,
+        session: Any = None,
+    ) -> None:
         self._agent = agent
         self.snapshot = snapshot
         self._script = script
+        # Optional, and threaded to the agent rather than used here. This
+        # runner measures; it does not write. But the agent it drives cannot
+        # meter a turn without one, and for as long as nobody passed a session
+        # the entire real-estate vertical billed nothing.
+        self._session = session
 
     async def run(self, cases: Sequence[EvalCase]) -> list[InventoryCaseOutcome]:
         return [await self.run_case(case) for case in cases]
@@ -185,7 +197,9 @@ class InventoryCaseRunner:
 
         for index, turn in enumerate(case.turns):
             try:
-                result = await self._agent.handle(state=state, text=turn.user)
+                result = await self._agent.handle(
+                    state=state, text=turn.user, session=self._session
+                )
             except Exception as exc:  # noqa: BLE001 - an error is not a quality signal
                 return InventoryCaseOutcome(
                     case_id=case.id,

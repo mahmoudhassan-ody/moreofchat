@@ -80,6 +80,18 @@ class TurnInput:
     #: `moc.arabic.script.reply_language`. Defaulting to either value here
     #: would make a silent omission look like a decision.
     language: str | None = None
+    #: The provider call that produced this turn. **Bookkeeping, and the engine
+    #: never reads it** — a test asserts that, because a flow that varied with
+    #: token counts would still return a valid Decision and fail silently.
+    #:
+    #: It rides here because slot extraction runs on every turn and was metered
+    #: in neither vertical: the education orchestrator recorded composition and
+    #: the figure audit, and the real-estate agent recorded nothing at all —
+    #: where extraction is its *only* provider call, so its ledger would have
+    #: shown a tenant using the product for free. Carried rather than metered
+    #: at the extractor for the same reason `FigureAudit` carries its
+    #: completion: that layer has no session and no tenant.
+    usage: Any = None
 
 
 @dataclass(frozen=True)

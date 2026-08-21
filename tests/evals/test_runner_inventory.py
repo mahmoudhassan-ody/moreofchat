@@ -95,6 +95,7 @@ async def runner(app_engine, stocked):
             ),
             snapshot=snapshot_from_fixture(FIXTURE),
             script=SCRIPT,
+            session=session,
         ), session
 
 
@@ -476,3 +477,76 @@ async def test_a_presented_unit_is_held_for_the_next_turn(runner):
         "context, not a slot — a case's expected_slots must not have to name "
         "whichever unit the agent happened to quote"
     )
+
+
+# ───────── the vertical that billed nothing ─────────
+
+
+async def test_a_real_estate_turn_reaches_the_ledger(runner):
+    """`record_usage` had four call sites and all four were in the education
+    orchestrator. The real-estate agent wrote nothing at all — and extraction
+    is its only provider call, so its ledger showed a tenant using the product
+    for free.
+    """
+    from sqlalchemy import text as sql
+
+    case_runner, session = runner
+    await case_runner.run_case(cases()[0])
+
+    kinds = [
+        row[0]
+        for row in (
+            await session.execute(sql("SELECT kind FROM usage_ledger"))
+        ).all()
+    ]
+    assert "message_in" in kinds
+    assert "message_out" in kinds
+    # No llm_call here, and that is correct: this fixture drives the keyword
+    # extractor, which calls no provider. The LLM row is asserted against an
+    # extractor that reports usage, below — a fixture that cannot produce a
+    # row must not be asked to prove one appears.
+    assert "llm_call" not in kinds
+
+
+async def test_an_extractor_that_calls_a_provider_is_metered(runner, app_engine, stocked):
+    """The other half. Extraction is this vertical's only provider call, so
+    without this row a broker tenant's usage reads as free."""
+    from sqlalchemy import text as sql
+
+    from moc.agent.state import TurnInput
+    from moc.llm.base import Completion
+    from moc.verticals.realestate.agent import InventoryAgent
+
+    class MeteredExtractor:
+        async def extract(self, *, text, state):
+            return TurnInput(
+                intent=None,
+                slots={},
+                usage=Completion(
+                    text="{}",
+                    provider="anthropic",
+                    model="claude-haiku-4-5-20251001",
+                    input_tokens=310,
+                    output_tokens=44,
+                ),
+            )
+
+    _, session = runner
+    agent = InventoryAgent(
+        repository=InventoryRepository(session=session),
+        engine=ScriptEngine.from_config(SCRIPT),
+        extractor=MeteredExtractor(),
+    )
+    await agent.handle(state=ScriptEngine.from_config(SCRIPT).start(), text="x", session=session)
+
+    rows = (
+        await session.execute(
+            sql(
+                "SELECT model, input_tokens, provider_cost_usd FROM usage_ledger "
+                "WHERE kind = 'llm_call'"
+            )
+        )
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].input_tokens == 310
+    assert rows[0].provider_cost_usd is not None, "a Haiku call has a known rate"

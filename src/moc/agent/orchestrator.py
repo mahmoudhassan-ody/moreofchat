@@ -267,8 +267,21 @@ class Orchestrator:
         # `redaction.text`, which is the point of §7.3.
         await record_usage(session, kind=UsageKind.message_in, channel=channel)
 
-        with clock.phase("extraction"):
-            turn = await self._extractor.extract(text=redaction.text, state=state)
+        try:
+            with clock.phase("extraction"):
+                turn = await self._extractor.extract(text=redaction.text, state=state)
+        except AllProvidersUnavailable:
+            # §2.6, at the other end of the turn. Composition has always caught
+            # this; extraction never did, so a total outage raised out of
+            # `handle` and the caller saw a traceback where the customer should
+            # have seen a sentence and a human. It was invisible because the
+            # test double did not call a provider at all — the first thing that
+            # made it call one is the thing that found this.
+            await record_usage(session, kind=UsageKind.message_out, channel=channel)
+            return self._unavailable(state, channel, redaction, clock)
+        # Extraction runs on every turn, where composition runs on about two in
+        # three, and it was metered in neither vertical.
+        await self._meter(session, channel, getattr(turn, "usage", None))
         with clock.phase("retrieval"):
             retrieval = await self._retriever.search(query=redaction.text)
         # `embedding_call` existed as a UsageKind from migration 0004 and
@@ -310,6 +323,34 @@ class Orchestrator:
         # Stamped last, so `total` covers the ledger writes too. They are part
         # of what the customer waits through and nothing else times them.
         return replace(result, timings=clock.timings())
+
+    def _unavailable(
+        self,
+        state: ConversationState,
+        channel: str,
+        redaction: Redaction,
+        clock: Stopwatch,
+    ) -> TurnResult:
+        """Every provider is down and the turn never reached the engine.
+
+        No decision exists yet, so the reply cannot take a node's register.
+        Masri and the customer's own language: an outage message is
+        conversation, not regulation — the same reasoning `replies.yaml` gives
+        for its Masri fallback.
+        """
+        document = load(_REPLIES)["replies"][_PROVIDER_UNAVAILABLE]
+        reply = Voice(Register.masri, reply_language(redaction.text)).say(document)
+        return TurnResult(
+            reply=reply,
+            action=Action.handoff,
+            register=Register.masri,
+            state=state,
+            degraded=True,
+            redacted=redaction.found,
+            authorised=(reply,),
+            provider_unavailable=True,
+            timings=clock.timings(),
+        )
 
     # ─────────────────────────── the turn's branches ───────────────────────────
 
@@ -448,6 +489,22 @@ class Orchestrator:
         # commits inside the caller's transaction — the router has no session
         # and no tenant, and a ledger write outside this transaction would
         # survive a turn that rolled back.
+        await self._meter(session, channel, completion)
+        return completion
+
+    @staticmethod
+    async def _meter(
+        session: AsyncSession, channel: str, completion: Completion | None
+    ) -> None:
+        """One provider call, on the ledger.
+
+        Takes the completion rather than the pieces so a caller cannot record
+        a row that names one model and counts another's tokens. None is a call
+        that did not happen — a scripted turn, a skipped audit — and writes
+        nothing rather than a zero row.
+        """
+        if completion is None:
+            return
         await record_usage(
             session,
             kind=UsageKind.llm_call,
@@ -459,7 +516,6 @@ class Orchestrator:
             cached_tokens=completion.cached_tokens,
             degraded=completion.degraded,
         )
-        return completion
 
     async def _audit(
         self,
@@ -480,18 +536,7 @@ class Orchestrator:
         # Metered here for the same reason composition is: an unmetered
         # provider call is a cost that appears in no report, and this one runs
         # on roughly two turns in three.
-        if audit.completion is not None:
-            await record_usage(
-                session,
-                kind=UsageKind.llm_call,
-                channel=channel,
-                model=audit.completion.model,
-                provider=audit.completion.provider,
-                input_tokens=audit.completion.input_tokens,
-                output_tokens=audit.completion.output_tokens,
-                cached_tokens=audit.completion.cached_tokens,
-                degraded=audit.completion.degraded,
-            )
+        await self._meter(session, channel, audit.completion)
         return audit
 
     async def _timed_audit(

@@ -31,6 +31,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -327,7 +328,9 @@ class LlmSlotExtractor:
             messages=[Message(role="user", content=prompt)],
             system=None,
         )
-        return self._parse(completion.text)
+        # The call travels with the turn so the caller — which has the session
+        # and the tenant — can meter it. See `TurnInput.usage`.
+        return replace(self._parse(completion.text), usage=completion)
 
     # ─────────────────────────── strict parsing ───────────────────────────
 

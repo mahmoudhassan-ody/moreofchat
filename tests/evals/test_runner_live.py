@@ -43,6 +43,7 @@ from moc.retrieval.lexical import (
 )
 from moc.retrieval.vectors import QdrantAdmin, QdrantRepository, VectorPoint
 from moc.tenancy.context import tenant_session
+from moc.tenancy.metering import UsageKind, record_usage
 
 pytestmark = pytest.mark.live
 
@@ -153,11 +154,26 @@ async def corpus(app_engine, engine):
     # The 102 chunks do not change between invocations and were paid for on
     # every one. Content-addressed and per text, so editing one chunk of the
     # fixture costs one embedding rather than a hundred and two.
-    vectors = await EmbeddingCache(
+    ingest = await EmbeddingCache(
         root=CACHE_ROOT,
         model=EMBEDDING["model"],
         dimensions=EMBEDDING["dimensions"],
     ).embed(embedder, texts)
+    # What onboarding a tenant costs, on the ledger. A cache hit reports zero
+    # tokens and writes nothing, so the row appears once per corpus rather than
+    # once per run — which is the number to quote when someone asks.
+    if ingest.input_tokens:
+        async with tenant_session(app_engine, tenant.id) as s:
+            await record_usage(
+                s,
+                kind=UsageKind.embedding_call,
+                model=ingest.model,
+                provider=ingest.provider,
+                input_tokens=ingest.input_tokens,
+                quantity=len(texts),
+            )
+            await s.commit()
+    vectors = ingest.vectors
     await dense.upsert(
         tenant_id=tenant.id,
         vertical="education",

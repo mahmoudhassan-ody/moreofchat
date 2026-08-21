@@ -24,7 +24,7 @@ from moc.agent.orchestrator import Orchestrator, Retrieval, TurnResult
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
-from moc.llm.base import ProviderUnavailable, Task
+from moc.llm.base import Message, ProviderUnavailable, Role, Task
 from moc.llm.fake import FakeProvider
 from moc.llm.router import Router
 from moc.tenancy.context import tenant_session
@@ -46,15 +46,30 @@ class FakeExtractor:
 
     Records the text it was given, which is how the redaction tests prove the
     raw message never got this far.
+
+    It reports usage because the real one does, and a double that did not would
+    let the orchestrator drop the extraction row while every test passed. That
+    exact mismatch has bitten this file before — see `FakeRouter` in
+    tests/agent/test_extraction.py.
     """
 
-    def __init__(self, turn: TurnInput) -> None:
+    def __init__(self, turn: TurnInput, *, router: Router | None = None) -> None:
         self.turn = turn
         self.seen: list[str] = []
+        self._router = router
 
     async def extract(self, *, text: str, state: ConversationState) -> TurnInput:
         self.seen.append(text)
-        return self.turn
+        if self._router is None:
+            return self.turn
+        # A real call on the real task, so the row names the model routing
+        # actually chose rather than one this double made up.
+        completion = await self._router.complete(
+            task=Task.slot_extraction,
+            messages=[Message(role=Role.user, content=text)],
+            system=None,
+        )
+        return replace(self.turn, usage=completion)
 
 
 class FakeRetriever:
@@ -122,7 +137,10 @@ def build(
         config=load("llm/routing"), providers={"anthropic": anthropic, "openai": openai}
     )
     extractor = FakeExtractor(
-        TurnInput(intent=intent, slots={"faculty": "engineering"} if slots is None else slots)
+        TurnInput(
+            intent=intent, slots={"faculty": "engineering"} if slots is None else slots
+        ),
+        router=router,
     )
     retriever = FakeRetriever(
         router,
@@ -200,9 +218,20 @@ def composition_calls(provider: FakeProvider) -> list[dict]:
     ]
 
 
+#: Extraction and the figure audit both route to Haiku, so a model filter alone
+#: returns both — and `audit_calls(...)[0]` silently became the extraction call
+#: the moment the extractor started making one. The audit's own prompt is what
+#: tells them apart.
+AUDIT_MARKER = "You audit one reply"
+
+
 def audit_calls(provider: FakeProvider) -> list[dict]:
     return [
-        c for c in provider.calls if c["kind"] == "complete" and c["model"] in AUDIT_MODELS
+        c
+        for c in provider.calls
+        if c["kind"] == "complete"
+        and c["model"] in AUDIT_MODELS
+        and AUDIT_MARKER in c["messages"][0].content
     ]
 
 
@@ -462,11 +491,12 @@ async def test_a_failover_turn_is_logged_degraded_on_the_ledger(app_engine, two_
     assert result.action is Action.answer, "the customer still gets an answer"
     assert result.reply == GROUNDED_REPLY
     assert result.degraded is True
-    # Both provider calls the turn made — composition and the §19.3 audit —
-    # and both on the failover, both flagged. A row per call, because "which
-    # calls degraded" is the question the flag exists to answer, and one row
-    # standing for two would hide a turn where only half failed over.
-    assert rows == [("openai", True), ("openai", True)]
+    # Every provider call the turn made — extraction, composition, and the
+    # §19.3 audit — all on the failover and all flagged. A row per call,
+    # because "which calls degraded" is the question the flag exists to answer,
+    # and one row standing for three would hide a turn where only part of it
+    # failed over.
+    assert rows == [("openai", True)] * 3
     assert composition_calls(anthropic), "the primary must have been tried first"
     assert composition_calls(openai)
 
@@ -1233,3 +1263,66 @@ async def test_a_turn_that_embedded_nothing_writes_no_embedding_row(
     from moc.agent.orchestrator import Retrieval
 
     assert Retrieval().embedding_tokens == 0
+
+
+async def test_the_extraction_call_reaches_the_ledger(two_tenants, app_engine):
+    """It runs on every turn — 19 of 19, where composition runs on 12 — and was
+    metered in neither vertical."""
+    tenant, _ = two_tenants
+    orchestrator, *_ = build()
+    async with tenant_session(app_engine, tenant.id) as s:
+        await orchestrator.handle(
+            session=s, state=start_state(), text="كام رسوم الساعة؟", channel=CHANNEL
+        )
+        await s.commit()
+        models = [
+            r[0]
+            for r in (
+                await s.execute(
+                    sql("SELECT model FROM usage_ledger WHERE kind = 'llm_call'")
+                )
+            ).all()
+        ]
+    # Counted, not matched by name. Extraction and the figure audit both route
+    # to Haiku, so "the extraction model is in the ledger" is satisfied by the
+    # audit's row alone — the assertion passed before extraction was metered
+    # at all. Three provider calls on this turn: extraction, composition,
+    # audit.
+    extraction = load("llm/routing")["tasks"]["slot_extraction"]["primary"]["model"]
+    composition = load("llm/routing")["tasks"]["answer_composition"]["primary"]["model"]
+    assert len(models) == 3, f"expected three metered calls, got {models}"
+    assert models.count(extraction) == 2, "extraction and the audit both run on Haiku"
+    assert composition in models
+
+
+async def test_a_total_outage_at_extraction_still_answers_the_customer(turn_session):
+    """§2.6 at the other end of the turn.
+
+    Composition has always caught `AllProvidersUnavailable`; extraction never
+    did, so a total outage raised out of `handle` and the caller got a
+    traceback where the customer should have got a sentence and a human. It was
+    invisible for as long as the test double made no provider call at all — the
+    first change that made it call one is what found this.
+    """
+    orchestrator, *_ = build(fail_with=ProviderUnavailable("everything is down"))
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="كام رسوم الساعة؟",
+        channel=CHANNEL,
+    )
+    assert result.action is Action.handoff
+    assert result.provider_unavailable is True
+    assert result.degraded is True
+    assert result.reply == load("agent/replies")["replies"]["provider_unavailable"]["masri"]
+
+
+async def test_an_outage_before_the_engine_still_answers_in_the_customer_s_language(
+    turn_session,
+):
+    """No decision exists yet, so there is no node register to take. F6 still
+    applies: an English customer must not be apologised to in Arabic."""
+    orchestrator, *_ = build(fail_with=ProviderUnavailable("down"))
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="how much are the fees?",
+        channel=CHANNEL,
+    )
+    assert result.reply == load("agent/replies")["replies"]["provider_unavailable"]["english"]

@@ -34,11 +34,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
-from moc.llm.base import Vector
+from moc.llm.base import Embedding, Vector
 
 #: Two levels of fan-out on the digest. A single directory of a hundred
 #: thousand files is slow to list and unpleasant to inspect by hand.
 _FANOUT = 2
+#: §7.3 pins embeddings to one provider by design — there is no failover, so a
+#: cached result can name it without asking who answered.
+_PROVIDER = "openai"
 
 
 class Embeds(Protocol):
@@ -53,24 +56,38 @@ class EmbeddingCache:
         self._model = model
         self._dimensions = dimensions
 
-    async def embed(self, embedder: Embeds, texts: Sequence[str]) -> list[Vector]:
+    async def embed(self, embedder: Embeds, texts: Sequence[str]) -> Embedding:
         """Vectors for `texts`, in order, embedding only what is not cached.
 
         Duplicates within one batch are embedded once and returned twice: a
         corpus holding the same sentence in two chunks is one call and two
         rows.
+
+        **`input_tokens` is what was actually billed, not what the corpus would
+        cost.** The point of metering ingest is to answer "what does onboarding
+        a tenant cost"; a cache hit that reported the tokens it avoided would
+        give the same answer on the hundredth run as on the first, which
+        describes the corpus rather than the bill. A full hit reports zero and
+        writes no ledger row.
         """
         cached = {text: self._read(text) for text in dict.fromkeys(texts)}
         missing = [text for text, vector in cached.items() if vector is None]
+        billed, model = 0, self._model
         if missing:
             fresh = await embedder.embed(texts=missing)
+            billed, model = fresh.input_tokens, fresh.model
             for text, vector in zip(missing, fresh.vectors, strict=True):
                 cached[text] = vector
                 self._write(text, vector)
-        # Rebuilt from `texts` rather than from the batch. A cache that returns
-        # correct vectors attached to the wrong chunks degrades retrieval and
-        # raises nothing, which is worse than no cache.
-        return [cached[text] for text in texts]
+        return Embedding(
+            # Rebuilt from `texts` rather than from the batch. A cache that
+            # returns correct vectors attached to the wrong chunks degrades
+            # retrieval and raises nothing, which is worse than no cache.
+            vectors=[cached[text] for text in texts],
+            provider=_PROVIDER,
+            model=model,
+            input_tokens=billed,
+        )
 
     def _path(self, text: str) -> Path:
         digest = hashlib.sha256(
