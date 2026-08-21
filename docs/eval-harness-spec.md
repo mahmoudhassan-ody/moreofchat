@@ -208,17 +208,68 @@ comparing two different systems measured by two different harnesses.
 | real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
 | real estate | `unresolved_type_rate` (tracked) | 35.3% (35.3–35.3) |
 | real estate | `errored_rate` | 0.0% (0.0–0.0) |
-| education | `overall_accuracy` | 80.4% (76.5–88.2) — spread 11.7, **not measurable at 17 cases** |
-| education | `expected_action_accuracy` | 94.7% (94.7–94.7) |
+| education | `overall_accuracy` | 88.2% (82.4–94.1) — spread 11.7, **not measurable at 17 cases** |
+| education | `expected_action_accuracy` | 94.7% (89.5–100.0) — **not measurable** |
 | education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
-| education | `register_accuracy` | 93.0% (89.5–100.0) — **not measurable** |
-| education | `forbidden_claim_violations` | 7.0% (5.3–10.5) |
+| education | `register_accuracy` | 98.2% (94.7–100.0) |
+| education | `forbidden_claim_violations` | 1.8% (0.0–5.3) |
 | education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
 | education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
-| education | `hallucinated_figure_rate` | 0.0% (0.0–0.0) |
+| education | `hallucinated_figure_rate` | 2.1% (0.0–6.2) |
 | education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
-| education | `p95_latency_ms` | **7833 ms (7490–8041)** — first measurement, **over the 7000 ms budget** |
+| education | `p95_latency_ms` | **8990 ms (8636–9662)** — **over the 7000 ms budget** |
 | education | `errored_rate` | 0.0% (0.0–0.0) |
+
+#### Where the 8990 ms goes (2026-08-21, run 3 of 3)
+
+| phase | mean ms | p95 ms | turns |
+|---|---|---|---|
+| **total** | **3429** | **8636** | 19 |
+| composition | 2684 | 5613 | 12 |
+| audit | 1281 | 1921 | 8 |
+| extraction | 960 | 1314 | 19 |
+| retrieval | 229 | 878 | 19 |
+| unattributed | 6 | 8 | 19 |
+
+Each phase averages over the turns that ran it, so the column does not add up
+until each is amortised over all 19: composition 1695, audit 539, extraction
+960, retrieval 229, unattributed 6 — **3429, exactly the measured total.** The
+breakdown is complete; there is no missing time, which is what `unattributed`
+at 6 ms was there to establish.
+
+**The slow turn makes four provider calls in series**: extraction, then
+retrieval's embedding, then composition, then the figure audit. Composition is
+about two thirds of the p95. Extraction is the surprise — it runs on *every*
+turn where composition runs on twelve of nineteen, so at 960 ms mean it is the
+second-largest contributor to an average turn and the whole of it lands before
+any other work starts.
+
+#### §2.5's budget: the gate is wrong *and* the system is slow
+
+Both, and the first does not excuse the second.
+
+**The gate's value has no authority.** 7000 ms was set on 2026-08-17 from six
+hand-run samples of the *composition call*, then applied as the budget for a
+whole turn. A component measurement promoted to a system budget is not a
+product decision, and no number derived that way can adjudicate the system it
+bounds. It should be re-set from what a customer will wait on WhatsApp, by
+someone entitled to decide that — not raised to fit 8990.
+
+**And 8990 ms is slow on the merits**, independent of any gate. The cause is
+architectural rather than any one call being fat: four sequential round trips.
+Two of them need not be sequential — extraction and retrieval both consume
+`redaction.text` and neither reads the other's output, so they could run
+concurrently for the price of one `gather`. That is worth the smaller of the
+two, about 230 ms. The audit cannot move: it grades composition's output and
+gates the send.
+
+The largest lever is not a reduction at all. Composition's 5613 ms p95 is the
+customer's whole wait because nothing streams — a streamed first token would
+cut *perceived* latency to a fraction of it without changing total time, and
+perceived latency is what §2.5 is actually about.
+
+The threshold is unchanged in this commit. A gate moved the first time it fires
+measures nothing, and this one needs re-deriving rather than relaxing.
 
 #### §2.5's budget, measured for the first time
 
@@ -246,6 +297,13 @@ overrun with no breakdown is a number to act on rather than a diagnosis.
 The threshold is not moved. A gate that is raised the first time it fires is a
 gate that measures nothing, and §2.5's budget is a product claim about what a
 customer waits through on WhatsApp.
+
+**Re-measured 2026-08-21** after the composer was given the conversation's
+slots, the injection-refusal rule, and edu-0013's register expectation
+corrected: 88.2%, with 16 of 17 passing in the best run. The spread is 11.7
+points so the level is still not measurable at 17 cases — but
+`forbidden_claim_violations` fell to 1.8% and `register_accuracy` reached
+98.2%, both measurable.
 
 **Fresh baseline, 2026-08-20**, after the claim-level figure audit (§19.3) and
 after the judge was given what the turn was authorised to state. Both move
