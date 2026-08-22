@@ -1,0 +1,65 @@
+# Console agent authentication — demo plan Task 28, design §19.
+#
+# Two things live here and they are not the same kind of thing.
+#
+# **The KDF work factor is config because hardware moves.** What a laptop could
+# brute-force in 2026 is not what it can in 2029, and the number that tracks
+# that should not be a literal in a security-critical module.
+#
+# **The floor is here so it can be read, and enforced in code so it cannot be
+# edited away.** `hash_password` refuses anything below `floor`, which means a
+# config edit can strengthen the KDF and cannot weaken it. Without that, one
+# line in a YAML file silently downgrades every password written afterwards
+# and nothing about the running system looks different — no error, no log, no
+# failing test. This is the same shape as §19.3's gate: config chooses within
+# a range the code will not leave.
+
+version: 1
+
+# ── the password KDF ────────────────────────────────────────────────────────
+#
+# scrypt, from the standard library. Argon2id would be the first choice on
+# OWASP's list and it is a C extension this project does not otherwise need;
+# scrypt is the second, it is memory-hard, and it ships with CPython — which
+# in a file flagged for line-by-line human review counts for something.
+#
+# n = 2^16 with r = 8 is 64 MiB per hash (128 * n * r), OWASP's listed
+# alternative to their 2^17 recommendation. 2^17 would be 128 MiB, and on an
+# 8 GB VPS a handful of concurrent logins would be a self-inflicted outage.
+# p = 2 buys back some of the work factor in CPU rather than in memory.
+#
+# `maxmem` is passed to hashlib.scrypt explicitly: its default is 32 MiB and
+# these parameters need twice that, so the call raises without it. Sized from
+# the parameters rather than hardcoded, so raising n does not fail obscurely.
+kdf:
+  n: 65536      # 2^16
+  r: 8
+  p: 2
+  # Never lowered. See above — this is the half config does not get a vote on.
+  floor:
+    n: 65536
+    r: 8
+    p: 1
+
+# ── sessions ────────────────────────────────────────────────────────────────
+session:
+  # A working day plus the evening. Long enough that an officer is not logged
+  # out mid-shift, short enough that a laptop left on a desk is not a standing
+  # credential.
+  ttl_hours: 12
+  # 32 bytes of os.urandom, URL-safe. The stored value is a SHA-256 of this
+  # and never the token itself — see `agent_auth.py` for why a fast hash is
+  # correct for a token and wrong for a password.
+  token_bytes: 32
+  cookie:
+    name: moc_agent_session
+    # httponly: the token is unreadable from JavaScript, so an XSS in the
+    # console cannot exfiltrate a live session.
+    # samesite lax: the console is a first-party app and no third-party site
+    # has business making an authenticated request to it.
+    # secure: true — the VPS terminates TLS. A cookie without this travels in
+    # clear on any plain-HTTP request, including one an attacker induces.
+    httponly: true
+    samesite: lax
+    secure: true
+    path: /

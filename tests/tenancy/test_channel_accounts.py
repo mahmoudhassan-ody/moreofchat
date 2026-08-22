@@ -103,12 +103,27 @@ async def test_the_view_exposes_only_the_resolving_columns(engine):
     assert list(columns) == RESOLVING_COLUMNS
 
 
+#: Every object `moc_lookup` may reach, in full. One line per pre-tenant read
+#: the system performs, and there are exactly three: which tenant owns an
+#: inbound address (0007), which tenant owns a console email, and which tenant
+#: owns a session cookie (0011). A fourth entry is a fourth thing an
+#: unauthenticated caller's path can touch, and it belongs in a review.
+LOOKUP_GRANTS = [
+    ("agent_login_lookup", "SELECT"),
+    ("agent_session_lookup", "SELECT"),
+    (VIEW, "SELECT"),
+]
+
+
 async def test_the_lookup_role_has_no_privilege_anywhere_else(engine):
     """The other half of the same guarantee, from the grant side.
 
-    The column list bounds what the view shows; this bounds what the role can
+    The column list bounds what each view shows; this bounds what the role can
     reach at all. A `GRANT ... TO moc_lookup` added elsewhere for convenience
-    is the same escalation arriving by a different door.
+    is the same escalation arriving by a different door — and it arrived
+    legitimately once already, when Task 28 added console authentication, which
+    is what this list is for: the grants are enumerated rather than counted, so
+    adding one is a diff somebody reads.
     """
     async with engine.connect() as conn:
         granted = (
@@ -122,7 +137,7 @@ async def test_the_lookup_role_has_no_privilege_anywhere_else(engine):
                 {"role": ROLE},
             )
         ).all()
-    assert [tuple(row) for row in granted] == [(VIEW, "SELECT")]
+    assert sorted(tuple(row) for row in granted) == sorted(LOOKUP_GRANTS)
 
 
 async def test_the_lookup_role_holds_no_column_level_grants(engine):
