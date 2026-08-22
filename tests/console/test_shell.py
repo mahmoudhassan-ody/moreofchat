@@ -289,3 +289,58 @@ def _colours(text: str) -> list[tuple[int, int, int]]:
         for value in _HEX.findall(text)
     ]
     return found + [tuple(int(part) for part in group) for group in _RGBA.findall(text)]
+
+
+# ─────────────────────────── whose console this is ───────────────────────────
+
+
+def test_powered_by_appears_on_every_page():
+    """Rendered by the shell, not by each screen.
+
+    A per-screen `<PoweredBy />` is a per-screen chance to forget it, and the
+    screen that forgets is the one somebody screenshots. Asserted structurally
+    because there is one page today and four after Task 32 — by which time
+    "every page" is no longer something a reader can check by eye.
+    """
+    shell = (SOURCE / "App.tsx").read_text(encoding="utf-8")
+    assert "<PoweredBy />" in shell
+
+    elsewhere = [
+        path.name
+        for path in components()
+        if path.name not in {"App.tsx", "PoweredBy.tsx"}
+        and "<PoweredBy" in path.read_text(encoding="utf-8")
+    ]
+    assert elsewhere == [], (
+        f"{elsewhere} render it themselves — it belongs to the shell, once, "
+        "so a screen cannot opt out of it"
+    )
+
+
+def test_nothing_falls_back_to_the_more_of_chat_mark():
+    """A tenant with no crest sees THEIR initials.
+
+    Ours in that slot reads as a product that does not know who they are,
+    which is the opposite of what a pilot is for — and it is the kind of
+    default somebody adds later because the empty state looked bare.
+    """
+    brand = (SOURCE / "components" / "TenantBrand.tsx").read_text(encoding="utf-8")
+
+    assert "initials" in brand
+    assert "app.name" not in brand, "the shell's own name is not a tenant fallback"
+
+
+def test_the_console_never_asks_for_a_tenant_by_id():
+    """Task 28's rule, at the other end of the wire.
+
+    A `/tenants/${id}` in the frontend is a request the backend would have to
+    authorize, and the backend deliberately has no route that could.
+    """
+    import re
+
+    offenders = [
+        path.name
+        for path in [*components(), *sorted(SOURCE.rglob("*.ts"))]
+        if re.search(r"[\"'`]/tenants?/\$\{", path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []

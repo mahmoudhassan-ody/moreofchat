@@ -18,5 +18,8 @@
   },
   "shell": {
     "loading": "Loading"
+  },
+  "brand": {
+    "logoAlt": "The tenant's logo"
   }
 }

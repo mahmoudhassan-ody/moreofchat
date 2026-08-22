@@ -1,6 +1,9 @@
 import { useTranslation } from "react-i18next";
 
+import type { Brand } from "../api/tenant";
+
 import { LanguageToggle } from "./LanguageToggle";
+import { TenantBrand } from "./TenantBrand";
 
 const SECTIONS = ["inbox", "knowledge", "scripts", "analytics", "settings"] as const;
 
@@ -12,12 +15,13 @@ const SECTIONS = ["inbox", "knowledge", "scripts", "analytics", "settings"] as c
  * to the right in both, which is the middle of an Arabic layout, and it would
  * look completely deliberate to anyone reviewing the diff in English.
  */
-export function Topbar({ active }: { active: string }) {
+export function Topbar({ active, brand }: { active: string; brand: Brand | null }) {
   const { t } = useTranslation();
 
   return (
     <header className="topbar">
       <div className="logo">{t("app.name")}</div>
+      <TenantBrand brand={brand} />
       <nav className="nav">
         {SECTIONS.map((section) => (
           <a

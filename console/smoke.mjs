@@ -71,6 +71,32 @@ page.on("request", (request) => {
   }
 });
 
+/* The tenant API, stubbed at the network layer. The console is a static
+ * bundle here with no backend behind it, and the question this answers is not
+ * "does FastAPI work" — `tests/api/test_tenant_identity.py` answers that — but
+ * whether the header renders a tenant it is given, and their initials when
+ * there is no crest. Routed rather than mocked in the source, so the code
+ * under test is exactly the code that ships. */
+const CREST = Buffer.from(
+  "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a4944415478da6360000002000154a24f6f0000000049454e44ae426082",
+  "hex",
+);
+let brand = {
+  name: "Cairo Homes",
+  initials: "CH",
+  hasLogo: false,
+  timezone: "Africa/Cairo",
+  defaultReplyLanguage: "ar",
+};
+await page.route("**/tenant", (route) =>
+  route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(brand) }),
+);
+await page.route("**/tenant/logo", (route) =>
+  brand.hasLogo
+    ? route.fulfill({ status: 200, contentType: "image/png", body: CREST })
+    : route.fulfill({ status: 404, body: "no logo" }),
+);
+
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load" });
 await page.waitForSelector("#root .app", { timeout: 15000 });
 
@@ -186,6 +212,26 @@ await page.locator('.lang button:has-text("EN")').click();
 await page.waitForFunction(() => document.documentElement.dir === "ltr", null, { timeout: 5000 });
 await page.evaluate(() => document.fonts.ready);
 check("latin paints in the self-hosted families", await strayFonts(), []);
+
+/* Identity. The fallback is the TENANT's initials — ours in that slot reads
+ * as a product that does not know who they are. */
+await page.waitForSelector(".tenant b", { timeout: 5000 });
+check("header names the tenant", await page.locator(".tenant b").innerText(), "Cairo Homes");
+check("no crest means their initials", await page.locator(".initials").innerText(), "CH");
+check("and no image element at all", await page.locator(".crest").count(), 0);
+
+brand = { ...brand, hasLogo: true, name: "Sinai University", initials: "SU" };
+await page.reload({ waitUntil: "load" });
+await page.waitForSelector(".crest", { timeout: 5000 });
+check("a crest renders as an image", await page.locator(".crest").count(), 1);
+check("and replaces the initials", await page.locator(".initials").count(), 0);
+check(
+  "the crest actually loaded",
+  await page.locator(".crest").evaluate((img) => img.naturalWidth > 0),
+  true,
+);
+check("header names the tenant", await page.locator(".tenant b").innerText(), "Sinai University");
+check("powered-by is on the page", (await page.locator(".powered").innerText()).length > 0, true);
 
 check("no page errors", problems, []);
 

@@ -25,6 +25,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -58,6 +59,18 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     vertical: Mapped[Vertical] = mapped_column(Enum(Vertical, name="vertical"))
+    #: The tenant's own crest, as bytes on the row. See migration 0013 for why
+    #: this is not a path: one per tenant, capped small, and it inherits the
+    #: RLS boundary rather than needing a second answer about who may read it.
+    logo: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    #: Sniffed from the content, never from the upload's filename.
+    logo_media_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Africa/Cairo by default — both pilots are Egyptian, and a NULL would
+    #: render every console timestamp in the server's zone while looking like
+    #: the tenant's.
+    timezone: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'Africa/Cairo'")
+    )
     default_lang: Mapped[str] = mapped_column(String(8), default="ar")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
