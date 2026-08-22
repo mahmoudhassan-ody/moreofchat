@@ -46,12 +46,43 @@ case and passes the LTR one, which is exactly the asymmetry that makes physical
 properties dangerous — the layout is correct in the language the author was
 reading.
 
-### One finding
+### Type is self-hosted
 
-**The console loads its fonts from Google's CDN at runtime.** IBM Plex Sans
-Arabic is a `<link>` in `index.html`, so a demo on a flaky connection — or an
-offline one — renders Arabic in whatever the system falls back to. Self-hosting
-the two families is a small change and is not done yet.
+IBM Plex Sans Arabic (400/500/600/700) and IBM Plex Mono (400/500) live in
+`src/theme/fonts/` as woff2 — 16 files, 332 KiB, arabic + latin + latin-ext
+only. Cyrillic and Vietnamese are dropped; `unicode-range` is kept verbatim
+from the vendor, so an English screen never downloads the Arabic files.
+
+There is no CDN link. The console's identity is carried by the logo and the
+typography — colour does no branding work at all — which makes the font a
+dependency of the brand rather than a refinement of it, and a first impression
+should not depend on a third party being reachable from wherever the laptop is
+plugged in.
+
+The smoke check asserts, via CDP, that **every element painting text resolves
+to an IBM Plex face** — the resolved face, not the declared CSS stack, which
+reports the same string whether the font loaded or not. It runs with
+`--network none`, so a pass is proof the files came from the bundle. Sabotaged
+by removing the `@import`: everything fell to `FreeSerif` and
+`WenQuanYi Zen Hei`, and both assertions failed.
+
+To refresh the files:
+
+```bash
+curl -fsS -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0" \
+  "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+```
+
+then download each `arabic`/`latin`/`latin-ext` woff2 into `src/theme/fonts/`
+named `<family-slug>-<weight>-<subset>.woff2` and regenerate
+`src/theme/faces.css`. The names derive from family, weight and subset rather
+than from the vendor's hashes, so a refresh is a content diff and not a rename.
+
+**`.mono` is for figures, never for prose.** IBM Plex Mono carries no Arabic
+glyphs, so Arabic text placed in it falls back to a system serif — it renders,
+it looks plausible to anyone reading English, and nothing logs. That is exactly
+the bug the font sweep caught in this shell, and Task 32 puts figures beside
+Arabic labels on every row of the inbox.
 
 ## What the gates enforce
 

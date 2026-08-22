@@ -17,7 +17,11 @@
  * 255, which is a texture rather than a hue. The accent's differ by 178.
  *
  * The failure colour is NOT here. See `failure.css` for why.
+ *
+ * The type is in `faces.css`, imported below: self-hosted woff2, no CDN.
  */
+
+@import "./faces.css";
 
 :root {
   /* ── the accent ───────────────────────────────────────────────────── */

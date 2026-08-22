@@ -60,11 +60,15 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 const problems = [];
 page.on("pageerror", (error) => problems.push(`pageerror: ${error.message}`));
-page.on("requestfailed", (request) => {
-  // The font CDN is unreachable by design under `--network none`. Reported
-  // below as a finding rather than counted as a failure here.
-  if (request.url().includes("fonts.g")) return;
-  problems.push(`requestfailed: ${request.url()} ${request.failure()?.errorText}`);
+// Every failed request counts now. The font CDN used to be exempted here
+// because `--network none` made it unreachable by design; the fonts are in the
+// bundle, so a request leaving this page at all is the defect.
+page.on("requestfailed", (request) =>
+  problems.push(`requestfailed: ${request.url()} ${request.failure()?.errorText}`));
+page.on("request", (request) => {
+  if (!request.url().startsWith("http://127.0.0.1:")) {
+    problems.push(`offsite request: ${request.url()}`);
+  }
 });
 
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load" });
@@ -117,6 +121,72 @@ await page.waitForFunction(() => document.documentElement.dir === "ltr", null, {
 });
 const ltrGap = await gap();
 check(`ltr separates logo and nav by >${GAP}px`, ltrGap > GAP, true);
+/* **Which font the browser actually painted with**, not which one the CSS
+ * asked for. `getComputedStyle` returns the declared stack and says nothing
+ * about whether the first family in it loaded — a page that fell all the way
+ * back to a system Arabic face reports exactly the same string. CDP's
+ * `getPlatformFontsForNode` reports what the renderer resolved to.
+ *
+ * This runs with `--network none`, so a pass is proof the file came from the
+ * bundle: there is no CDN reachable to have served it. Checked on Arabic text
+ * specifically, because the Arabic subset is a separate file and a build that
+ * shipped only the latin ones would still look perfect in English.
+ */
+await page.locator('.lang button:has-text("AR")').click();
+await page.waitForFunction(() => document.documentElement.dir === "rtl", null, { timeout: 5000 });
+await page.evaluate(() => document.fonts.ready);
+
+const cdp = await page.context().newCDPSession(page);
+await cdp.send("DOM.enable");
+await cdp.send("CSS.enable");
+const { root } = await cdp.send("DOM.getDocument");
+async function paintedFont(selector) {
+  const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+  const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+  return fonts.map((font) => font.familyName);
+}
+
+/* Every element that paints text, not two hand-picked selectors. CDP reports
+ * the resolved FACE — "IBM Plex Sans Arabic SemiBold", not the family — so the
+ * assertion is on the prefix.
+ *
+ * Written as a sweep because the failure it found was not in a selector anyone
+ * would have thought to check: the version number's sibling paragraph carried
+ * `.mono`, IBM Plex Mono has no Arabic glyphs, and the Arabic ran in FreeSerif.
+ * It rendered, it looked plausible to someone reading English, and nothing
+ * logged. Task 32 puts figures beside Arabic labels on every row of the
+ * inbox, which is the same trap with forty chances to spring. */
+async function strayFonts() {
+  const selectors = await page.evaluate(() =>
+    [...document.querySelectorAll("body *")]
+      .filter((element) =>
+        [...element.childNodes].some(
+          (node) => node.nodeType === 3 && node.textContent.trim(),
+        ),
+      )
+      .map((element, index) => {
+        element.dataset.smoke = String(index);
+        return `[data-smoke="${index}"]`;
+      }),
+  );
+  const stray = [];
+  for (const selector of selectors) {
+    for (const family of await paintedFont(selector)) {
+      if (!family.startsWith("IBM Plex")) {
+        stray.push(`${selector} -> ${family}`);
+      }
+    }
+  }
+  return stray;
+}
+
+check("arabic paints in the self-hosted families", await strayFonts(), []);
+
+await page.locator('.lang button:has-text("EN")').click();
+await page.waitForFunction(() => document.documentElement.dir === "ltr", null, { timeout: 5000 });
+await page.evaluate(() => document.fonts.ready);
+check("latin paints in the self-hosted families", await strayFonts(), []);
+
 check("no page errors", problems, []);
 
 await browser.close();

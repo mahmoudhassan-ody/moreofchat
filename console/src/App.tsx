@@ -18,7 +18,14 @@ export function App() {
       <Topbar active="inbox" />
       <main className="content">
         <p>{t("language.note")}</p>
-        <p className="mono">{t("app.poweredBy")}</p>
+        {/* `.mono` is for figures, never for prose: IBM Plex Mono carries no
+            Arabic glyphs, so Arabic text placed in it falls back to whatever
+            system serif exists — which renders, looks wrong, and reports
+            nothing. The smoke check asserts every painted family is IBM Plex,
+            which is what caught it here. */}
+        <p>
+          {t("app.poweredBy")} <span className="mono">0.1.0</span>
+        </p>
       </main>
     </div>
   );
