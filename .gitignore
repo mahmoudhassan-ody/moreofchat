@@ -16,3 +16,7 @@ build/
 # Content-addressed embedding cache. Survives between runs on purpose —
 # that is the saving — and is never a build input.
 .cache/
+
+# Console build artefacts. `dist/` is already ignored above.
+node_modules/
+*.tsbuildinfo

@@ -3,24 +3,55 @@
 React + Vite + TypeScript. Demo plan Task 29 built the shell; the screens come
 after it.
 
-## Not built or type-checked yet
-
-**There is no `node` or `npm` on this VPS**, so nothing here has been compiled,
-type-checked, or rendered in a browser. What is verified is what `pytest`
-verifies: the structural gates in `tests/console/`, which read the source as
-text. A type error, a bad import path or a wrong `react-i18next` API would pass
-every test in this repository today.
-
-To close that gap:
+## Built, type-checked and rendered — 2026-08-22
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-cd console && npm install && npm run typecheck && npm run build
+export PATH="$HOME/.local/opt/node/bin:$PATH"
+cd console
+npm install
+npm run typecheck   # tsc -p tsconfig.json --noEmit
+npm run build       # tsc -b && vite build
+npm run smoke       # the built bundle, in a real browser
 ```
 
-Until that has been run, treat this directory as reviewed source rather than as
-a working console.
+**Node is installed user-locally**, at `~/.local/opt/node` (v22.22.0), because
+this account has no passwordless sudo. Nothing was installed system-wide and
+nothing outside `$HOME` was touched. `export PATH` as above, or add it to your
+profile.
+
+**The browser runs in Docker.** Chromium needs `libatk-1.0.so.0` and a dozen
+other system libraries that need root to install, so `npm run smoke` runs the
+Playwright image against the local `dist/` with `--network none`. The container
+gets no network deliberately: nothing in the console should need one, and the
+single thing that reaches for the internet is named below.
+
+### What `npm run smoke` checks, and why it exists
+
+The structural gates in `tests/console/` read source as text. They catch a
+hard-coded string and a physical margin; they are blind to a bad import path, a
+wrong `react-i18next` API, a component that throws on mount, and — the one that
+matters — a logical property that does not do what its author believed.
+
+So the smoke check runs the built bundle in a real layout engine and asserts
+the shell mounts, the toggle flips `dir` and `lang` on the root element, both
+catalogues render, and **the logo and the nav end up at opposite ends of the
+bar in both directions**.
+
+That last assertion was wrong when first written, and a sabotage caught it: it
+compared which element sat further left, and in RTL the nav is left of the logo
+whether the margin is logical or physical, so `margin-left: auto` passed. What
+`margin-inline-start: auto` actually buys is the *gap*, so the check measures
+distance rather than order. Re-sabotaged: `margin-left: auto` now fails the RTL
+case and passes the LTR one, which is exactly the asymmetry that makes physical
+properties dangerous — the layout is correct in the language the author was
+reading.
+
+### One finding
+
+**The console loads its fonts from Google's CDN at runtime.** IBM Plex Sans
+Arabic is a `<link>` in `index.html`, so a demo on a flaky connection — or an
+offline one — renders Arabic in whatever the system falls back to. Self-hosting
+the two families is a small change and is not done yet.
 
 ## What the gates enforce
 
