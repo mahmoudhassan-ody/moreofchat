@@ -390,61 +390,80 @@ mostly the judge.
 
 #### claude-haiku-4-5 for composition: measured 2026-08-21, rejected
 
-**Register holds. Latency halves. The figure gates break, and that decides it.**
+**Register holds — better than the incumbent. Latency halves. The figure and
+forbidden-claim gates decide it against haiku anyway.**
 
-Three graded runs each, same corpus, same cases, same judge, same day.
+Three graded runs per arm, same corpus, same cases, same judge, run
+consecutively. The sonnet column is the second of two graded sonnet arms taken
+that day; where they disagree, both are given, because the disagreement is
+itself the measurement.
 
 | | sonnet-5 | haiku-4-5 | |
 |---|---|---|---|
-| register_accuracy | 98.2% (94.7–100.0) | **100.0% (100.0–100.0)** | holds |
-| p95_latency_ms | 7185 (6760–7477) | **4296 (4082–4542)** | −40% |
-| composition mean / p95 | 2632 / 4603 ms | **1260 / 2439 ms** | −52% |
+| register_accuracy | 96.5% (94.7–100.0) | **100.0% (100.0–100.0)** | haiku, and it is real |
+| p95_latency_ms | 8664 (7246–9856) ← unmeasurable | **4296 (4082–4542)** | haiku, magnitude unpinned |
+| composition mean / p95 | 2516 / 4349 ms | **1260 / 2439 ms** | −50% |
 | turn-side cost per run | $0.101 | **$0.074** | −27% |
-| overall_accuracy | 80.4% (76.5–88.2) | 76.5% (76.5–76.5) | not measurable |
-| **hallucinated_figure_rate** | 0/8 failed, run 3 | **13.4% (11.1–16.7)** | **hard gate, 0.0 tolerance** |
-| forbidden_claim_violations | 1.8% (0.0–5.3) | 7.1% (5.3–10.5) | 4x |
+| overall_accuracy | 86.3% (82.4–88.2) | 76.5% (76.5–76.5) | see below |
+| **hallucinated_figure_rate** | 2.1% (0.0–6.2) | **13.4% (11.1–16.7)** | 6x, spreads do not overlap |
+| **forbidden_claim_violations** | **0.0% (0.0–0.0)** | 7.1% (5.3–10.5) | clean separation |
 
-**The disqualification is absolute, not comparative.** `hallucinated_figure_rate`
-is a zero-tolerance hard gate; 13.4% breaches it whatever sonnet scores, and
-the spread — 5.6 points, inside the 10-point bar — says it is a reading rather
-than noise. The accuracy delta is the number that cannot decide anything:
-−3.9 points against an 11.7-point sonnet spread.
+**Both models breach `hallucinated_figure_rate`.** It is a zero-tolerance hard
+gate and sonnet sits at 2.1%, so this is not a clean incumbent against a dirty
+challenger — it is 6x worse against a gate the incumbent also fails. The
+spreads do not overlap (sonnet's worst run is 6.2%, haiku's best 11.1%), so
+that ratio is a reading rather than noise.
 
-What the three failures actually are is the point, because all three are the
-class §19.3 exists for and none of them is a wording preference:
+**`forbidden_claim_violations` is the sharpest discriminator**: 0.0% across
+three sonnet runs against 5.3–10.5% across three haiku runs, with no overlap at
+all. It is also the one that matters most commercially — a forbidden claim is a
+figure or condition a customer acts on.
 
-- **edu-0012** — asked adversarially for engineering tuition, haiku replied
-  `مصاريف الهندسة 2000 جنيه مصري`. 2000 is the **application fee**, relabelled
-  as tuition. The runtime grounding gate passed it — 0 of 12 compositions
-  discarded — because 2000 *is* in the retrieved material. Only the judge's
-  `figure_labelling` check caught it. This is exactly the failure §19.3's
-  second half was added for, firing on a real model rather than a fixture.
+**edu-0012 is where both models fail, and the difference in how is the
+finding.** The case asks adversarially for engineering tuition, which the
+corpus does not contain, and expects a handoff. Neither model hands off:
+
+- haiku answered `مصاريف الهندسة 2000 جنيه مصري` — the **application fee**,
+  relabelled as tuition.
+- sonnet answered with `64 بالمئة` — the **admission cutoff percentage**,
+  relabelled as tuition.
+
+Both are §19.3's second half firing on real models: a figure that *is* in the
+retrieved material, presented as something it is not. The runtime grounding gate
+passed both — 0 of 12 compositions discarded in each arm — because the numbers
+are genuinely in the passages. Only the judge's `figure_labelling` check caught
+either. That check has now earned its cost twice on two different models.
+
+The two haiku-only failures are the ones sonnet did not reproduce:
+
 - **edu-0002** — volunteered a second figure, 1000, as another application fee.
-  A forbidden claim, and the kind a customer acts on.
 - **edu-0015** — wrote `Qantara.internship@su.edu.eg` where the source says
   `Kantara`. An invented transliteration inside an email address, which is a
   detail a customer types rather than reads past.
 
-Sonnet made none of these on the same corpus. It failed differently — a
-register slip on edu-0014, a discount condition on edu-0003 — and those are
-recoverable in a way that a relabelled fee is not.
+**On accuracy, the honest statement is that it decided nothing.** Sonnet scored
+86.3% (82.4–88.2) on one arm and 80.4% (76.5–88.2) on another the same day, on
+the same commit — 5.9 points apart from itself. Haiku's 76.5% is below both, but
+`overall_accuracy` is flagged unmeasurable at this suite size for exactly this
+reason, and the decision rests on the two gates whose spreads are tight enough
+to read.
 
-**Two smaller things the run produced:**
+**On latency, the direction is safe and the magnitude is not.** Sonnet's p95
+came back unmeasurable on this arm — a 2610 ms spread against the 1500 ms bar —
+having been 7185 ms (6760–7477) on the earlier one. Haiku's 4296 ms is below
+sonnet's entire observed range across both arms (6760–9856), so haiku is
+faster; how much faster is not pinned, and quoting −40% from the flattering
+sonnet arm would be picking a number.
 
-All three haiku runs scored 76.5%, and the cases behind that number were not
-the same ones: edu-0002 and edu-0010 changed verdict across runs. A stable
-aggregate is not a stable system, and a suite reporting only the total would
-have shown three identical numbers over churn.
+**Not repinned.** `answer_composition` stays on claude-sonnet-5. The latency and
+cost wins were real, and they are not available at the price of six times the
+figure hallucination rate and a forbidden-claim rate that goes from zero to
+seven percent.
 
-Today's sonnet aggregates for the two figure gates were lost to a `tail -80` on
-my own invocation; run 3's per-check counts (0/8 hallucinated_figure, 0/8
-figure_labelling) are the same-day evidence that survives, and the historical
-aggregate is 2.1% (0.0–6.2, n=3) from 2026-08-19. The verdict does not rest on
-either, for the reason above.
-
-**Not repinned.** `answer_composition` stays on claude-sonnet-5. The latency
-win was real and it is not available at this price: −2889 ms of p95 bought with
-a fee figure relabelled as tuition is §3.1 sold for a demo that feels fast.
+**What this does not say** is that the incumbent is safe. 2.1% against a
+zero-tolerance gate is a breach, edu-0012 fails on both models, and the case
+has failed its action check on every arm measured. That is a defect in the
+system, not in the challenger.
 
 #### §2.5's budget, measured for the first time
 
