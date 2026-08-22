@@ -1,0 +1,22 @@
+{
+  "app": {
+    "name": "More Of Chat",
+    "poweredBy": "Powered by More Of Chat"
+  },
+  "nav": {
+    "inbox": "Inbox",
+    "knowledge": "Knowledge",
+    "scripts": "Scripts",
+    "analytics": "Analytics",
+    "settings": "Settings"
+  },
+  "language": {
+    "label": "Console language",
+    "en": "EN",
+    "ar": "AR",
+    "note": "Changes this console only. What the bot replies in is set per script."
+  },
+  "shell": {
+    "loading": "Loading"
+  }
+}

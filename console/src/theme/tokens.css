@@ -1,0 +1,55 @@
+/* The console's whole palette — demo plan Task 29, design §17.
+ *
+ * **One accent.** `#7D39EB` and its two tints are the only colour in this
+ * file; everything else is greyscale. The accent means "this is live,
+ * actionable, or verified" — a status pill that needs a human, a verified
+ * figure, the active tab. If it also meant "heading" or "primary button" it
+ * would stop meaning anything, and a console where everything is important
+ * says nothing is.
+ *
+ * Identity is carried by the logo and the typography, not by colour. That is
+ * what makes a second accent a real decision rather than a preference: adding
+ * one fails `test_the_theme_exposes_exactly_one_accent`, which groups colours
+ * by hue rather than checking them against a list — because a list is
+ * satisfied by adding to the list.
+ *
+ * The greys are deliberately cool: their channels differ by at most 11 out of
+ * 255, which is a texture rather than a hue. The accent's differ by 178.
+ *
+ * The failure colour is NOT here. See `failure.css` for why.
+ */
+
+:root {
+  /* ── the accent ───────────────────────────────────────────────────── */
+  --brand: #7d39eb;
+  /* Text on dark backgrounds only. The brand at 14px on #121215 does not
+   * reach 4.5:1; this tint does. A legibility fix, not a second colour. */
+  --brand-lift: #a274f2;
+  --brand-deep: #2a1547;
+  --brand-glow: rgba(125, 57, 235, 0.35);
+
+  /* ── greyscale ────────────────────────────────────────────────────── */
+  --void: #0a0a0c;
+  --surface: #121215;
+  --surface-2: #191920;
+  --line: #24242c;
+  --line-hot: #33333e;
+  --ink: #ececf0;
+  --ink-2: #93939f;
+  --ink-3: #5c5c68;
+
+  /* ── semantic names, all mapping to the one accent ─────────────────── */
+  /* Named for what they mean rather than for what they look like: a screen
+   * asks for `--live`, not for purple, so the day the accent changes it
+   * changes in one place and every screen still means what it meant. */
+  --live: var(--brand);
+  --actionable: var(--brand);
+  --verified: var(--brand);
+
+  /* ── type and geometry ────────────────────────────────────────────── */
+  --font-sans: "IBM Plex Sans Arabic", system-ui, sans-serif;
+  /* Tabular figures, for numbers that must line up in a column and read the
+   * same in both directions. */
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --r: 6px;
+}

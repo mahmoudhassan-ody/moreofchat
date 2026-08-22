@@ -53,6 +53,11 @@ from moc.tenancy.context import tenant_session
 from moc.tenancy.passwords import hash_password, verify_password
 
 _ACTIVE = "active"
+#: The console's catalogues, mirrored from `console/src/i18n/`. Duplicated
+#: rather than imported because Python cannot read the frontend's JSON without
+#: making the backend depend on the console's directory layout — and migration
+#: 0012's CHECK constraint is the third copy, for the same reason.
+_CONSOLE_LANGUAGES = ("en", "ar")
 
 #: Resolution, through `moc_lookup`. Expiry and revocation are in the predicate
 #: rather than checked afterwards: a caller that fetched the row and then
@@ -238,6 +243,55 @@ class AgentDirectory:
                 {"now": moment, "token_hash": _token_hash(token)},
             )
             await session.commit()
+
+    # ─────────────────────────── preferences ───────────────────────────
+
+    async def console_language(self, *, token: str) -> str | None:
+        """Which language this agent reads the console in.
+
+        Not which language the bot replies in — that is decided per turn by
+        mirroring the customer, and nothing under `moc/agent/` can see this
+        value. See migration 0012.
+        """
+        session = await self.resolve(token=token)
+        if session is None:
+            return None
+        async with tenant_session(self._engine, session.tenant_id) as db:
+            return (
+                await db.execute(
+                    text("SELECT console_language FROM agents WHERE id = :id"),
+                    {"id": session.agent_id},
+                )
+            ).scalar_one_or_none()
+
+    async def set_console_language(self, *, token: str, language: str) -> None:
+        """Change it, for this agent and nobody else.
+
+        Takes the token rather than an agent id for the same reason nothing
+        here takes a tenant: an id parameter is an id somebody passes, and the
+        one they pass is the one they were given by a client. The session says
+        who is asking; there is no second opinion to offer it.
+
+        The language is checked here as well as by the CHECK constraint. Both,
+        because the constraint gives a database error where a caller wants a
+        refusal, and a caller that only had the constraint would have to parse
+        one to tell "wrong language" from "database down".
+        """
+        if language not in _CONSOLE_LANGUAGES:
+            raise ValueError(
+                f"{language!r} is not a console language — the catalogues hold "
+                f"{sorted(_CONSOLE_LANGUAGES)}, and a third stored here renders "
+                "the console in its fallback while nothing says why."
+            )
+        session = await self.resolve(token=token)
+        if session is None:
+            return
+        async with tenant_session(self._engine, session.tenant_id) as db:
+            await db.execute(
+                text("UPDATE agents SET console_language = :language WHERE id = :id"),
+                {"language": language, "id": session.agent_id},
+            )
+            await db.commit()
 
     # ─────────────────────────── internals ───────────────────────────
 

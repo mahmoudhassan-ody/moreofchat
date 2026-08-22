@@ -1,0 +1,18 @@
+/* The one colour that is not the accent — demo plan Task 29.
+ *
+ * Kept in its own file, and out of `tokens.css`, on purpose.
+ *
+ * A genuine failure needs a colour nothing else uses: a send that did not
+ * send, an ingest that broke, a provider that is down. The moment it sits
+ * beside the accent in the palette it becomes available for decoration — a
+ * "danger" button, a required-field marker, a red badge that means "3" — and
+ * from then on the console has two accents and no way left to say "this
+ * actually broke".
+ *
+ * So importing this file is a deliberate act, and a reviewer seeing the import
+ * in a diff can ask what failed.
+ */
+
+:root {
+  --stop: #e5484d;
+}
