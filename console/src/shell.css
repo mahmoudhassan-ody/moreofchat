@@ -547,3 +547,27 @@ body {
   color: var(--ink-3);
   font-size: 12.5px;
 }
+
+/* ── settings ──────────────────────────────────────────────── */
+
+.settings {
+  max-inline-size: 640px;
+}
+
+.setting {
+  display: grid;
+  gap: 6px;
+  padding-block: 16px;
+  border-block-end: 1px solid var(--line);
+}
+
+.setting label {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.hint {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: start;
+}

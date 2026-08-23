@@ -6,6 +6,7 @@ import { PoweredBy } from "./components/PoweredBy";
 import { Topbar } from "./components/Topbar";
 import { Inbox } from "./screens/Inbox";
 import { Knowledge } from "./screens/Knowledge";
+import { Settings } from "./screens/Settings";
 
 /**
  * The shell, and nothing else yet.
@@ -45,6 +46,8 @@ export function App() {
           <Knowledge />
         ) : screen === "inbox" ? (
           <Inbox />
+        ) : screen === "settings" ? (
+          <Settings />
         ) : (
           <p>{t("language.note")}</p>
         )}

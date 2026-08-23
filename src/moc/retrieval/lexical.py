@@ -32,12 +32,9 @@ from moc.config_store import load
 
 _LEXICAL = "retrieval/lexical"
 
-#: Stripped before a token is compared against the stop list, never from the
-#: query itself. Both scripts' marks, because a Masri message mixes them.
-_PUNCTUATION = "؟،؛«»…\"'()[]{}!?.,:;-—–"
-
-#: Stripped before a token is compared against the stop list, never from the
-#: query itself. Both scripts' marks, because a Masri message mixes them.
+#: Stripped before a token is compared against the stop list or against a
+#: tenant's synonym key, never from the query itself. Both scripts' marks,
+#: because a Masri message mixes them.
 _PUNCTUATION = "؟،؛«»…\"'()[]{}!?.,:;-—–"
 
 
@@ -74,6 +71,37 @@ def _comparable(word: str) -> str:
 @lru_cache(maxsize=8)
 def _stop_word_forms(stop_words: tuple[str, ...]) -> frozenset[str]:
     return frozenset(_comparable(word) for word in stop_words)
+
+
+def expand_query(query: str, synonyms: Mapping[str, Sequence[str]]) -> str:
+    """Append a tenant's own words for what the corpus calls something else.
+
+    **Query-side because the index is shared.** One Meilisearch index per
+    vertical serves every tenant in it, so a synonym written into the index
+    settings is one broker's word for an area changing another broker's
+    ranking. Applied here, the expansion reaches only the query it was scoped
+    to — which is the only scoping a shared index allows.
+
+    It is deliberately *not* identical to Meilisearch's own synonym handling.
+    The expansion is appended rather than substituted, so the customer's own
+    words survive and `matching_strategy: frequency` drops whichever side
+    matches nothing. The platform synonym map still lives in the index, where
+    it is curated and shared on purpose.
+
+    Matched on whole words after normalization and after the same punctuation
+    strip the stop-word check uses, so a tenant's `التجمع` reaches a query
+    written `التجمع؟` — and so a two-letter entry cannot fire inside every
+    word that happens to contain it.
+    """
+    if not synonyms:
+        return query
+    folded = {normalize(key): values for key, values in synonyms.items()}
+    additions: list[str] = []
+    for word in query.split():
+        for value in folded.get(normalize(word.strip(_PUNCTUATION)), ()):
+            if value not in query and value not in additions:
+                additions.append(value)
+    return " ".join([query, *additions]) if additions else query
 
 
 def strip_stop_words(query: str, config: dict[str, Any] | None = None) -> str:
@@ -313,5 +341,6 @@ __all__ = [
     "MeilisearchAdmin",
     "MeilisearchRepository",
     "index_for",
+    "expand_query",
     "strip_stop_words",
 ]

@@ -380,3 +380,40 @@ def test_mono_never_wraps_a_translated_string():
         f"{offenders} put a translated string in the monospace family, which has "
         "no Arabic glyphs — the figure belongs in .mono, the label does not"
     )
+
+
+def test_the_settings_screen_holds_no_list_of_settings():
+    """It renders what the server declares, and nothing it decided itself.
+
+    A list here would draw a control for a setting the backend has withdrawn —
+    the disabled-slider failure arriving from the other side, a control that
+    exists on screen and not in the system. The names appear only in the
+    catalogue, as labels for whatever the server sent.
+
+    `confidence_threshold` in particular: the engine reads it from the platform
+    tier and a script cannot lower it, so the console must have no way to draw
+    it at all.
+    """
+    screen = (SOURCE / "screens" / "Settings.tsx").read_text(encoding="utf-8")
+
+    assert "confidence_threshold" not in screen
+    assert "min_score" not in screen, (
+        "the screen names a setting; it should render Object.entries(bounds)"
+    )
+    assert "config.bounds" in screen
+
+
+def test_no_control_is_rendered_disabled_instead_of_absent():
+    """A greyed-out control implies the setting exists and you are not allowed
+    it. The truth is that a floor is a property of the system rather than a
+    permission level, and the honest rendering of "not settable" is "not
+    there"."""
+    offenders = [
+        path.name
+        for path in components()
+        if re.search(r"\bdisabled\b", path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], (
+        f"{offenders} render a disabled control — if it cannot be set, it should "
+        "not be drawn"
+    )

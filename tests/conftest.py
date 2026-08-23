@@ -76,6 +76,9 @@ async def session(engine):
 #: instead of leaking rows between tests. Exported because more than one test
 #: module needs committed rows and therefore needs to clean up after itself.
 TENANT_SCOPED_TABLES = (
+    "settings_audit",
+    "tenant_settings",
+    "tenant_scripts",
     "agent_sessions",
     "agents",
     "inventory_units",

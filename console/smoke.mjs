@@ -403,6 +403,58 @@ check("the figure paints in the mono family", await family(".figure .mono"), [
 ]);
 check("the Arabic excerpt does not", await family(".excerpt"), ["IBM Plex Sans Arabic"]);
 
+/* ── settings: what the screen may draw ───────────────────────────────── */
+await page.route("**/settings", (route) => {
+  if (route.request().method() === "PUT") {
+    const asked = JSON.parse(route.request().postData() ?? "{}").changes ?? {};
+    if ((asked.min_score ?? 1) < 0) {
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "min_score is -0.5, below the platform floor of 0.0" }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ values: { min_score: 0.5, synonyms: {} } }),
+    });
+  }
+  return route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      bounds: {
+        min_score: { kind: "number", min: 0, max: 1, description: "How similar a passage must be." },
+        synonyms: { kind: "map", min: null, max: null, description: "Your words." },
+      },
+      values: { min_score: 0, synonyms: { التجمع: ["التجمع الخامس"] } },
+    }),
+  });
+});
+
+await page.goto(`http://127.0.0.1:${PORT}/#settings`, { waitUntil: "load" });
+await page.waitForSelector(".settings", { timeout: 5000 });
+
+check("one control per declared setting", await page.locator("#min_score").count(), 1);
+check("bounded by the server's floor", await page.getAttribute("#min_score", "min"), "0");
+check("nothing is drawn disabled", await page.locator("[disabled]").count(), 0);
+check(
+  "the tenant's own word is listed",
+  (await page.locator(".documents").innerText()).includes("التجمع الخامس"),
+  true,
+);
+
+/* A refusal is the server's sentence, not a control snapping back. */
+await page.locator("#min_score").fill("-0.5");
+await page.locator("#min_score").blur();
+await page.waitForSelector(".settings .warning", { timeout: 5000 });
+check(
+  "a refusal says why",
+  (await page.locator(".settings .warning").innerText()).includes("below the platform floor"),
+  true,
+);
+
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load" });
 
 check("no page errors", problems, []);

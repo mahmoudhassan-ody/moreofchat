@@ -62,5 +62,17 @@
       "chunk": "From the knowledge base",
       "script": "From the script"
     }
+  },
+  "settings": {
+    "title": "Settings",
+    "remove": "Remove",
+    "addSynonym": "Add",
+    "theirWord": "The word your customers use",
+    "ourWords": "What the knowledge base calls it",
+    "synonymsHint": "Your customers' words for things your documents call something else. Every broker names areas differently; this is where you say so.",
+    "name": {
+      "min_score": "Answer confidence",
+      "synonyms": "Your words"
+    }
   }
 }
