@@ -74,5 +74,17 @@
       "min_score": "ثقة الرد",
       "synonyms": "كلماتك"
     }
+  },
+  "analytics": {
+    "title": "التحليلات",
+    "conversations": "المحادثات",
+    "handedOff": "احتاجت موظفًا",
+    "containment": "أنهاها البوت",
+    "cost": "التكلفة",
+    "costAtLeast": "التكلفة، على الأقل",
+    "perConversation": "لكل محادثة",
+    "byModel": "مصدر التكلفة",
+    "whyHandedOff": "سبب التحويل لموظف",
+    "unpriced": "مش كل حاجة اتسعّرت. مفيش سعر مسجّل لـ:"
   }
 }

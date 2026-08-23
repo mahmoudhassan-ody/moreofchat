@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from moc.agent.conversations import ConversationStore
 from moc.agent.handoff import BOT, CUSTOMER, ContactStore, HandoffStore, MessageLog
 from moc.agent.script_engine import ScriptEngine
+from moc.agent.scripts import ScriptResolver
 from moc.channels.base import InboundMessage, OutboundJob
 from moc.channels.valkey import decode
 from moc.tenancy.context import tenant_session
@@ -45,6 +46,7 @@ class InboundWorker:
         orchestrator: TurnRunner,
         script: str,
         config: dict[str, Any],
+        scripts: Any = None,
         consumer: str = _CONSUMER,
     ) -> None:
         self._client = client
@@ -52,6 +54,13 @@ class InboundWorker:
         self._orchestrator = orchestrator
         self._script = script
         self._engine_for_script = ScriptEngine.from_config(script)
+        #: Optional so every existing caller keeps working, and passed by the
+        #: production wiring. Without it the worker runs the config file for
+        #: every tenant, which is what it did before Task 33's publish had
+        #: anything reading it.
+        self._scripts = (
+            ScriptResolver(store=scripts, fallback=script) if scripts is not None else None
+        )
         self._outbound_stream = config["outbound"]["stream"]
         self._consumer = consumer_from_config(
             client=client, section=config["inbound"], consumer=consumer
@@ -67,10 +76,31 @@ class InboundWorker:
         # turn that half-committed would bill a customer for a reply whose
         # state never advanced, and the retry would bill them again.
         async with tenant_session(self._engine, message.tenant_id) as session:
-            store = ConversationStore(session=session, engine=self._engine_for_script)
+            # The engine a NEW conversation would start on — the tenant's
+            # published script, or the config file if they have published
+            # none. Used by `load` only to build a fresh state.
+            engine = self._engine_for_script
+            if self._scripts is not None:
+                engine = await self._scripts.current(tenant_id=message.tenant_id)
+
+            store = ConversationStore(session=session, engine=engine)
             state = await store.load(
                 channel=str(message.channel), sender_ref=message.sender_ref
             )
+
+            # An in-flight conversation runs the version it started on. Without
+            # this, publishing a new version does not merely fail to take
+            # effect — `_require_pinned_version` raises, and every customer
+            # mid-conversation gets an error the moment a script is published.
+            if self._scripts is not None and state.script_version != engine.version:
+                pinned = await self._scripts.at(
+                    tenant_id=message.tenant_id,
+                    script_id=state.script_id,
+                    version=state.script_version,
+                )
+                if pinned is not None:
+                    engine = pinned
+                    store = ConversationStore(session=session, engine=engine)
 
             # **A human has the conversation: the bot does not speak.** Checked
             # before the turn rather than after, so a suspended message costs
@@ -102,6 +132,13 @@ class InboundWorker:
                 state=state,
                 text=message.text or "",
                 channel=str(message.channel),
+                # The engine resolved above, not the one the orchestrator was
+                # built with. Which script runs is a property of the turn:
+                # tenant scripts are versioned and a conversation is pinned to
+                # the version it started on, so a process-lifetime engine would
+                # raise on every in-flight conversation the moment a tenant
+                # published.
+                engine=engine,
             )
             # The person behind the address (§9). Resolved before the upsert
             # so a first message arrives with its contact already attached —

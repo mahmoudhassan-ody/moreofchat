@@ -746,3 +746,107 @@ async def test_a_live_handoff_suspends_the_bot(valkey, app_engine, account):
     # And nothing was queued for the customer.
     outbound = OutboundWorker(client=valkey, provider=sender(lambda r: None), config=QUEUES)
     assert await outbound.run_once() == 0
+
+
+async def test_a_published_script_is_what_the_bot_runs(valkey, app_engine, account):
+    """Publishing pins a version, and something has to read it.
+
+    Before this the worker built one `ScriptEngine.from_config` at construction
+    and reused it for every turn and every tenant, so a script edited in the
+    console changed nothing the bot did — someone edits a script, asks the
+    question, and gets the old answer.
+
+    Worse than nothing changing: `_require_pinned_version` raises when a
+    conversation's state names a version the engine is not running, so
+    publishing v2 would have broken every in-flight conversation with an
+    exception rather than merely ignoring the edit.
+    """
+    from moc.agent.scripts import ScriptStore
+    from moc.config_store import load as load_config
+    from moc.tenancy.context import tenant_session
+
+    published = {**load_config(SCRIPT), "version": 2}
+    await ScriptStore(engine=app_engine).save_draft(
+        tenant_id=account.tenant_id,
+        script_id=published["script_id"],
+        body=published,
+    )
+    await ScriptStore(engine=app_engine).publish(
+        tenant_id=account.tenant_id, script_id=published["script_id"], agent_id="ali"
+    )
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
+    assert (await deliver(app, form(MessageSid="SM-pinned-1"))).status_code == 200
+
+    worker = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES, scripts=ScriptStore(engine=app_engine),
+    )
+    assert await worker.run_once() == 1
+
+    from sqlalchemy import text as sql
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        state = (
+            await session.execute(sql("SELECT state FROM conversations"))
+        ).scalar_one()
+    assert state["script_version"] == 2, "the published script is not what ran"
+
+
+async def test_a_conversation_pinned_to_an_older_version_keeps_running(
+    valkey, app_engine, account
+):
+    """The half that publishing exists to protect.
+
+    A customer three turns into version 1 must not be moved onto a script they
+    never started — and must not hit `_require_pinned_version`'s exception
+    either, which is what an unresolved engine would have given them.
+    """
+    from sqlalchemy import text as sql
+
+    from moc.agent.scripts import ScriptStore
+    from moc.config_store import load as load_config
+    from moc.tenancy.context import tenant_session
+
+    scripts = ScriptStore(engine=app_engine)
+    body = load_config(SCRIPT)
+    for version in (1, 2):
+        await scripts.save_draft(
+            tenant_id=account.tenant_id,
+            script_id=body["script_id"],
+            body={**body, "version": version},
+        )
+        await scripts.publish(
+            tenant_id=account.tenant_id, script_id=body["script_id"], agent_id="ali"
+        )
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
+    worker = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES, scripts=scripts,
+    )
+
+    assert (await deliver(app, form(MessageSid="SM-pinned-2"))).status_code == 200
+    assert await worker.run_once() == 1
+
+    # Pin the conversation back to version 1, as an in-flight one would be.
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        await session.execute(
+            sql(
+                "UPDATE conversations SET state = jsonb_set(state, '{script_version}', '1')"
+            )
+        )
+        await session.commit()
+
+    assert (await deliver(app, form(MessageSid="SM-pinned-3"))).status_code == 200
+    assert await worker.run_once() == 1, "a pinned conversation errored instead of running"
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        state = (
+            await session.execute(sql("SELECT state FROM conversations"))
+        ).scalar_one()
+    assert state["script_version"] == 1, "the customer was moved onto a newer script"

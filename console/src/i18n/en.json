@@ -74,5 +74,17 @@
       "min_score": "Answer confidence",
       "synonyms": "Your words"
     }
+  },
+  "analytics": {
+    "title": "Analytics",
+    "conversations": "Conversations",
+    "handedOff": "Needed a person",
+    "containment": "Handled by the bot",
+    "cost": "Cost",
+    "costAtLeast": "Cost, at least",
+    "perConversation": "Per conversation",
+    "byModel": "What is costing it",
+    "whyHandedOff": "Why the bot handed off",
+    "unpriced": "Not everything could be priced. No rate on file for:"
   }
 }

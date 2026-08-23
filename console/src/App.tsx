@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { fetchBrand, type Brand } from "./api/tenant";
 import { PoweredBy } from "./components/PoweredBy";
 import { Topbar } from "./components/Topbar";
+import { Analytics } from "./screens/Analytics";
 import { Inbox } from "./screens/Inbox";
 import { Knowledge } from "./screens/Knowledge";
 import { Settings } from "./screens/Settings";
@@ -48,6 +49,8 @@ export function App() {
           <Inbox />
         ) : screen === "settings" ? (
           <Settings />
+        ) : screen === "analytics" ? (
+          <Analytics />
         ) : (
           <p>{t("language.note")}</p>
         )}

@@ -231,4 +231,79 @@ def _version(script_id: str, row: Any, *, published: bool) -> ScriptVersion:
     )
 
 
-__all__ = ["NoDraft", "ScriptStore", "ScriptVersion"]
+__all__ = ["NoDraft", "ScriptResolver", "ScriptStore", "ScriptVersion"]
+
+
+class ScriptResolver:
+    """Which script a turn runs, for this tenant and this conversation.
+
+    **The missing half of publishing.** Version pinning was written into
+    `ConversationState` from the start and `ScriptStore.publish` records the
+    version — and until this existed nothing read either. The worker built one
+    `ScriptEngine.from_config` at construction and reused it for every turn and
+    every tenant, so a script edited in the console changed nothing the bot
+    did: someone edits a script, asks the question, and gets the old answer.
+
+    Worse than nothing changing. `ScriptEngine._require_pinned_version` raises
+    when a conversation's state names a version the engine is not running, so
+    publishing version 2 would have broken every in-flight conversation with an
+    exception rather than merely ignoring the edit.
+
+    Three sources, in order:
+
+    - the version a conversation is **pinned** to, so a customer three turns in
+      is not moved onto a script they never started;
+    - the tenant's **current published** version, for a new conversation;
+    - the **config file**, for a tenant who has published nothing — which is
+      every tenant until they open the console, and is the only reason the
+      platform script is still a file.
+
+    Cached by (tenant, script, version). A published version is immutable —
+    publishing again writes a new row — so the cache can never serve something
+    stale. A *draft* is mutable and is deliberately not resolvable here: a
+    draft is by definition the version no customer has reached.
+    """
+
+    def __init__(self, *, store: ScriptStore, fallback: str) -> None:
+        self._store = store
+        self._fallback = fallback
+        self._cache: dict[tuple[uuid.UUID, str, int], ScriptEngine] = {}
+
+    async def current(self, *, tenant_id: uuid.UUID) -> ScriptEngine:
+        """What a NEW conversation should run."""
+
+        default = ScriptEngine.from_config(self._fallback)
+        published = await self._store.current(
+            tenant_id=tenant_id, script_id=default.script_id
+        )
+        if published is None:
+            return default
+        return self._engine(tenant_id, published.script_id, published.version, published.body)
+
+    async def at(
+        self, *, tenant_id: uuid.UUID, script_id: str, version: int
+    ) -> ScriptEngine | None:
+        """What a PINNED conversation is still running, or None if it is gone.
+
+        None rather than a fallback to the current version: silently moving a
+        conversation onto a newer script is the thing pinning exists to
+        prevent, and the caller should decide loudly.
+        """
+        cached = self._cache.get((tenant_id, script_id, version))
+        if cached is not None:
+            return cached
+        stored = await self._store.at_version(
+            tenant_id=tenant_id, script_id=script_id, version=version
+        )
+        if stored is None:
+            return None
+        return self._engine(tenant_id, script_id, version, stored.body)
+
+    def _engine(
+        self, tenant_id: uuid.UUID, script_id: str, version: int, body: dict[str, Any]
+    ) -> ScriptEngine:
+        from moc.config_store import load
+
+        engine = ScriptEngine(script=body, defaults=load(_DEFAULTS))
+        self._cache[(tenant_id, script_id, version)] = engine
+        return engine

@@ -268,6 +268,7 @@ class Orchestrator:
         state: ConversationState,
         text: str,
         channel: str,
+        engine: ScriptEngine | None = None,
     ) -> TurnResult:
         """Run one inbound message to a reply.
 
@@ -339,7 +340,15 @@ class Orchestrator:
             grounded=bool(retrieval.passages or retrieval.script_constants),
         )
 
-        decision = self._engine.advance(state, turn)
+        # The engine for THIS turn. Tenant scripts are versioned and a
+        # conversation is pinned to the version it started on (Task 33), so
+        # which script runs is a property of the turn rather than of the
+        # process — a single engine held here would raise
+        # `_require_pinned_version` on every in-flight conversation the moment
+        # a tenant published. Falls back to the constructed one, which is what
+        # every test and the config-only path use.
+        script = engine or self._engine
+        decision = script.advance(state, turn)
         # The model's reading wins; the heuristic is the fallback. Franco with
         # no digit substitution — `fe manh fe kantara?` — defeats the pattern
         # rule, and the extractor has already read the sentence on a model
@@ -347,7 +356,7 @@ class Orchestrator:
         # only signal on a turn whose extraction failed.
         lang = turn.language or reply_language(redaction.text)
         result = await self._resolve(
-            session, decision, retrieval, redaction, channel, lang, clock
+            session, decision, retrieval, redaction, channel, lang, clock, script
         )
 
         await record_usage(session, kind=UsageKind.message_out, channel=channel)
@@ -394,6 +403,7 @@ class Orchestrator:
         channel: str,
         lang: str | None,
         clock: Stopwatch,
+        script: ScriptEngine,
     ) -> TurnResult:
         if decision.action is not Action.answer:
             return self._scripted(
@@ -403,7 +413,7 @@ class Orchestrator:
         try:
             with clock.phase("composition"):
                 completion = await self._compose(
-                    session, decision, retrieval, channel, redaction.text, lang
+                    session, decision, retrieval, channel, redaction.text, lang, script
                 )
         except AllProvidersUnavailable:
             # §2.6: the customer gets a sentence and a human, not an error. The
@@ -460,7 +470,7 @@ class Orchestrator:
             provenance=_provenance(completion.text, retrieval, grounding, audit),
             # Only the referral. Everything else in a composed reply is the
             # model's, and must trace to the material like any other claim.
-            authorised=tuple(filter(None, (self._engine.referral(lang),))),
+            authorised=tuple(filter(None, (script.referral(lang),))),
             action=decision.action,
             register=decision.register,
             state=decision.state,
@@ -482,6 +492,7 @@ class Orchestrator:
         channel: str,
         message: str,
         lang: str | None,
+        script: ScriptEngine,
     ) -> Completion:
         """Ask the model for words, having already decided the facts.
 
@@ -507,7 +518,7 @@ class Orchestrator:
                 lang=lang,
                 # Where this script sends a turn it cannot answer. edu-0001's
                 # reply was truthful, grounded and a dead end.
-                referral=self._engine.referral(lang),
+                referral=script.referral(lang),
                 # What the conversation has established. Without it the
                 # composer sees the last message alone, so edu-0007 turn 3 —
                 # `ثانوية عامة، طب أسنان` — was composed as though the branch

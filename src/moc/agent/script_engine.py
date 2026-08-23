@@ -69,6 +69,20 @@ class ScriptEngine:
         entry = (self._script.get("settings") or {}).get("referral") or {}
         return entry.get(lang or "ar") or entry.get("ar")
 
+    @property
+    def version(self) -> int:
+        """Which version of the script this engine is running.
+
+        Public because the worker has to compare it against a conversation's
+        pinned version — `_require_pinned_version` raises when they differ, so
+        the caller needs to be able to ask before it finds out by exception.
+        """
+        return self._script["version"]
+
+    @property
+    def script_id(self) -> str:
+        return self._script["script_id"]
+
     def start(self) -> ConversationState:
         return ConversationState(
             script_id=self._script["script_id"],
