@@ -476,3 +476,84 @@ async def test_sse_stream_only_emits_events_for_the_agents_own_tenant(app_engine
 
     assert "mine" in body
     assert "theirs" not in body
+
+
+# ─────────────────────── taking over, and provenance ───────────────────────
+
+
+async def test_taking_over_stops_the_bot_replying(tenant_db):
+    """A live handoff suspends the bot.
+
+    Without this the customer's next message is answered by the bot *over* the
+    human who just took the conversation, and both replies go out. It is the
+    most visible failure on this screen: an agent types a considered answer and
+    the bot argues with them in front of the customer.
+
+    "Live" is any handoff that has not been returned, which is exactly the
+    condition the partial unique index already encodes. An open-but-unclaimed
+    handoff exists because the bot could not help — letting it answer again
+    would repeat the failure that raised the handoff.
+    """
+    from moc.agent.handoff import HandoffStore
+
+    session, ids = tenant_db
+    store = HandoffStore(session=session)
+
+    assert await store.live_for_conversation(conversation_id=ids["wa"]) is None
+
+    opened = await store.open(
+        conversation_id=ids["wa"], reason="three clarifications",
+        resume_state=RESUME_STATE,
+    )
+    live = await store.live_for_conversation(conversation_id=ids["wa"])
+    assert live is not None and live.id == opened.id
+
+    # Claimed is still live — the human is mid-conversation, which is the
+    # state this is most about.
+    await store.claim(handoff_id=opened.id, agent_id="agent-7")
+    assert await store.live_for_conversation(conversation_id=ids["wa"]) is not None
+
+    # Returned gives it back.
+    await store.return_to_bot(handoff_id=opened.id)
+    assert await store.live_for_conversation(conversation_id=ids["wa"]) is None
+
+
+async def test_the_thread_carries_where_each_figure_came_from(tenant_db):
+    """The differentiator, at the boundary where it used to be discarded."""
+    session, ids = tenant_db
+    log = MessageLog(session=session)
+
+    written = await log.append(
+        conversation_id=ids["wa"],
+        channel="whatsapp",
+        author="bot",
+        body="رسوم الساعة 1400 جنيه.",
+        provenance={
+            "figures": [
+                {"value": 1400, "raw": "1400", "grounded": True, "source": "chunk",
+                 "chunkId": "sinai_fee_hour_ar", "title": "رسوم الساعة",
+                 "asOf": "2026-01-01", "excerpt": "رسوم الساعة المعتمدة 1400 جنيه."}
+            ],
+            "gates": {"numeric_grounding": True, "figure_audit": True,
+                      "figure_audit_degraded": False},
+        },
+    )
+
+    assert written.provenance["figures"][0]["chunkId"] == "sinai_fee_hour_ar"
+
+    thread = await log.history_for_contact(contact_id=ids["contact"])
+    stored = next(m for m in thread if m.id == written.id)
+    assert stored.provenance["figures"][0]["value"] == 1400
+    assert stored.provenance["figures"][0]["excerpt"]
+
+
+async def test_a_customer_turn_carries_no_provenance(tenant_db):
+    """None, not an empty object. A customer did not state a grounded figure,
+    and an empty source pane on their message reads as evidence that went
+    missing."""
+    session, ids = tenant_db
+    written = await MessageLog(session=session).append(
+        conversation_id=ids["wa"], channel="whatsapp", author="customer",
+        body="كام الرسوم؟",
+    )
+    assert written.provenance is None

@@ -666,3 +666,83 @@ async def test_a_handed_off_conversation_shows_the_agent_what_happened(
     bodies = [message["body"] for message in thread.json()]
     assert "كام رسوم الساعة؟" in bodies, "the agent must see what the customer actually wrote"
     assert len(bodies) == 2
+
+
+async def test_a_live_handoff_suspends_the_bot(valkey, app_engine, account):
+    """An agent has taken the conversation. The bot must not answer over them.
+
+    Without this the customer's next message produces a bot reply *and* the
+    agent's, both delivered — an officer types a considered answer and the bot
+    argues with them in front of a student. It is the most visible failure the
+    inbox screen can produce, and nothing in the pipeline prevented it.
+
+    The customer's words are still recorded: the agent has to see what was said
+    while they were reading, and a message dropped because a human was
+    attached is a message nobody ever answers.
+    """
+    from sqlalchemy import text as sql
+
+    from moc.agent.conversations import ConversationStore
+    from moc.agent.handoff import ContactStore, HandoffStore
+    from moc.agent.script_engine import ScriptEngine
+    from moc.tenancy.context import tenant_session
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets())
+
+    # One ordinary turn, so the conversation exists.
+    assert (await deliver(app, form())).status_code == 200
+    inbound = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES,
+    )
+    assert await inbound.run_once() == 1
+
+    # A human takes it.
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        store = ConversationStore(session=session, engine=ScriptEngine.from_config(SCRIPT))
+        await ContactStore(session=session).resolve(contact_ref=CUSTOMER)
+        conversation_id = await store.find(channel="whatsapp", sender_ref=CUSTOMER)
+        assert conversation_id is not None
+        await HandoffStore(session=session).open(
+            conversation_id=conversation_id,
+            reason="agent took over",
+            resume_state={"script_id": "education_fees", "script_version": 1,
+                          "node": "fees", "slots": {}, "consecutive_clarifications": 0},
+        )
+        await session.commit()
+
+    class Refuses:
+        """The orchestrator must not be reached at all. A double that answered
+        would let this test pass on a worker that called it and discarded the
+        reply — which still bills the tenant for a turn nobody sees."""
+
+        async def handle(self, **kwargs):
+            raise AssertionError("the bot answered over a human")
+
+    # A distinct MessageSid: the webhook dedupes on it, and reusing the first
+    # one would have this test pass by never delivering a second message.
+    assert (
+        await deliver(app, form(MessageSid="SM-pipeline-2", Body="وكمان سؤال تاني"))
+    ).status_code == 200
+    suspended = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=Refuses(),
+        script=SCRIPT, config=QUEUES,
+    )
+    assert await suspended.run_once() == 1, "the entry must still be acked, not retried"
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        bodies = [
+            row[0]
+            for row in (
+                await session.execute(
+                    sql("SELECT body FROM messages WHERE author = 'customer' ORDER BY seq")
+                )
+            ).all()
+        ]
+    assert "وكمان سؤال تاني" in bodies, "the agent cannot see what was said"
+
+    # And nothing was queued for the customer.
+    outbound = OutboundWorker(client=valkey, provider=sender(lambda r: None), config=QUEUES)
+    assert await outbound.run_once() == 0

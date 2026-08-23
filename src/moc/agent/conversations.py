@@ -24,6 +24,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import ConversationState
 
+_TOUCH = text(
+    "UPDATE conversations SET last_inbound_at = :last_inbound_at WHERE id = :id"
+)
+
+_FIND_ID = text(
+    "SELECT id FROM conversations WHERE channel = :channel AND sender_ref = :sender_ref"
+)
+
 _LOAD = text(
     """
 SELECT state FROM conversations
@@ -76,6 +84,42 @@ class ConversationStore:
         if not row:
             return self._engine.start()
         return ConversationState.from_json(row)
+
+    async def find(self, *, channel: str, sender_ref: str) -> UUID | None:
+        """This conversation's id, or None if there is not one yet.
+
+        Separate from `load`, which answers "what state is this in" and always
+        succeeds — a first message has a state and no row. The worker needs the
+        id *before* the turn runs, to ask whether a human has taken the
+        conversation over, and a `load` that also returned an optional id would
+        make every caller handle a None they do not use.
+        """
+        return (
+            await self._session.execute(
+                _FIND_ID, {"channel": channel, "sender_ref": sender_ref}
+            )
+        ).scalar_one_or_none()
+
+    async def touch(
+        self, *, conversation_id: UUID, last_inbound_at: datetime | None
+    ) -> None:
+        """Record that the customer wrote, without advancing the script.
+
+        Used on a message the bot did not answer because a human has the
+        conversation. It matters more than it looks: §6.2's 24-hour service
+        window is measured from `last_inbound_at`, so a customer who writes
+        during a takeover and is not recorded here can leave the agent's reply
+        refused by Meta as freeform-outside-the-window — an outage arriving as
+        a rejected send, minutes after the customer just messaged.
+
+        The state is deliberately untouched. A human turn is not a script
+        turn, which is the same reason `return_to_bot` writes the cursor back
+        verbatim.
+        """
+        await self._session.execute(
+            _TOUCH,
+            {"id": conversation_id, "last_inbound_at": last_inbound_at},
+        )
 
     async def save(
         self,

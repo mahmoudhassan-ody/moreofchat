@@ -344,3 +344,39 @@ def test_the_console_never_asks_for_a_tenant_by_id():
         if re.search(r"[\"'`]/tenants?/\$\{", path.read_text(encoding="utf-8"))
     ]
     assert offenders == []
+
+
+# ─────────────────────────── the mono trap ───────────────────────────
+
+#: `className="mono"` on an element whose children include a `t(` call.
+_MONO_WITH_TEXT = re.compile(
+    r'className=(?:"mono"|\{[^}]*mono[^}]*\})[^>]*>\s*\{\s*t\(', re.S
+)
+
+
+def test_mono_never_wraps_a_translated_string():
+    """IBM Plex Mono carries no Arabic glyphs.
+
+    Arabic text placed in `.mono` falls back to whatever system serif exists.
+    It renders, it looks plausible to anyone reading English, and nothing
+    logs — the bug found in the Task 30 shell, where the version line's
+    sibling carried `.mono` and the Arabic ran in FreeSerif.
+
+    `.mono` is for figures. A `t()` call inside it is a translated string,
+    which is by definition prose, which is by definition sometimes Arabic. The
+    inbox puts a figure beside an Arabic label on every row, so this is forty
+    chances at the same fallback rather than one.
+
+    The smoke check catches it at runtime by asking the browser which face it
+    actually painted with. This catches it without a browser, which is what
+    makes it run on every commit.
+    """
+    offenders = [
+        path.name
+        for path in components()
+        if _MONO_WITH_TEXT.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], (
+        f"{offenders} put a translated string in the monospace family, which has "
+        "no Arabic glyphs — the figure belongs in .mono, the label does not"
+    )

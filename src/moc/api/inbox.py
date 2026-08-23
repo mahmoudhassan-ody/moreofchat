@@ -127,6 +127,10 @@ def build_inbox(
                 "author": message.author,
                 "body": message.body,
                 "created_at": message.created_at.isoformat(),
+                # Where each figure came from, and which gates passed. Null on
+                # a customer turn and on a scripted reply — the console shows
+                # a source pane only where there is one.
+                "provenance": message.provenance,
             }
             for message in messages
         ]

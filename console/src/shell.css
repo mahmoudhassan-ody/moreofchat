@@ -260,3 +260,290 @@ body {
   margin-block-end: 14px;
   color: var(--ink-2);
 }
+
+/* ── the inbox, from docs/design/console-inbox-purple.html ──────────────
+ *
+ * Three panes. Logical properties throughout, as everywhere: `border-inline-
+ * start` is the divider between panes in both directions, and the grid
+ * columns reverse themselves because the document direction does.
+ */
+
+.panes {
+  display: grid;
+  grid-template-columns: 296px 1fr 336px;
+  overflow: hidden;
+  block-size: 100%;
+}
+
+.pane {
+  overflow-y: auto;
+  border-inline-start: 1px solid var(--line);
+}
+
+.pane-head {
+  position: sticky;
+  inset-block-start: 0;
+  padding-block: 13px 11px;
+  padding-inline: 16px;
+  background: var(--void);
+  border-block-end: 1px solid var(--line);
+}
+
+.pane-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+
+.conv {
+  padding-block: 13px;
+  padding-inline: 16px;
+  border-block-end: 1px solid var(--line);
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.conv:hover {
+  background: var(--surface);
+}
+
+.conv.on {
+  background: var(--surface-2);
+  /* Inset on the START edge, so the marker is where the eye enters the row in
+   * both directions. `inset 3px 0 0` would be the right edge in Arabic. */
+  box-shadow: inset 3px 0 0 var(--actionable);
+}
+
+.ch {
+  inline-size: 26px;
+  block-size: 26px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--surface-2);
+  border: 1px solid var(--line-hot);
+  color: var(--ink-3);
+}
+
+.conv-body {
+  min-inline-size: 0;
+}
+
+.conv-name {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.conv-last {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding-block: 2px;
+  padding-inline: 8px;
+  border-radius: 99px;
+}
+
+/* The only coloured pill on the screen — something needs a human. */
+.pill.needs {
+  background: var(--brand-deep);
+  color: var(--brand-lift);
+  border: 1px solid var(--brand);
+}
+
+.pill.bot {
+  background: transparent;
+  color: var(--ink-3);
+  border: 1px solid var(--line-hot);
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.thread-head {
+  padding-block: 12px;
+  padding-inline: 20px;
+  border-block-end: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.who {
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.who small {
+  display: block;
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.thread-head .act:first-of-type {
+  margin-inline-start: auto;
+}
+
+.msgs {
+  flex: 1;
+  overflow-y: auto;
+  padding-block: 22px;
+  padding-inline: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  max-inline-size: 66%;
+}
+
+.row.in {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.row.out {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.bubble {
+  padding-block: 10px;
+  padding-inline: 14px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  cursor: pointer;
+}
+
+.in .bubble {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-start-start-radius: 3px;
+}
+
+.out .bubble {
+  background: var(--brand-deep);
+  border: 1px solid var(--line-hot);
+  border-start-end-radius: 3px;
+}
+
+.why {
+  margin-block-start: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.why:hover {
+  color: var(--brand-lift);
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-block-start: 1px solid var(--line);
+}
+
+.composer .field {
+  flex: 1;
+  min-block-size: 44px;
+}
+
+/* ── the source pane ──────────────────────────────────────── */
+
+.sources {
+  overflow-y: auto;
+  border-inline-start: 1px solid var(--line);
+  padding-block-end: 16px;
+}
+
+.gates {
+  padding: 14px;
+  border-block-end: 1px solid var(--line);
+}
+
+.gate {
+  font-size: 12px;
+  color: var(--ink-3);
+  padding-inline-start: 14px;
+  position: relative;
+}
+
+.gate.on {
+  color: var(--ink-2);
+}
+
+.gate.on::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 8px;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  /* Verified — the one thing colour is for. */
+  background: var(--verified);
+}
+
+.gate.degraded {
+  color: var(--stop);
+}
+
+.source {
+  padding: 14px;
+  border-block-end: 1px solid var(--line);
+}
+
+.source.orphan {
+  border-inline-start: 2px solid var(--stop);
+}
+
+.figure {
+  font-size: 15px;
+  font-weight: 600;
+  margin-block-end: 6px;
+}
+
+.excerpt {
+  font-size: 12.5px;
+  color: var(--ink);
+  line-height: 1.7;
+  text-align: start;
+}
+
+.attribution {
+  margin-block-start: 6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.empty {
+  padding: 14px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}

@@ -181,8 +181,8 @@ def check_numeric_grounding(
     source_numbers = _collect_sources(retrieved_passages, script_constants)
     reply_numbers = [q.value for q in quantities]
 
-    grounded = [q for q in quantities if _is_grounded(q.value, source_numbers)]
-    orphans = [q.value for q in quantities if not _is_grounded(q.value, source_numbers)]
+    grounded = [q for q in quantities if is_grounded(q.value, source_numbers)]
+    orphans = [q.value for q in quantities if not is_grounded(q.value, source_numbers)]
     # Only grounded figures can be hedged. An orphan that is also hedged is one
     # incident, and counting it twice would move both rates for a single fault.
     hedged = [q.value for q in grounded if q.approximate]
@@ -214,12 +214,18 @@ def _collect_sources(
     return numbers
 
 
-def _is_grounded(value: float, sources: set[float]) -> bool:
+def is_grounded(value: float, sources: set[float]) -> bool:
     """Exact match only.
 
     No tolerance window on purpose. A figure that is merely close is the
     failure this check exists to catch — spec §3.2 says the same about
     payment-plan arithmetic, and a tolerance here would let a rounded fee pass.
+
+    Public because `moc.agent.provenance` traces figures to the chunks that
+    grounded them and must decide "grounded" *identically* — a source pane
+    that disagreed with this gate would be the version people believe. One
+    function, exported deliberately, rather than a second implementation that
+    starts out matching.
     """
     return float(value) in sources
 
@@ -315,5 +321,6 @@ __all__ = [
     "check_named_entities",
     "check_numeric_grounding",
     "check_type_substitution",
+    "is_grounded",
     "redact",
 ]

@@ -312,6 +312,11 @@ class Message(Base):
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE")
     )
     channel: Mapped[str] = mapped_column(Text)
+    #: Where each figure in this reply came from (migration 0015). NULL means
+    #: nothing was traced — a scripted reply, or a row older than the column —
+    #: which is a different fact from an empty `figures` list, meaning traced
+    #: and nothing found.
+    provenance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     #: customer | bot | agent. Closed by the CHECK above, because
     #: `unprocessed_inbound` decides what the bot is asked to answer and a
     #: fourth value would change that silently.

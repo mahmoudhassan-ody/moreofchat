@@ -39,5 +39,28 @@
       "oversized": "One chunk is far larger than the target and will rank against everything.",
       "bare_figures": "Figures here carry no currency or unit — a column whose header row did not come with it. The bot cannot label these numbers."
     }
+  },
+  "inbox": {
+    "conversations": "Conversations",
+    "sources": "Where this came from",
+    "needsHuman": "needs a human",
+    "claimed": "with an agent",
+    "pickOne": "Pick a conversation",
+    "takeOver": "Take over",
+    "returnToBot": "Return to the bot",
+    "reply": "Type a reply",
+    "send": "Send",
+    "why": "Why?",
+    "noFigures": "This reply stated no figures.",
+    "orphan": "No source. The bot would not have sent this.",
+    "gate": {
+      "numeric_grounding": "Every figure traced to a source",
+      "figure_audit": "Every figure labelled as its source labels it",
+      "degraded": "The labelling check could not run — this passed by default"
+    },
+    "from": {
+      "chunk": "From the knowledge base",
+      "script": "From the script"
+    }
   }
 }

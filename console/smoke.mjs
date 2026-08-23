@@ -165,8 +165,12 @@ await page.evaluate(() => document.fonts.ready);
 const cdp = await page.context().newCDPSession(page);
 await cdp.send("DOM.enable");
 await cdp.send("CSS.enable");
-const { root } = await cdp.send("DOM.getDocument");
 async function paintedFont(selector) {
+  // The document is re-fetched every call. CDP node ids are invalidated by a
+  // navigation, and a single `root` captured up front worked right up until
+  // this file navigated twice — then failed as "could not find node", which
+  // reads like a missing element rather than a stale handle.
+  const { root } = await cdp.send("DOM.getDocument");
   const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
   const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
   return fonts.map((font) => font.familyName);
@@ -298,6 +302,106 @@ check("still nothing ingested", ingested, 0);
 await page.locator(".preview .act").click();
 await page.waitForSelector(".result", { timeout: 5000 });
 check("confirm ingests exactly once", ingested, 1);
+
+/* ── the inbox, and the pane the whole screen is for ──────────────────── */
+const HANDOFF = "11111111-1111-1111-1111-111111111111";
+await page.route("**/inbox", (route) =>
+  route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify([
+      {
+        id: HANDOFF,
+        conversation_id: "22222222-2222-2222-2222-222222222222",
+        reason: "three clarifications",
+        status: "open",
+        channel: "whatsapp",
+        sender_ref: "+201012345678",
+        opened_at: "2026-08-22T09:00:00+00:00",
+        claimed_by: null,
+      },
+    ]),
+  }),
+);
+await page.route("**/inbox/*/thread", (route) =>
+  route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify([
+      {
+        channel: "whatsapp",
+        author: "customer",
+        body: "كام رسوم الساعة؟",
+        created_at: "2026-08-22T09:00:00+00:00",
+        provenance: null,
+      },
+      {
+        channel: "whatsapp",
+        author: "bot",
+        body: "رسوم الساعة المعتمدة 1400 جنيه.",
+        created_at: "2026-08-22T09:00:05+00:00",
+        provenance: {
+          figures: [
+            {
+              value: 1400,
+              raw: "1400",
+              grounded: true,
+              source: "chunk",
+              chunkId: "sinai_fee_hour_ar",
+              title: "رسوم الساعة",
+              asOf: "2026-01-01",
+              excerpt: "رسوم الساعة المعتمدة لكلية الهندسة 1400 جنيه.",
+            },
+          ],
+          gates: {
+            numeric_grounding: true,
+            figure_audit: true,
+            figure_audit_degraded: false,
+          },
+        },
+      },
+    ]),
+  }),
+);
+
+await page.goto(`http://127.0.0.1:${PORT}/#inbox`, { waitUntil: "load" });
+await page.waitForSelector(".conv", { timeout: 5000 });
+
+check("the conversation needing a human is marked", await page.locator(".pill.needs").count(), 1);
+
+await page.locator(".conv").click();
+await page.waitForSelector(".bubble", { timeout: 5000 });
+check("the thread renders both turns", await page.locator(".bubble").count(), 2);
+check("no source pane until a reply is picked", await page.locator(".sources").count(), 0);
+
+await page.locator(".row.out .bubble").click();
+await page.waitForSelector(".sources", { timeout: 5000 });
+
+check("the figure is shown", await page.locator(".figure .mono").innerText(), "1400");
+check(
+  "with the sentence it came from",
+  (await page.locator(".excerpt").innerText()).includes("رسوم الساعة المعتمدة"),
+  true,
+);
+check(
+  "and the chunk that supplied it",
+  (await page.locator(".attribution").innerText()).includes("رسوم الساعة"),
+  true,
+);
+check("and the gates that passed", await page.locator(".gate.on").count(), 2);
+
+/* The trap from Task 30, on the screen that has forty chances at it: the
+ * figure is monospace and the Arabic label is not. Asked of the renderer,
+ * which is the only thing that knows what it actually painted with. */
+// Prefixes, because CDP reports the resolved FACE — "IBM Plex Mono Medium" at
+// weight 600, not the family. The same correction the font sweep needed.
+const family = async (selector) =>
+  (await paintedFont(selector)).map((face) => face.split(/ (?:Thin|Extra|Light|Regular|Medium|Semi|Bold|Black)/)[0]);
+
+check("the figure paints in the mono family", await family(".figure .mono"), [
+  "IBM Plex Mono",
+]);
+check("the Arabic excerpt does not", await family(".excerpt"), ["IBM Plex Sans Arabic"]);
 
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load" });
 

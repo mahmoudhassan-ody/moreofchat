@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { fetchBrand, type Brand } from "./api/tenant";
 import { PoweredBy } from "./components/PoweredBy";
 import { Topbar } from "./components/Topbar";
+import { Inbox } from "./screens/Inbox";
 import { Knowledge } from "./screens/Knowledge";
 
 /**
@@ -40,7 +41,13 @@ export function App() {
     <div className="app">
       <Topbar active={screen} brand={brand} />
       <main className="content">
-        {screen === "knowledge" ? <Knowledge /> : <p>{t("language.note")}</p>}
+        {screen === "knowledge" ? (
+          <Knowledge />
+        ) : screen === "inbox" ? (
+          <Inbox />
+        ) : (
+          <p>{t("language.note")}</p>
+        )}
         {/* `.mono` is for figures, never for prose: IBM Plex Mono carries no
             Arabic glyphs, so Arabic text placed in it falls back to whatever
             system serif exists — which renders, looks wrong, and reports

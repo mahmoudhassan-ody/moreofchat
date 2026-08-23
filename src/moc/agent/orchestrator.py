@@ -52,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from moc.agent.composition import render_composition
 from moc.agent.figure_audit import FigureAudit, audit_figures
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
+from moc.agent.provenance import Passage, trace_figures
 from moc.agent.replies import Voice, refusal
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
@@ -108,6 +109,10 @@ class Retrieval:
     #: question it answers, so without titles the only honest reply to an
     #: unroutable message was "what exactly do you need?".
     titles: Sequence[str] = ()
+    #: One entry per passage, in the same order — chunk id, content, title and
+    #: as-of date. What lets a figure in the reply be traced back to the chunk
+    #: that supplied it (§19.3's evidence, kept instead of discarded).
+    sources: Sequence[Mapping[str, Any]] = ()
 
 
 class Retriever(Protocol):
@@ -221,6 +226,15 @@ class TurnResult:
     #: orphan.
     script_constants: tuple[str, ...] = ()
     grounding: GroundingResult | None = None
+    #: Where each figure in the delivered reply came from — the chunk, its
+    #: title, its as-of date and the sentence it appeared in. The grounding
+    #: check computes this and used to discard it; the inbox's source pane is
+    #: the reason it is kept (§19.3's evidence rather than its verdict).
+    #:
+    #: None on a scripted reply and on a discarded composition. That is not
+    #: the same as an empty list, which means a composed reply stated no
+    #: figures at all.
+    provenance: dict[str, Any] | None = None
     completions: list[Completion] = field(default_factory=list)
     #: Every provider was down or breaker-open. Distinct from `degraded`,
     #: which means the failover answered — that is a working turn on the
@@ -443,6 +457,7 @@ class Orchestrator:
 
         return TurnResult(
             reply=completion.text,
+            provenance=_provenance(completion.text, retrieval, grounding, audit),
             # Only the referral. Everything else in a composed reply is the
             # model's, and must trace to the material like any other claim.
             authorised=tuple(filter(None, (self._engine.referral(lang),))),
@@ -728,3 +743,46 @@ def _offer(document: dict, titles: tuple[str, ...], voice: Voice) -> str | None:
 
 
 __all__ = ["Extractor", "Orchestrator", "Retrieval", "Retriever", "TurnResult"]
+
+
+def _provenance(
+    reply: str,
+    retrieval: Retrieval,
+    grounding: GroundingResult,
+    audit: FigureAudit,
+) -> dict[str, Any]:
+    """The evidence behind a delivered reply, kept rather than discarded.
+
+    Computed only for compositions that passed both gates and were actually
+    sent. A discarded composition has provenance too, in principle — but it
+    reached no customer, and putting it in the thread would show an agent a
+    reply that was never made alongside the one that was.
+
+    `gates` records what passed rather than that everything did. "Both gates
+    green" and "the audit could not run" are different claims about the same
+    reply, and only one of them is evidence — `audit.degraded` is the
+    difference between a check that found nothing and a check that never ran.
+    """
+    figures = trace_figures(
+        reply=reply,
+        passages=[
+            Passage(
+                chunk_id=str(source.get("chunk_id", "")),
+                content=str(source.get("content", "")),
+                title=source.get("title"),
+                as_of=source.get("as_of"),
+            )
+            for source in retrieval.sources
+        ],
+        script_constants=retrieval.script_constants,
+    )
+    return {
+        "figures": [figure.to_dict() for figure in figures],
+        "gates": {
+            "numeric_grounding": grounding.passed,
+            "figure_audit": audit.passed,
+            # A degraded audit passed by failing open, which is a different
+            # thing to show a dean than a check that ran and found nothing.
+            "figure_audit_degraded": audit.degraded,
+        },
+    }

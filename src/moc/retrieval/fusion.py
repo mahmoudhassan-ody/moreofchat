@@ -140,6 +140,33 @@ class FusionResult:
         return tuple(hit.content for hit in self.hits)
 
     @property
+    def sources(self) -> tuple[dict[str, Any], ...]:
+        """One entry per passage, in the same order, naming where it came from.
+
+        Index-aligned with `passages` because `passages` is derived from the
+        same `hits` — that alignment is what lets the orchestrator trace a
+        figure to a chunk without a second lookup.
+
+        Separate from `titles`, which deduplicates and drops the untitled
+        because it feeds the fallback clarification's option list. This one
+        must not do either: a source pane needs the chunk that actually
+        supplied a figure, including when two chunks share a title and
+        including when a chunk has none.
+        """
+        return tuple(
+            {
+                "chunk_id": hit.chunk_id,
+                "content": hit.content,
+                "title": hit.payload.get("title"),
+                # §7.1's staleness date, if the chunk carries one. A broker
+                # looking at a figure should see when it was current without
+                # having to ask.
+                "as_of": hit.payload.get("effective_from"),
+            }
+            for hit in self.hits
+        )
+
+    @property
     def titles(self) -> tuple[str, ...]:
         """What each retrieved passage is *about*, in the corpus's own words.
 

@@ -20,7 +20,7 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from moc.agent.conversations import ConversationStore
-from moc.agent.handoff import BOT, CUSTOMER, ContactStore, MessageLog
+from moc.agent.handoff import BOT, CUSTOMER, ContactStore, HandoffStore, MessageLog
 from moc.agent.script_engine import ScriptEngine
 from moc.channels.base import InboundMessage, OutboundJob
 from moc.channels.valkey import decode
@@ -71,6 +71,32 @@ class InboundWorker:
             state = await store.load(
                 channel=str(message.channel), sender_ref=message.sender_ref
             )
+
+            # **A human has the conversation: the bot does not speak.** Checked
+            # before the turn rather than after, so a suspended message costs
+            # no provider call — and asked of the conversation rather than the
+            # state, because a takeover is a fact about who is answering and
+            # not a node in the script.
+            #
+            # The customer's words are still recorded. The agent has to see
+            # what was said while they were reading, and a message dropped
+            # because a human was attached is a message nobody ever answers.
+            existing = await store.find(
+                channel=str(message.channel), sender_ref=message.sender_ref
+            )
+            if existing is not None and await HandoffStore(
+                session=session
+            ).live_for_conversation(conversation_id=existing):
+                await MessageLog(session=session).append(
+                    conversation_id=existing,
+                    channel=str(message.channel),
+                    author=CUSTOMER,
+                    body=message.text,
+                )
+                await store.touch(conversation_id=existing, last_inbound_at=message.received_at)
+                await session.commit()
+                return
+
             result = await self._orchestrator.handle(
                 session=session,
                 state=state,
@@ -109,6 +135,11 @@ class InboundWorker:
                     channel=str(message.channel),
                     author=BOT,
                     body=result.reply,
+                    # Written with the words, in the same insert. A reply whose
+                    # sources went missing shows a customer-visible figure with
+                    # no evidence behind it, which is the one thing the source
+                    # pane exists to rule out.
+                    provenance=result.provenance,
                 )
             await session.commit()
 

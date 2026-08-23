@@ -22,6 +22,7 @@ one here would be a second place for it to be wrong, and the place nobody
 checks once the policy exists.
 """
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -108,11 +109,16 @@ class Message:
     author: str
     body: str | None
     created_at: datetime
+    #: Where each figure in this reply came from — see `moc.agent.provenance`.
+    #: None on a customer turn, on a scripted reply, and on any row written
+    #: before migration 0015. That is not the same as `{"figures": []}`, which
+    #: means the reply was traced and stated no figures.
     #: Total order within a tenant. `created_at` alone is not enough: it
     #: defaults to `clock_timestamp()` but two appends can still land in the
     #: same microsecond, and a thread with an ambiguous order is one an agent
     #: can read backwards.
     seq: int
+    provenance: dict[str, Any] | None = None
 
 
 def _handoff(row: Any) -> Handoff:
@@ -165,6 +171,28 @@ class HandoffStore:
 
     async def get(self, *, handoff_id: uuid.UUID) -> Handoff | None:
         row = (await self._session.execute(_GET, {"id": handoff_id})).one_or_none()
+        return _handoff(row) if row is not None else None
+
+    async def live_for_conversation(self, *, conversation_id: uuid.UUID) -> Handoff | None:
+        """The handoff that suspends the bot on this conversation, if any.
+
+        **Live means "not returned"**, which is exactly the condition the
+        partial unique index already encodes — one live handoff per
+        conversation. Open-but-unclaimed counts: the handoff exists because the
+        bot could not help, so letting it answer the next message would repeat
+        the failure that raised it. Claimed counts most of all — that is a
+        human mid-conversation.
+
+        Without this the bot answers *over* the agent who has taken the
+        conversation, and both replies reach the customer. It is the most
+        visible failure available on the inbox screen: an officer types a
+        considered answer and the bot argues with them in front of a student.
+        """
+        row = (
+            await self._session.execute(
+                _LIVE_FOR_CONVERSATION, {"conversation_id": conversation_id}
+            )
+        ).one_or_none()
         return _handoff(row) if row is not None else None
 
     async def open_handoffs(self) -> list[Handoff]:
@@ -244,24 +272,36 @@ class ContactStore:
 
 
 _APPEND = text("""
-INSERT INTO messages (id, tenant_id, conversation_id, channel, author, body)
-SELECT :id, c.tenant_id, c.id, :channel, :author, :body
+INSERT INTO messages (id, tenant_id, conversation_id, channel, author, body, provenance)
+SELECT :id, c.tenant_id, c.id, :channel, :author, :body, cast(:provenance as jsonb)
 FROM conversations c WHERE c.id = :conversation_id
-RETURNING id, conversation_id, channel, author, body, created_at, seq
+RETURNING id, conversation_id, channel, author, body, created_at, seq, provenance
+""")
+
+#: The one handoff that suspends the bot, if there is one. `<> 'returned'`
+#: rather than `= 'open'`: a claimed handoff is a human mid-conversation, and
+#: it is the state where a bot reply does the most damage.
+_LIVE_FOR_CONVERSATION = text("""
+SELECT h.id, h.conversation_id, h.reason, h.status, h.resume_state,
+       h.opened_at, h.claimed_at, h.claimed_by, h.returned_at
+FROM handoffs h
+WHERE h.conversation_id = :conversation_id AND h.status <> 'returned'
 """)
 
 #: Every conversation this contact holds, as one thread in insertion order.
 #: The join through `contact_id` is what makes WhatsApp and Instagram one
 #: history instead of two.
 _HISTORY = text("""
-SELECT m.id, m.conversation_id, m.channel, m.author, m.body, m.created_at, m.seq
+SELECT m.id, m.conversation_id, m.channel, m.author, m.body, m.created_at, m.seq,
+       m.provenance
 FROM messages m JOIN conversations c ON c.id = m.conversation_id
 WHERE c.contact_id = :contact_id
 ORDER BY m.seq
 """)
 
 _UNPROCESSED = text("""
-SELECT m.id, m.conversation_id, m.channel, m.author, m.body, m.created_at, m.seq
+SELECT m.id, m.conversation_id, m.channel, m.author, m.body, m.created_at, m.seq,
+       m.provenance
 FROM messages m
 WHERE m.conversation_id = :conversation_id
   AND m.author = 'customer'
@@ -285,7 +325,15 @@ class MessageLog:
         channel: str,
         author: str,
         body: str | None,
+        provenance: dict[str, Any] | None = None,
     ) -> Message:
+        """Append one message, optionally with where its figures came from.
+
+        `provenance` is written as part of the same insert rather than patched
+        in afterwards. A second statement could fail, and a reply whose sources
+        went missing shows a customer-visible figure with no evidence behind it
+        — which is the one thing the source pane exists to rule out.
+        """
         if author not in (CUSTOMER, BOT, AGENT):
             raise ValueError(f"unknown author {author!r}")
         row = (
@@ -297,6 +345,7 @@ class MessageLog:
                     "channel": channel,
                     "author": author,
                     "body": body,
+                    "provenance": json.dumps(provenance) if provenance else None,
                 },
             )
         ).one()
