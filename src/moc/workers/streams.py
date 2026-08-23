@@ -31,6 +31,16 @@ _FROM_START = "0"
 Handler = Callable[[str], Awaitable[None]]
 
 
+class TerminalFailure(Exception):
+    """A failure retrying cannot fix.
+
+    Raised by a handler that already knows the answer will not change — an
+    unroutable channel, a malformed payload. The consumer buries it on the
+    first attempt rather than spending the retry budget discovering what the
+    handler could already say.
+    """
+
+
 class StreamConsumer:
     def __init__(
         self,
@@ -106,6 +116,13 @@ class StreamConsumer:
             return False
         try:
             await handle(payload)
+        except TerminalFailure as exc:
+            # Retrying will not help and the handler knows it. Five attempts at
+            # a job for a channel nobody configured is five delays in front of
+            # every other tenant's reply, and the outcome is the same row in
+            # the same dead-letter stream either way.
+            await self._bury(entry_id, payload, repr(exc))
+            return False
         except Exception as exc:  # noqa: BLE001 - the handler decides nothing; we retry or bury
             if await self._attempts(entry_id) >= self._max_attempts:
                 await self._bury(entry_id, payload, repr(exc))
@@ -150,4 +167,4 @@ def consumer_from_config(
     )
 
 
-__all__ = ["StreamConsumer", "consumer_from_config"]
+__all__ = ["StreamConsumer", "TerminalFailure", "consumer_from_config"]

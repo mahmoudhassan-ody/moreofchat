@@ -21,6 +21,7 @@ outbound stream and reach the vendor.
 import hashlib
 import hmac
 import json
+import uuid
 from base64 import b64encode
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -223,7 +224,9 @@ async def test_a_signed_webhook_produces_a_sent_reply(valkey, app_engine, accoun
         sent.append(dict(x.split("=", 1) for x in request.content.decode().split("&")))
         return httpx.Response(201, json={"sid": "SM-out", "status": "queued"})
 
-    outbound = OutboundWorker(client=valkey, provider=sender(capture), config=QUEUES)
+    outbound = OutboundWorker(
+        client=valkey, providers={"whatsapp": sender(capture)}, config=QUEUES
+    )
     assert await outbound.run_once() == 1
 
     assert len(sent) == 1, "exactly one reply reached the vendor"
@@ -470,7 +473,9 @@ async def test_outbound_dead_letters_after_the_configured_attempts(valkey):
         QUEUES["outbound"]["stream"], job.to_json()
     )
 
-    worker = OutboundWorker(client=valkey, provider=sender(rejects), config=QUEUES)
+    worker = OutboundWorker(
+        client=valkey, providers={"whatsapp": sender(rejects)}, config=QUEUES
+    )
     for _ in range(QUEUES["outbound"]["max_attempts"] + 1):
         await worker.run_once()
 
@@ -487,8 +492,12 @@ async def test_the_rate_limiter_is_shared_across_sender_processes(valkey):
     """
     limit = QUEUES["rate_limit"]
     tenant = str(uuid4())
-    one = OutboundWorker(client=valkey, provider=sender(lambda r: None), config=QUEUES)
-    two = OutboundWorker(client=valkey, provider=sender(lambda r: None), config=QUEUES)
+    one = OutboundWorker(
+        client=valkey, providers={"whatsapp": sender(lambda r: None)}, config=QUEUES
+    )
+    two = OutboundWorker(
+        client=valkey, providers={"whatsapp": sender(lambda r: None)}, config=QUEUES
+    )
 
     taken = 0
     for index in range(limit["capacity"] + 5):
@@ -744,7 +753,9 @@ async def test_a_live_handoff_suspends_the_bot(valkey, app_engine, account):
     assert "وكمان سؤال تاني" in bodies, "the agent cannot see what was said"
 
     # And nothing was queued for the customer.
-    outbound = OutboundWorker(client=valkey, provider=sender(lambda r: None), config=QUEUES)
+    outbound = OutboundWorker(
+        client=valkey, providers={"whatsapp": sender(lambda r: None)}, config=QUEUES
+    )
     assert await outbound.run_once() == 0
 
 
@@ -850,3 +861,284 @@ async def test_a_conversation_pinned_to_an_older_version_keeps_running(
             await session.execute(sql("SELECT state FROM conversations"))
         ).scalar_one()
     assert state["script_version"] == 1, "the customer was moved onto a newer script"
+
+
+async def test_a_second_channel_is_not_sent_through_the_first_channels_adapter(valkey):
+    """The outbound worker read `job.channel` nowhere.
+
+    One stream, one consumer group, one provider — so the moment a second
+    channel exists, whichever sender drew the entry sends it. A Telegram reply
+    would go to Twilio with a chat id where a phone number belongs, and Twilio
+    would reject it: a customer silently unanswered, and a dead-letter row
+    blaming the number.
+    """
+    from moc.channels.base import OutboundJob, OutboundReceipt
+
+    class Recording:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.sent: list[str] = []
+
+        async def send(self, *, to: str, **kwargs) -> OutboundReceipt:
+            self.sent.append(to)
+            return OutboundReceipt(provider_message_id="x", status="ok")
+
+    whatsapp, telegram = Recording("whatsapp"), Recording("telegram")
+    worker = OutboundWorker(
+        client=valkey,
+        providers={"whatsapp": whatsapp, "telegram": telegram},
+        config=QUEUES,
+    )
+
+    for channel, to in (("whatsapp", "+201012345678"), ("telegram", "987654321")):
+        await valkey.xadd(
+            QUEUES["outbound"]["stream"],
+            {"payload": OutboundJob(
+                tenant_id=str(uuid.uuid4()), channel=channel, to=to, text="مرحبا"
+            ).to_json()},
+        )
+
+    assert await worker.run_once() == 2
+    assert whatsapp.sent == ["+201012345678"]
+    assert telegram.sent == ["987654321"]
+
+
+async def test_a_job_for_a_channel_with_no_provider_is_dead_lettered(valkey):
+    """Not retried forever, and above all not sent through whichever adapter
+    happens to be wired. A channel nobody configured is a configuration
+    problem for a person to see, and retrying it is how one bad row becomes a
+    sender that delivers nothing else."""
+    from moc.channels.base import OutboundJob
+
+    worker = OutboundWorker(
+        client=valkey, providers={}, config=QUEUES
+    )
+    await valkey.xadd(
+        QUEUES["outbound"]["stream"],
+        {"payload": OutboundJob(
+            tenant_id=str(uuid.uuid4()), channel="carrier-pigeon", to="x", text="hi"
+        ).to_json()},
+    )
+
+    assert await worker.run_once() == 0
+    dead = await valkey.xrange(QUEUES["outbound"]["dead_letter_stream"])
+    assert dead, "an unroutable job vanished instead of being dead-lettered"
+
+
+# ─────────────────────── Telegram, end to end ───────────────────────
+
+TELEGRAM_SECRET = "telegram-webhook-secret-value"  # noqa: S105 - a test fixture
+TELEGRAM_TOKEN = "123456:AAHfake-bot-token"  # noqa: S105 - a test fixture
+CHAT = "987654321"
+
+
+def telegram_update(**overrides) -> bytes:
+    return json.dumps(
+        {
+            "update_id": 5000,
+            "message": {
+                "message_id": 11,
+                "date": 1755859200,
+                "chat": {"id": int(CHAT), "type": "private"},
+                "text": "كام رسوم الساعة؟",
+                **overrides,
+            },
+        },
+        ensure_ascii=False,
+    ).encode()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def telegram_account(engine, account):
+    """The same tenant, with a Telegram bot connected as well."""
+    from sqlalchemy import text as sql
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from moc.channels.base import Channel, ChannelAccount
+
+    account_id = uuid.uuid4()
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        await s.execute(
+            sql(
+                "INSERT INTO channel_accounts "
+                "(id, tenant_id, channel, address, secret_ref, signing_secret) "
+                "VALUES (:id, :t, 'telegram', 'sinai_bot', 'telegram/sinai/bot', :secret)"
+            ),
+            {"id": account_id, "t": account.tenant_id, "secret": TELEGRAM_SECRET},
+        )
+        await s.commit()
+    return ChannelAccount(
+        id=account_id,
+        tenant_id=account.tenant_id,
+        channel=Channel.telegram,
+        account_ref="sinai_bot",
+        secret_ref="telegram/sinai/bot",
+    )
+
+
+class TwoChannelRegistry:
+    """Resolves both of this tenant's accounts, by channel and address.
+
+    A registry that ignored the channel would answer a Telegram lookup with a
+    WhatsApp account, and the secret it carries would then verify nothing.
+    """
+
+    def __init__(self, *accounts) -> None:
+        self._accounts = {(a.channel, a.account_ref): a for a in accounts}
+
+    async def resolve(self, *, channel, account_ref: str):
+        return self._accounts.get((channel, account_ref))
+
+
+class TwoSecrets:
+    """Both channels' secrets, by reference.
+
+    Keyed rather than branched: the first version returned a WhatsApp constant
+    that did not exist, and every test passed because no test ever asked for
+    the WhatsApp branch — a NameError sitting in a fake, waiting for the first
+    test that used both channels at once.
+    """
+
+    def for_ref(self, secret_ref: str) -> str:
+        return {SECRET_REF: SECRET, "telegram/sinai/bot": TELEGRAM_SECRET}[secret_ref]
+
+
+async def test_a_telegram_message_produces_a_sent_reply(
+    valkey, app_engine, account, telegram_account
+):
+    """Task 35's exit criterion, driven end to end.
+
+    Telegram webhook -> Valkey stream -> inbound worker -> orchestrator ->
+    outbound stream -> the Telegram sender -> the Bot API. Real streams, real
+    consumer groups, real acks; fakes only at the two provider edges.
+    """
+    from moc.channels.telegram import TelegramBot
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=TwoChannelRegistry(account, telegram_account),
+        queue=queue,
+        events=events,
+        secrets=TwoSecrets(),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        response = await http.post(
+            "/webhooks/telegram/sinai_bot",
+            content=telegram_update(),
+            headers={
+                "content-type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET,
+            },
+        )
+    assert response.status_code == 200
+
+    inbound = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES,
+    )
+    assert await inbound.run_once() == 1
+
+    sent = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 77}})
+
+    bot = TelegramBot(token=TELEGRAM_TOKEN, transport=httpx.MockTransport(capture))
+    outbound = OutboundWorker(
+        client=valkey, providers={"telegram": bot}, config=QUEUES
+    )
+    assert await outbound.run_once() == 1
+    await bot.aclose()
+
+    assert len(sent) == 1, "exactly one reply reached the Bot API"
+    assert sent[0]["chat_id"] == CHAT
+    assert sent[0]["text"], "the customer got words, not an empty message"
+
+
+async def test_a_telegram_webhook_without_the_secret_is_refused(
+    valkey, account, telegram_account
+):
+    """Anyone can POST to this path — it is a public URL with a guessable
+    account reference in it, which is exactly why the header is the thing that
+    authenticates."""
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=TwoChannelRegistry(account, telegram_account),
+        queue=queue,
+        events=events,
+        secrets=TwoSecrets(),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        unsigned = await http.post(
+            "/webhooks/telegram/sinai_bot",
+            content=telegram_update(),
+            headers={"content-type": "application/json"},
+        )
+        wrong = await http.post(
+            "/webhooks/telegram/sinai_bot",
+            content=telegram_update(),
+            headers={
+                "content-type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": "not-the-secret",
+            },
+        )
+        unknown = await http.post(
+            "/webhooks/telegram/some_other_bot",
+            content=telegram_update(),
+            headers={
+                "content-type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET,
+            },
+        )
+
+    assert (unsigned.status_code, wrong.status_code, unknown.status_code) == (403, 403, 403)
+
+    # And the WhatsApp half of the same app still works, on the same tenant.
+    # `TwoSecrets` claims to serve both channels; without this nothing asks it
+    # to, which is how its first version shipped with an undefined name in the
+    # branch no test reached.
+    assert (await deliver(app, form(MessageSid="SM-two-channel"))).status_code == 200
+
+
+async def test_an_edit_is_acknowledged_and_not_answered(
+    valkey, account, telegram_account
+):
+    """Telegram delivers edits, channel posts and callback queries down the
+    same webhook. Answering a customer's edit of a question they already asked
+    is worse than ignoring it, and 200 stops the retries."""
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=TwoChannelRegistry(account, telegram_account),
+        queue=queue,
+        events=events,
+        secrets=TwoSecrets(),
+    )
+    edit = json.dumps({"update_id": 6, "edited_message": {"message_id": 11}}).encode()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        response = await http.post(
+            "/webhooks/telegram/sinai_bot",
+            content=edit,
+            headers={
+                "content-type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET,
+            },
+        )
+    assert response.status_code == 200
+
+    # Acknowledged, and nothing enqueued. Asserted on the stream rather than
+    # by running a worker: "the worker found nothing" is also what a broken
+    # consumer group looks like.
+    assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0

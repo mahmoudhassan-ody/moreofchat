@@ -47,10 +47,13 @@ from moc.channels.base import (
     InboundQueue,
     SecretResolver,
 )
+from moc.channels.telegram import NotAMessage, verify_secret
+from moc.channels.telegram import parse_inbound as parse_telegram
 from moc.channels.twilio_wa import parse_inbound, verify_signature
 from moc.config_store import load
 
 _WHATSAPP = "channels/whatsapp"
+_TELEGRAM = "channels/telegram"
 _TWILIO_WHATSAPP_PATH = "/webhooks/twilio/whatsapp"
 _TO = "To"
 
@@ -124,6 +127,58 @@ def build_app(
             # delivered. Release the claim first — leaving it held would make
             # the retry we are about to ask for look like a duplicate, and the
             # message would be dropped by its own idempotency guard.
+            await events.release(message.provider_message_id)
+            return Response(status_code=_UNAVAILABLE)
+        return Response(status_code=_OK)
+
+    telegram = load(_TELEGRAM)
+
+    @app.post(telegram["webhook_path"])
+    async def telegram_update(account_ref: str, request: Request) -> Response:
+        """One path per bot, because an update does not say which bot got it.
+
+        There is no bot id anywhere in a Telegram update, so the account
+        reference is in the path. It is guessable on purpose: it selects which
+        secret to check and is not itself a credential — the same role the
+        WhatsApp address plays, and for the same reason (the secret cannot be
+        chosen without knowing the account).
+        """
+        raw_body = await request.body()
+
+        account = await registry.resolve(
+            channel=Channel.telegram, account_ref=account_ref
+        )
+        if account is None:
+            return Response(status_code=_FORBIDDEN)
+
+        # A bearer token, not a signature. It proves the sender knows the
+        # secret and says nothing about the body — see the adapter's docstring
+        # for why this is named for what it is.
+        if not verify_secret(
+            presented=request.headers.get(telegram["secret_header"]),
+            expected=secrets.for_ref(account.secret_ref),
+        ):
+            return Response(status_code=_FORBIDDEN)
+
+        try:
+            message = parse_telegram(raw_body=raw_body, account=account)
+        except NotAMessage:
+            # An edit, a channel post, a callback query. Acknowledged so
+            # Telegram stops retrying, and processed as nothing: answering a
+            # customer's edit of a question they already asked is worse than
+            # ignoring it.
+            return Response(status_code=_OK)
+        except ValueError:
+            # Malformed JSON from something that had the secret. 400 rather
+            # than 500: nothing here is broken, the body is.
+            return Response(status_code=_BAD_REQUEST)
+
+        if not await events.claim(message.provider_message_id):
+            return Response(status_code=_OK)
+
+        try:
+            await queue.publish(message)
+        except Exception:
             await events.release(message.provider_message_id)
             return Response(status_code=_UNAVAILABLE)
         return Response(status_code=_OK)

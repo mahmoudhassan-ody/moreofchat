@@ -1,0 +1,61 @@
+# Telegram — design §6.1, §6.2, demo plan Task 35.
+#
+# The cheapest channel to demo: no business verification, no template approval,
+# no 24-hour window. It is also the one where the security model is weakest,
+# and that is worth stating rather than discovering.
+#
+# ── How a Telegram webhook is authenticated, and how it is not ───────────────
+#
+# Telegram does not sign the body. `setWebhook` takes a `secret_token`, and
+# every delivery carries it back in the `X-Telegram-Bot-Api-Secret-Token`
+# header. So verification is a constant-time comparison of a bearer token, not
+# an HMAC over the request:
+#
+#   - it proves the sender knows the secret, not that the body is unmodified;
+#   - it is replayable by anyone who obtains the header;
+#   - there is nothing to bind it to this particular request.
+#
+# The WhatsApp adapter can do better because Twilio signs. This one cannot, and
+# writing a signature check that verified nothing would be worse than a
+# comparison that is honest about what it proves.
+#
+# ── The bot token is a secret in a URL ───────────────────────────────────────
+#
+# The Bot API puts it in the path: `https://api.telegram.org/bot<TOKEN>/send…`.
+# That means it appears in any exception carrying a URL — and httpx's
+# `raise_for_status` does exactly that, which would put a live bot token in the
+# dead-letter row of a queue. The adapter never lets a vendor error escape with
+# a URL in it; see the module docstring.
+
+version: 1
+
+api_base: https://api.telegram.org
+
+# Telegram's own header name. Config because it is the vendor's wire contract,
+# not our choice.
+secret_header: X-Telegram-Bot-Api-Secret-Token
+
+# The webhook path carries a NON-secret reference to the bot, because a
+# Telegram update does not say which bot received it — there is no bot id in
+# the payload. One path per bot is the vendor's own shape.
+#
+# The reference is guessable on purpose: it selects which secret to check, and
+# is not itself a credential. Same rule as the WhatsApp address.
+webhook_path: /webhooks/telegram/{account_ref}
+
+http:
+  connect_timeout_seconds: 5
+  read_timeout_seconds: 30
+
+# No service window. Telegram has no 24-hour rule and no template concept, so
+# freeform text is always allowed — which is why `send` here must not inherit
+# WhatsApp's refusal. A shared sender that assumed the window would refuse
+# every Telegram reply after a day of quiet, and the refusal would look like an
+# outage.
+service_window_hours: null
+
+# `parse_mode` is deliberately absent. Composition is told to write plain
+# sentences with no markdown (config/agent/composition.yaml), and asking
+# Telegram to parse markdown would make an underscore in an email address turn
+# half a reply italic — while a number with punctuation stuck to it becomes
+# invisible to the grounding gate.

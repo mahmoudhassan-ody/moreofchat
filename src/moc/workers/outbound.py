@@ -18,10 +18,11 @@ delivers nothing else.
 """
 
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from moc.channels.base import MessagingProvider, OutboundJob
-from moc.workers.streams import consumer_from_config
+from moc.workers.streams import TerminalFailure, consumer_from_config
 
 _CONSUMER = "outbound-1"
 
@@ -31,13 +32,13 @@ class OutboundWorker:
         self,
         *,
         client: Any,
-        provider: MessagingProvider,
+        providers: Mapping[str, MessagingProvider],
         config: dict[str, Any],
         consumer: str = _CONSUMER,
         clock: Any = time.monotonic,
     ) -> None:
         self._client = client
-        self._provider = provider
+        self._providers = dict(providers)
         self._clock = clock
         limit = config["rate_limit"]
         self._bucket_prefix = limit["key_prefix"]
@@ -52,12 +53,25 @@ class OutboundWorker:
 
     async def _handle(self, payload: str) -> None:
         job = OutboundJob.from_json(payload)
+        # **Routed by channel.** One provider was enough while one channel
+        # existed, and `job.channel` went unread — so the moment Telegram
+        # arrived, whichever sender drew the entry would send it. A Telegram
+        # reply handed to Twilio carries a chat id where a phone number
+        # belongs: Twilio rejects it, the customer is silently unanswered, and
+        # the dead-letter row blames the number.
+        provider = self._providers.get(job.channel)
+        if provider is None:
+            raise Unroutable(
+                f"no provider wired for channel {job.channel!r} — the reply cannot "
+                "be sent, and sending it through another channel's adapter would "
+                "deliver a chat id to a phone network"
+            )
         if not await self.take_token(job.tenant_id):
             # No token: raise so the entry stays pending and is retried on the
             # next pass. Sleeping here would hold the whole batch behind one
             # throttled tenant.
             raise RateLimited(f"tenant {job.tenant_id} has no tokens left")
-        await self._provider.send(
+        await provider.send(
             to=job.to,
             text=job.text,
             template=job.template,
@@ -94,4 +108,13 @@ class RateLimited(Exception):
     """Not an error in the send — a reason to try this entry again shortly."""
 
 
-__all__ = ["OutboundJob", "OutboundWorker", "RateLimited"]
+class Unroutable(TerminalFailure):
+    """No provider for this job's channel.
+
+    Terminal: buried on the first attempt rather than retried. A channel
+    nobody configured is a configuration problem for a person to see, and five
+    attempts at it are five delays in front of every other tenant's reply.
+    """
+
+
+__all__ = ["OutboundJob", "OutboundWorker", "RateLimited", "Unroutable"]

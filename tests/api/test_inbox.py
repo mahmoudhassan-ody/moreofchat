@@ -301,7 +301,9 @@ async def test_the_agent_reply_reaches_the_channel_adapter_through_the_sender(va
     )
     await valkey.xadd(stream, {"payload": job.to_json()})
 
-    worker = OutboundWorker(client=valkey, provider=RecordingProvider(), config=QUEUES)
+    worker = OutboundWorker(
+        client=valkey, providers={"whatsapp": RecordingProvider()}, config=QUEUES
+    )
     assert await worker.run_once() == 1
     assert len(sent) == 1
     assert sent[0]["text"] == "أهلاً، أنا منى من القبول"
