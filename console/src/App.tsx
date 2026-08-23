@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { fetchBrand, type Brand } from "./api/tenant";
 import { PoweredBy } from "./components/PoweredBy";
 import { Topbar } from "./components/Topbar";
+import { Knowledge } from "./screens/Knowledge";
 
 /**
  * The shell, and nothing else yet.
@@ -16,6 +17,16 @@ import { Topbar } from "./components/Topbar";
 export function App() {
   const { t } = useTranslation();
   const [brand, setBrand] = useState<Brand | null>(null);
+  /* The hash, not a router. The nav already links to `#inbox` and friends, and
+   * one dependency for five links is a dependency to justify later — when
+   * screens need nested routes, that is the moment to add one. */
+  const [screen, setScreen] = useState(() => window.location.hash.slice(1) || "inbox");
+
+  useEffect(() => {
+    const onHash = () => setScreen(window.location.hash.slice(1) || "inbox");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   /* Fetched once, in the shell, and passed down. Every screen shows the same
    * header, so a per-screen fetch would be one request per navigation for a
@@ -27,9 +38,9 @@ export function App() {
 
   return (
     <div className="app">
-      <Topbar active="inbox" brand={brand} />
+      <Topbar active={screen} brand={brand} />
       <main className="content">
-        <p>{t("language.note")}</p>
+        {screen === "knowledge" ? <Knowledge /> : <p>{t("language.note")}</p>}
         {/* `.mono` is for figures, never for prose: IBM Plex Mono carries no
             Arabic glyphs, so Arabic text placed in it falls back to whatever
             system serif exists — which renders, looks wrong, and reports

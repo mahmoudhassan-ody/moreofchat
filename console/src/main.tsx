@@ -5,6 +5,10 @@ import { App } from "./App";
 import { initialiseI18n } from "./i18n";
 
 import "./theme/tokens.css";
+/* Imported deliberately and visibly: the knowledge screen shows warnings about
+ * a corpus that will not work, which is a genuine failure rather than
+ * decoration. See theme/failure.css for why it is not in the palette. */
+import "./theme/failure.css";
 import "./shell.css";
 
 /* i18n first, then render. `initialiseI18n` sets `lang` and `dir` on the root

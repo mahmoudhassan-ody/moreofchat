@@ -174,3 +174,89 @@ body {
   font-size: 11.5px;
   text-align: start;
 }
+
+/* ── knowledge ─────────────────────────────────────────────── */
+
+.knowledge h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-block-end: 14px;
+}
+
+.upload {
+  display: grid;
+  gap: 8px;
+  max-inline-size: 640px;
+  margin-block-end: 18px;
+}
+
+.field {
+  padding-block: 8px;
+  padding-inline: 11px;
+  border: 1px solid var(--line-hot);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  /* `start`, not `left`: a placeholder pinned left sits at the wrong edge of
+   * an Arabic field, which looks like a styling choice rather than a bug. */
+  text-align: start;
+}
+
+.body {
+  min-block-size: 140px;
+  resize: vertical;
+}
+
+.preview {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 14px;
+  margin-block-end: 18px;
+}
+
+.count {
+  font-weight: 600;
+  margin-block-end: 10px;
+}
+
+/* The one place the failure colour is used, and it is imported explicitly. */
+.warning {
+  border-inline-start: 2px solid var(--stop);
+  padding-inline-start: 10px;
+  margin-block-end: 8px;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.chunk {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 10px;
+  margin-block-end: 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  text-align: start;
+}
+
+.documents {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.documents li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-block: 8px;
+  border-block-end: 1px solid var(--line);
+}
+
+.result {
+  margin-block-end: 14px;
+  color: var(--ink-2);
+}

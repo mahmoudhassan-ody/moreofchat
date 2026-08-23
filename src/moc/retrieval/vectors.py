@@ -43,16 +43,12 @@ from qdrant_client import models
 
 from moc.config_store import load
 
+# Shapes and ids with no vendor SDK behind them, so a caller needing a
+# point id does not pull qdrant_client into its import graph. Re-exported
+# here because this module is still the place people look for them.
+from moc.retrieval.records import VectorPoint, point_id_for
+
 _DEFAULTS = "retrieval/defaults"
-
-
-@dataclass(frozen=True)
-class VectorPoint:
-    """One embedded chunk, before it acquires a tenant."""
-
-    chunk_id: str
-    vector: list[float]
-    payload: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -80,18 +76,6 @@ class ReconciliationReport:
     @property
     def in_sync(self) -> bool:
         return not self.missing and not self.orphaned
-
-
-def point_id_for(tenant_id: uuid.UUID, chunk_id: str) -> uuid.UUID:
-    """UUIDv5 over tenant and chunk together.
-
-    Both halves are required. Chunk ids are unique per tenant only — two
-    tenants ingesting the same source file produce the same chunk id — so a
-    point id derived from the chunk alone would let one tenant's upsert
-    silently overwrite another's point. That is a cross-tenant *write*, and it
-    would arrive through the mechanism that exists to make replay safe.
-    """
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant_id}/{chunk_id}")
 
 
 @dataclass(frozen=True)

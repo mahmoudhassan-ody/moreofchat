@@ -187,6 +187,27 @@ class _TenantScope:
         await self.client.wait_for_task(task.task_uid)
         return len(documents)
 
+    async def delete(self, *, point_ids: Sequence[str]) -> int:
+        """Remove named documents. By primary key, which is `point_id`.
+
+        Added for Task 31: removing a document from the console has to remove
+        it from the lexical arm too, and the only delete this repository had
+        was `delete_all`. Without it a deleted fee stayed searchable in
+        Meilisearch while being gone from Postgres and Qdrant — one arm of
+        fusion still answering with a figure the tenant withdrew, which reads
+        as the bot inventing it.
+
+        The point id already carries the tenant (see `vectors.point_id_for`),
+        so naming another tenant's document means first deriving its id from
+        that tenant's uuid — which is the thing a caller does not have.
+        """
+        if not point_ids:
+            return 0
+        index = self.client.index(self.index)
+        task = await index.delete_documents(ids=list(point_ids))
+        await self.client.wait_for_task(task.task_uid)
+        return len(point_ids)
+
     async def delete_all(self) -> None:
         """Only this tenant's documents. Scoped like everything else — an
         unscoped clear is one tenant wiping the shared index."""
@@ -276,6 +297,11 @@ class MeilisearchRepository:
         a form the synonym keys no longer match.
         """
         return await self._scope(tenant_id, vertical).search(query=query, limit=limit)
+
+    async def remove(
+        self, *, tenant_id: UUID, vertical: str, point_ids: Sequence[str]
+    ) -> int:
+        return await self._scope(tenant_id, vertical).delete(point_ids=point_ids)
 
     async def clear(self, *, tenant_id: UUID, vertical: str) -> None:
         await self._scope(tenant_id, vertical).delete_all()

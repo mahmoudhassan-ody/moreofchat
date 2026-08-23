@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.config_store import load
 from moc.retrieval.chunker import chunk_text
+from moc.retrieval.records import point_id_for
 
 _DEFAULTS = "retrieval/defaults"
 
@@ -90,15 +91,11 @@ class IngestResult:
     chunks: list[StoredChunk] = field(default_factory=list)
 
 
-def point_id_for(chunk_id: str, *, config: dict[str, Any] | None = None) -> uuid.UUID:
-    """UUIDv5 of the chunk id (§7.1).
-
-    Derived, never generated. A random id would make every replay a fresh
-    insert, and nothing would notice until search returned the same passage
-    twice — by which time the duplicates outnumber the originals.
-    """
-    settings = config or load(_DEFAULTS)
-    return uuid.uuid5(uuid.UUID(settings["outbox"]["point_namespace"]), chunk_id)
+#: The current tenant, from the session rather than from a parameter — the
+#: same rule every other query in this codebase follows. The point id needs it
+#: (see `vectors.point_id_for`), and a `tenant_id` argument here would be one
+#: more place for a caller to pass the wrong one.
+_CURRENT_TENANT = text("SELECT nullif(current_setting('moc.tenant_id', true), '')::uuid")
 
 
 _UPSERT_DOCUMENT = text(
@@ -172,6 +169,7 @@ async def ingest_document(
     leaves no half-ingested document behind.
     """
     settings = config or load(_DEFAULTS)
+    tenant_id = (await session.execute(_CURRENT_TENANT)).scalar_one()
     document_id = (
         await session.execute(
             _UPSERT_DOCUMENT,
@@ -190,7 +188,7 @@ async def ingest_document(
     stored: list[StoredChunk] = []
 
     for ordinal, source in enumerate(prepared):
-        point_id = point_id_for(source.chunk_id, config=settings)
+        point_id = point_id_for(tenant_id, source.chunk_id, config=settings)
         await session.execute(
             _UPSERT_CHUNK,
             {

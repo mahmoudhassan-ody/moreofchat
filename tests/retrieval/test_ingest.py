@@ -172,7 +172,7 @@ async def test_the_outbox_drains_to_empty_on_success(app_engine, tenant):
     assert seen
 
 
-async def test_point_ids_are_uuid5_of_chunk_id_so_replay_is_idempotent():
+async def test_point_ids_are_uuid5_of_tenant_and_chunk_so_replay_is_idempotent():
     """§7.1. A replay after a crash must upsert the same point, not add one.
 
     Derived rather than random, and asserted against uuid5 directly — a
@@ -180,9 +180,58 @@ async def test_point_ids_are_uuid5_of_chunk_id_so_replay_is_idempotent():
     detects until search returns the same passage twice.
     """
     namespace = uuid.UUID(CONFIG["outbox"]["point_namespace"])
-    assert point_id_for("sinai_fees_ar") == uuid.uuid5(namespace, "sinai_fees_ar")
-    assert point_id_for("sinai_fees_ar") == point_id_for("sinai_fees_ar")
-    assert point_id_for("sinai_fees_ar") != point_id_for("sinai_fees_en")
+    tenant = uuid.uuid4()
+    assert point_id_for(tenant, "sinai_fees_ar") == uuid.uuid5(
+        namespace, f"{tenant}/sinai_fees_ar"
+    )
+    assert point_id_for(tenant, "sinai_fees_ar") == point_id_for(tenant, "sinai_fees_ar")
+    assert point_id_for(tenant, "sinai_fees_ar") != point_id_for(tenant, "sinai_fees_en")
+
+
+async def test_two_tenants_ingesting_the_same_file_get_different_points():
+    """The reason the tenant is in the hash, and the reason there is now only
+    one function computing this.
+
+    Chunk ids are unique per tenant only — `fees-2026#0` is whatever the
+    tenant called their file. A point id derived from the chunk alone lets one
+    tenant's upsert overwrite another's point: a cross-tenant WRITE, arriving
+    through the mechanism that exists to make replay safe.
+    """
+    a, b = uuid.uuid4(), uuid.uuid4()
+    assert point_id_for(a, "fees-2026#0") != point_id_for(b, "fees-2026#0")
+
+
+async def test_the_outbox_records_the_point_id_qdrant_will_actually_use(app_engine, tenant):
+    """There used to be two derivations and they disagreed.
+
+    `kb_outbox.point_id` held a hash of the chunk id alone; the vector
+    repository upserted under a hash of tenant and chunk. Nothing drained the
+    outbox, so the column was unread and the disagreement invisible — and the
+    first sync worker would have read the point id off the row it is stored on
+    and reintroduced the collision above.
+    """
+    async with tenant_session(app_engine, tenant.id) as session:
+        result = await ingest_document(
+            session,
+            SourceDocument(
+                doc_id="point-id-check",
+                vertical="education",
+                text="جملة أولى. جملة ثانية.",
+            ),
+        )
+        rows = (
+            await session.execute(
+                sql(
+                    "SELECT chunk_id, point_id FROM kb_outbox "
+                    "WHERE chunk_id LIKE 'point-id-check%' ORDER BY chunk_id"
+                )
+            )
+        ).all()
+
+        assert rows
+        for row in rows:
+            assert row.point_id == point_id_for(tenant.id, row.chunk_id)
+        assert {c.point_id for c in result.chunks} == {r.point_id for r in rows}
 
 
 # ─────────────────────────── replay ───────────────────────────

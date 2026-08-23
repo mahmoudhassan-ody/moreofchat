@@ -21,5 +21,23 @@
   },
   "brand": {
     "logoAlt": "The tenant's logo"
+  },
+  "knowledge": {
+    "title": "Knowledge",
+    "docId": "Document id",
+    "docTitle": "Title",
+    "body": "Paste the document text",
+    "preview": "Preview chunks",
+    "confirm": "Confirm and ingest",
+    "chunks": "chunks",
+    "unchanged": "Unchanged — nothing to ingest",
+    "ingested": "Ingested",
+    "remove": "Remove",
+    "warning": {
+      "empty": "No text was found. Nothing would be ingested.",
+      "no_sentence_boundaries": "No sentence ends were found, so the whole document became one chunk. A table exported to plain text does this, and every search then returns all of it.",
+      "oversized": "One chunk is far larger than the target and will rank against everything.",
+      "bare_figures": "Figures here carry no currency or unit — a column whose header row did not come with it. The bot cannot label these numbers."
+    }
   }
 }

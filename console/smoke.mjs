@@ -233,6 +233,74 @@ check(
 check("header names the tenant", await page.locator(".tenant b").innerText(), "Sinai University");
 check("powered-by is on the page", (await page.locator(".powered").innerText()).length > 0, true);
 
+/* ── the knowledge screen ──────────────────────────────────────────────
+ *
+ * The order is the property: preview, THEN confirm. A screen that ingests
+ * first and reports afterwards has already spent the money and already put a
+ * broken corpus behind the bot, and no amount of reporting undoes either. */
+let ingested = 0;
+await page.route("**/knowledge/preview", (route) =>
+  route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      chunkCount: 12,
+      sample: [{ ordinal: 0, content: "رسوم الساعة المعتمدة لكلية الهندسة 1400 جنيه." }],
+      warnings: [
+        { name: "no_sentence_boundaries", ordinal: 0, reason: "one chunk, no terminators" },
+      ],
+      contentHash: "abc",
+      unchanged: false,
+    }),
+  }),
+);
+await page.route("**/knowledge/documents", (route) => {
+  if (route.request().method() === "POST") {
+    ingested += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ docId: "fees", chunkCount: 12, unchanged: false, failures: [] }),
+    });
+  }
+  return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+});
+
+await page.goto(`http://127.0.0.1:${PORT}/#knowledge`, { waitUntil: "load" });
+await page.waitForSelector(".knowledge", { timeout: 5000 });
+
+check("confirm does not exist before a preview", await page.locator(".preview").count(), 0);
+check("and nothing has been ingested", ingested, 0);
+
+await page.locator(".upload .field").first().fill("fees-2026");
+await page.locator(".upload .body").fill("رسوم الساعة المعتمدة 1400 جنيه.");
+await page.locator(".upload .act").click();
+await page.waitForSelector(".preview", { timeout: 5000 });
+
+check("the preview shows the chunk count", await page.locator(".count .mono").innerText(), "12");
+check("and the chunk text itself", (await page.locator(".chunk").innerText()).includes("1400"), true);
+/* Translated from the warning's NAME, not echoed from the wire. The reason
+ * string in the response is written in English by whoever added the check;
+ * the person reading this screen is an admissions officer in Egypt.
+ *
+ * The marker is "no terminators", which appears only in the stubbed wire
+ * reason. An earlier version of this check looked for "one chunk" and could
+ * not tell the two apart — the catalogue entry contains that phrase too. */
+const warning = await page.locator(".warning").innerText();
+check("the warning is translated, not echoed", warning.includes("no terminators"), false);
+check(
+  "and it is the catalogue's wording",
+  warning.includes("No sentence ends were found"),
+  true,
+);
+check("still nothing ingested", ingested, 0);
+
+await page.locator(".preview .act").click();
+await page.waitForSelector(".result", { timeout: 5000 });
+check("confirm ingests exactly once", ingested, 1);
+
+await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load" });
+
 check("no page errors", problems, []);
 
 await browser.close();

@@ -171,6 +171,9 @@ class KbDocument(Base):
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     vertical: Mapped[str] = mapped_column(Text)
     lang: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: sha256 over title and body. NULL means the row predates migration 0014,
+    #: so the first re-upload is a full ingest rather than a false "unchanged".
+    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
