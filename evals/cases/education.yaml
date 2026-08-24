@@ -560,3 +560,82 @@
     Career advice dressed as a factual question. Must decline warmly and
     offer an in-scope next step — the programme lists — rather than a
     cold wall.
+
+- id: edu-0018
+  vertical: education
+  source: synthetic
+  category: multi_turn_slots
+  tenant_fixture: sinai_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "الحد الأدنى للقبول في طب الأسنان في العريش بالمعادلة العربية؟"
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the Arish dentistry threshold for the Arab equivalent certificate"
+          required: true
+          source_chunk: sinai_admission_thresholds_2026_ar
+        - id: f2
+          claim: "the year the thresholds apply to"
+          required: true
+          source_chunk: sinai_admission_thresholds_2026_ar
+      forbidden_claims:
+        - "the Qantara figure"
+        - "the Azhari secondary figure"
+      expected_slots:
+        {branch: arish, faculty: dentistry, certificate: arab_equivalent}
+
+    - user: "وفي القنطرة؟"
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the Qantara dentistry threshold for the Arab equivalent certificate"
+          required: true
+          source_chunk: sinai_admission_thresholds_2026_ar
+      forbidden_claims:
+        - "the Arish figure — the customer has moved to the other branch"
+        - "a threshold presented for Arish when Qantara was asked about"
+        - "the Azhari secondary figure"
+        - "both branches' figures given as though the question were about both"
+      expected_slots:
+        {branch: qantara, faculty: dentistry, certificate: arab_equivalent}
+  gold_chunks: [sinai_admission_thresholds_2026_ar]
+  notes: >
+    **Education's half of the systematic hole re-0026 names.** Every education
+    turn in this suite either opens a conversation or adds to one: edu-0007
+    gathers three slots over three turns and never displaces any of them. A
+    customer who changes their mind mid-thread was untested in this vertical
+    entirely, and both findings the demo rehearsal produced were exactly that.
+
+    **This is not re-0026's mechanism, and cannot be.** Task 42d is a *wider*
+    slot invalidating a narrower held one, which needs a containment hierarchy
+    among the slots — a compound sits inside a city. Education has none:
+    `branch` and `faculty` are orthogonal, a faculty is taught at both
+    campuses, and edu-0007 turn 2 correctly *keeps* the faculty when a branch
+    arrives. Declaring a `narrows:` here to make the two cases symmetric would
+    be inventing a relation the domain does not have. So this covers the same
+    class — displacement on a later turn — by the mechanism education actually
+    has: a new value replacing a held one on the same slot.
+
+    **Turn 2 is one word and no correction.** `وفي القنطرة؟` names a branch and
+    nothing else. It does not say "not Arish", which is the only correction
+    shape the extraction prompt carried before Task 42b, and it is how the
+    question is asked out loud.
+
+    The two branches are in one chunk with **different** figures for this
+    faculty and certificate — 75% at Arish, 77% at Qantara. So a stale branch
+    does not produce an obvious error: it produces a real percentage, from the
+    right document, for the wrong campus. `hallucinated_figure_rate` cannot see
+    it, because nothing was hallucinated. That is the same class of failure as
+    re-0025's payment plan and the reason both cases pin the wrong figure as a
+    forbidden claim rather than trusting a gate to catch it.
+
+    Deliberately not `general_secondary`: the chunk states Azhari and
+    equivalent thresholds only, and asking for the plain Egyptian secondary
+    figure is a separate known defect — see edu-0007's judge notes in the
+    2026-08-24 baseline.

@@ -999,3 +999,79 @@
     زايد` was returning `city` in BOTH `slots` and `clear_slots`, which the
     extractor refuses outright, so the prompt's own worked example was a
     failed turn. Replacing a value is a set, never a clear.
+
+- id: re-0026
+  vertical: realestate
+  source: synthetic
+  category: multi_turn_slots
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "عايز شقة في مدينتي"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {compound: "Madinaty", property_type: apartment}
+      expected_facts:
+        - id: f1
+          claim: "an available Madinaty apartment, at the catalogue's price"
+          required: true
+      forbidden_claims:
+        - "a price not present in the catalogue"
+      expected_slots: {compound: "Madinaty", property_type: apartment}
+
+    - user: "في استوديو في الساحل الشمالي؟"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {city: "North Coast", property_type: studio}
+      expected_facts:
+        - id: f1
+          claim: "that no studio is available, naming the North Coast"
+          required: true
+        - id: f2
+          claim: "a studio that does exist, naming its compound specifically"
+          required: false
+      forbidden_claims:
+        - "a chalet, townhouse or villa offered as a studio"
+        - "Madinaty named as the place with no studio — the customer left it"
+        - "a studio described as being on the North Coast — the catalogue has none"
+        - "any compound name not present in the catalogue"
+      expected_slots: {city: "North Coast", property_type: studio}
+  gold_chunks: []
+  notes: >
+    **The suites' systematic hole, as a case.** Both rehearsal-only findings
+    were multi-turn *displacement* — a later turn moving the customer off a
+    held slot — and every multi-turn case in both suites accumulates instead.
+    re-0018 gathers three slots, edu-0007 gathers three, re-0001 turn 3 clears
+    two but only because the customer said "in any other location" out loud.
+    Nothing tested a value being replaced or invalidated without the customer
+    announcing it, which is how customers actually talk.
+
+    Turn 2 is Task 42d. The customer names a region; `compound` was held from
+    turn 1 and is inside a different one. `expected_slots` is an equality
+    assertion, so it fails if `Madinaty` survives — and before 42d it did: the
+    search filtered on compound AND city, the intersection was empty, and the
+    reply was "no studio in Madinaty, we have a studio in ZED East". Neither
+    place is on the North Coast, and the region the customer named appeared
+    nowhere in the answer.
+
+    The forbidden claims name that specific wrong reply. It breaks no gate a
+    rate can see — no invented compound, no sold unit, no substituted type,
+    every figure traceable to a real row — which is why it survived a 10/10
+    rehearsal until the check required the region to be named.
+
+    The catalogue holds 8 studios and none on the North Coast, which holds
+    chalets, townhouses and villas. So the honest reply is re-0001 turn 2's
+    owner shape: no studio in the place asked about, a studio in a place named
+    specifically. f2 is optional because "we have none there" is already a
+    complete answer; naming the alternative is the better one.

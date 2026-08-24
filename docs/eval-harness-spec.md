@@ -345,6 +345,46 @@ reassuring: no multi-turn case in either suite names a city while holding a
 compound, which is precisely why the rehearsal found this and the suites did
 not. `tests/agent/test_script_engine.py` holds the rule, sabotage-verified.
 
+#### Re-baseline, 2026-08-24 — two cases for the displacement hole
+
+Both suites gained one multi-turn case, so both denominators moved.
+
+| Suite | Metric | Value |
+|---|---|---|
+| real estate | `overall_accuracy` | 100.0% (100.0–100.0) — 22 cases, no verdict changes |
+| real estate | every commercial gate | 0.0% (0.0–0.0) |
+| real estate | `unresolved_type_rate` (tracked) | 28.6% (28.6–28.6) |
+| education | `overall_accuracy` | 83.3% (72.2–94.4) — spread 22.2, **not measurable at 18 cases** |
+| education | `expected_action_accuracy` | 90.5% (85.7–95.2) |
+| education | `forbidden_claim_violations` | 0.0% (0.0–0.0) |
+| education | `hallucinated_figure_rate` | 2.1% (0.0–6.2) |
+| education | `register_accuracy` | 98.4% (95.2–100.0) |
+| education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
+| education | `p95_latency_ms` | 5137 ms (4692–5720) — measurable, inside budget |
+
+**re-0026 passes 3 of 3.** It is Task 42d's turn as a case, and it would have
+failed on every run made before this morning.
+
+**edu-0018 fails 3 of 3, on its first run, and that is the case working.** It
+was written to cover a hole rather than to guard a fix, and it found one
+immediately — see Task 42e in the demo plan. Turn 2, `وفي القنطرة؟`, returns
+the fallback disambiguation list instead of the Qantara threshold.
+
+**Read nothing into education's level.** 83.3% against 86.3% spans a 22.2-point
+spread — the widest this suite has recorded — and five cases changed verdict
+across the three runs against two the run before. One newly-failing case
+accounts for about 5.6 points of an 18-case suite and the rest is noise, so the
+only supportable statements are the failure list and the two gates that
+settled: `forbidden_claim_violations` at 0.0% and `slot_retention_accuracy` at
+100.0%.
+
+`slot_retention_accuracy` at 100.0% while edu-0018 fails is worth pausing on.
+The metric measures whether held slots *survive*, and they do — the state after
+turn 2 is correct. What fails is the routing decision made from that state. A
+suite can retain every slot perfectly and still answer the wrong question, and
+this is the metric that says so while the customer is being asked to pick from
+a list.
+
 
 #### Where the 8990 ms goes (2026-08-21, run 3 of 3)
 

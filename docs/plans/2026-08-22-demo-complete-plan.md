@@ -484,6 +484,86 @@ either suite names a city while holding a compound. That absence is why the
 rehearsal found this and the suites did not, and it is the same shape as the
 gap 42b closed — worth a case per vertical rather than a note here.
 
+---
+
+### The displacement hole, closed as cases — DONE 2026-08-24
+
+**re-0026** and **edu-0018**, one per vertical. Both rehearsal-only findings
+(42b's compound precedence, 42d's stale compound) were multi-turn
+*displacement* — a later turn moving the customer off a held slot — and every
+multi-turn case in both suites accumulated instead. re-0018 gathers three
+slots, edu-0007 gathers three, and re-0001 turn 3 clears two only because the
+customer said "in any other location" out loud. Nothing tested a value being
+replaced or invalidated without the customer announcing it, which is how
+people actually talk.
+
+**They are not the same mechanism, and cannot be.** 42d is a *wider* slot
+invalidating a narrower held one, which needs a containment hierarchy among
+the slots — a compound sits inside a city. Education has none: `branch` and
+`faculty` are orthogonal, a faculty is taught at both campuses, and edu-0007
+turn 2 correctly *keeps* the faculty when a branch arrives. Declaring a
+`narrows:` there to make the pair symmetric would invent a relation the domain
+does not have. So education covers the same class by the mechanism it actually
+has — a new value replacing a held one on the same slot.
+
+re-0026 passes 3 of 3. edu-0018 fails 3 of 3 and found Task 42e below on its
+first run, which is what a case written to cover a hole is for.
+
+---
+
+### Task 42e: a bare slot value cannot change a held slot
+
+**Found by edu-0018 immediately, and it is the same hole one layer down.**
+
+`الحد الأدنى للقبول في طب الأسنان في العريش بالمعادلة العربية؟` answers 75%.
+`وفي القنطرة؟` — a branch and nothing else — returns the fallback
+disambiguation list: *"تقصد أنهي واحدة فيهم؟"* with three unrelated Qantara
+titles. The customer asked a threshold question one turn ago, named the other
+campus, and was asked to pick from a menu.
+
+**Mechanism, read from `ScriptEngine._resumed`.** A turn carrying slots and no
+intent resumes the node it came from — that is how edu-0007's bare `العريش`
+works. Resumption is defined as filling a slot the node is *still waiting for*:
+
+```python
+pending = (requires_slots | requires_any_slot) - set(state.slots)
+return state.node if pending & set(turn.slots) else None
+```
+
+`branch` is already held, so it is not pending, so nothing intersects, so the
+turn falls to the fallback node and clarifies. The docstring states the
+assumption outright — *"repeating a slot the node already holds answers
+nothing"* — and that is true of a repeat and false of a replacement. The two
+are the same shape at the type level and opposite in meaning, which is exactly
+the conflation Task 42b fixed in the extraction prompt and 42d fixed in the
+merge. This is its third appearance.
+
+`slot_retention_accuracy` is 100.0% on the run that fails this case. The state
+after turn 2 is correct — `{branch: qantara, faculty: dentistry, certificate:
+arab_equivalent}`. Extraction is right, the merge is right, and the routing
+decision made from them is wrong.
+
+**Recommended fix.** Resume when the turn's slots intersect the node's declared
+slots at all, not only the pending ones — a value for a slot this node reads is
+this node's business whether or not it already had one. The docstring's real
+concern is a *topic change*, and that is already handled by the intent being
+non-null; a bare value for a slot the node does not read still falls back.
+
+**Tests first:**
+
+```python
+def test_a_bare_value_replacing_a_held_slot_resumes_the_node()
+def test_a_bare_value_filling_a_missing_slot_still_resumes()   # edu-0007
+def test_a_bare_value_for_a_slot_this_node_does_not_read_still_falls_back()
+def test_a_turn_carrying_an_intent_still_routes_by_intent()
+```
+
+**Acceptance:** edu-0018 passes without its expectations being relaxed, and
+edu-0007 still passes.
+
+**Not attempted here.** The plan's code side was called complete before this
+case was written; it is not, and this is the one item outstanding.
+
 
 ---
 
