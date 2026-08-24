@@ -218,6 +218,45 @@ Twilio's endpoint shipped 2026-06-14 and needs `messageId`, which we already car
 
 Sinai's KB and the broker's catalogue, the day before — not during. Their column names will not match the fixtures. This is where surprises live.
 
+### Task 41b: Inventory provenance
+
+The source pane is blank for two of the three tenants, and it is the thing the
+demo is built around.
+
+A chunk-grounded figure links to the chunk that grounded it (Task 32). An
+inventory figure has the same promise and a different shape: a price traces to
+a **row** — a unit id, a compound, and the `as_of` that row was snapshotted at
+— and an instalment traces to a **calculator output** with the inputs it ran
+with. Both are computed today and both are discarded at the worker boundary:
+`InventoryTurn` carries `presented_unit_ids` and `computation`, and the inbound
+worker writes `provenance=None` because the pane renders chunks.
+
+**Tests first:**
+
+```python
+async def test_a_price_traces_to_the_row_it_was_read_from()
+async def test_an_instalment_traces_to_the_calculator_inputs_that_produced_it():
+    """Not to the row alone. §19.3: the arithmetic is the tool's, and the
+    evidence for a number the model never composed is the computation."""
+async def test_the_as_of_travels_with_the_figure_rather_than_beside_it():
+    """A price separated from its date is a price the tenant cannot stand
+    behind, and `asof_disclosure_rate` grades the reply rather than the pane."""
+async def test_a_figure_with_no_row_and_no_computation_behind_it_is_not_sent():
+    """The same gate the chunk path already has, on the other grounding mode."""
+def test_the_source_pane_renders_a_row_and_a_computation()
+```
+
+**Notes:** one `figures` list, one renderer, `source: "inventory" | "calculator"`
+beside the existing `"chunk" | "script"`. Not a second provenance shape — a
+second shape is a second thing the pane can fail to render, and the promise
+being made to all three tenants is the same one.
+
+**Acceptance:** a broker's price in the inbox opens the unit row and its
+snapshot date; a payment plan opens the calculator's inputs and output. Proven
+by removing the trace and watching the figure fail to send.
+
+---
+
 ### Task 42: Rehearsal
 
 Run the demo script end to end on the real tenants. Every question you plan to ask, plus three you don't.
@@ -233,7 +272,9 @@ Each line needs evidence, not a tick.
 - [ ] Console usable in Arabic and English, toggled per user, RTL correct in both
 - [ ] A document uploaded through the console becomes answers
 - [ ] A handoff appears in the inbox, an agent replies, the customer receives it
-- [ ] A grounded figure in the inbox links to the chunk that grounded it
+- [ ] A grounded figure in the inbox links to what grounded it — the chunk
+      for a document answer, the unit row and its `as_of` for a price, the
+      calculator's inputs for an instalment
 - [ ] Cost per conversation shown from the ledger, no unpriced rows
 - [ ] Cross-tenant tests proven to fail when isolation is removed — auth, inbox, upload, analytics
 - [ ] The rehearsal run completed with no manual intervention

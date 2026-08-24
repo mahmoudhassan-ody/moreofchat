@@ -28,3 +28,67 @@ query:
   # Cheapest first. A customer who named a budget is shopping under it, and
   # leading with the most expensive match reads as upselling.
   order_by: price
+
+# ── Reading a broker's own export — demo plan Task 41 ────────────────────────
+#
+# The fixture has canonical field names. A real export does not: it is whatever
+# the broker's CRM or their sales admin's spreadsheet calls things, in either
+# language, often both in one file. The algorithm is code and the vocabulary is
+# data (§19.2), so the aliases live here and grow as real sheets arrive.
+#
+# Matched after normalization — case-folded, punctuation stripped, Arabic alef
+# and ta-marbuta forms unified — so `Price (EGP)`, `price egp` and `السعر`
+# reach the same entry without three list entries each.
+import:
+  # Without these a row cannot be offered at all: no id means no identity to
+  # upsert on, no price means a unit the bot can state nothing about, and no
+  # status means the availability filter has nothing to filter.
+  required: [unit_id, property_type, price, availability]
+
+  aliases:
+    unit_id: [unit id, unit code, code, ref, reference, unit no, unit number,
+              كود, كود الوحدة, الكود, رقم الوحدة]
+    property_type: [type, unit type, property type, category,
+                    النوع, نوع الوحدة, نوع العقار]
+    compound: [compound, project, development, scheme,
+               المشروع, الكمبوند, المجمع]
+    area: [area, district, neighbourhood, location, المنطقة, الحي]
+    city: [city, governorate, المدينة, المحافظة]
+    price: [price, total price, price egp, asking price, amount,
+            السعر, السعر الكلي, اجمالي السعر, الاجمالي]
+    currency: [currency, ccy, العملة]
+    unit_area_sqm: [bua, built up area, area sqm, size, sqm, m2,
+                    المساحة, مساحة الوحدة, المسطح]
+    bedrooms: [beds, bedrooms, rooms, br, الغرف, عدد الغرف, غرف]
+    bathrooms: [baths, bathrooms, wc, الحمامات, عدد الحمامات]
+    finish: [finishing, finish, condition, التشطيب, حالة التشطيب]
+    furnished: [furnished, مفروش]
+    availability: [status, availability, unit status, state,
+                   الحالة, الحاله, حالة الوحدة, التوفر]
+    delivery_date: [delivery, delivery date, handover, التسليم, موعد التسليم]
+    project_status: [project status, stage, مرحلة المشروع]
+    listing_kind: [sale rent, offer type, listing type, نوع العرض]
+    title: [title, description, unit name, الوصف, اسم الوحدة]
+    address: [address, full address, العنوان]
+
+  # Sheet value -> the status this platform stores. `available_status` above is
+  # the only one that can be offered.
+  #
+  # **A value absent from this map is never available.** It is stored verbatim,
+  # which means it can never equal `available_status` and can never be offered,
+  # and the import preview names it and counts it so the broker can add it.
+  # Defaulting an unrecognised status to available is how a sold unit reaches a
+  # second buyer, and it is the failure with no signal: the row imports, the
+  # bot answers, and only the buyer finds out.
+  status_aliases:
+    available: [available, availble, free, vacant, ready, open,
+                متاح, متاحة, متاحه, شاغر, متوفر]
+    reserved: [reserved, on hold, hold, pending, booked,
+               محجوز, محجوزة, محجوزه, تحت الحجز]
+    sold: [sold, closed, done, مباع, مباعة, مباعه, تم البيع, اتباعت]
+
+  # Excel writes this at the start of a UTF-8 file. Left in, the first header
+  # becomes `﻿Unit Code` and the id column silently fails to map — which
+  # presents as "every row refused for a missing id" on the one file format
+  # every broker actually sends.
+  strip_byte_order_mark: true
