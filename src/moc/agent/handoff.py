@@ -37,11 +37,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 CUSTOMER, BOT, AGENT = "customer", "bot", "agent"
 
 _OPEN = text("""
-INSERT INTO handoffs (id, tenant_id, conversation_id, reason, resume_state)
-SELECT :id, c.tenant_id, c.id, :reason, cast(:resume_state as jsonb)
+INSERT INTO handoffs (
+  id, tenant_id, conversation_id, reason, resume_state,
+  team, lead_qualified, lead_score
+)
+SELECT :id, c.tenant_id, c.id, :reason, cast(:resume_state as jsonb),
+       :team, :lead_qualified, :lead_score
 FROM conversations c WHERE c.id = :conversation_id
 RETURNING id, conversation_id, reason, status, resume_state,
-          opened_at, claimed_at, claimed_by, returned_at
+          opened_at, claimed_at, claimed_by, returned_at,
+          team, lead_qualified, lead_score
 """)
 
 _CLAIM = text("""
@@ -49,14 +54,16 @@ UPDATE handoffs
 SET claimed_at = now(), claimed_by = :agent_id, status = 'claimed'
 WHERE id = :id AND status <> 'returned'
 RETURNING id, conversation_id, reason, status, resume_state,
-          opened_at, claimed_at, claimed_by, returned_at
+          opened_at, claimed_at, claimed_by, returned_at,
+          team, lead_qualified, lead_score
 """)
 
 _RETURN = text("""
 UPDATE handoffs SET returned_at = now(), status = 'returned'
 WHERE id = :id AND status <> 'returned'
 RETURNING id, conversation_id, reason, status, resume_state,
-          opened_at, claimed_at, claimed_by, returned_at
+          opened_at, claimed_at, claimed_by, returned_at,
+          team, lead_qualified, lead_score
 """)
 
 _RESTORE_CURSOR = text(
@@ -66,6 +73,7 @@ _RESTORE_CURSOR = text(
 _LIST_OPEN = text("""
 SELECT h.id, h.conversation_id, h.reason, h.status, h.resume_state,
        h.opened_at, h.claimed_at, h.claimed_by, h.returned_at,
+       h.team, h.lead_qualified, h.lead_score,
        c.channel, c.sender_ref, c.contact_id
 FROM handoffs h JOIN conversations c ON c.id = h.conversation_id
 WHERE h.status <> 'returned'
@@ -75,6 +83,7 @@ ORDER BY h.opened_at
 _GET = text("""
 SELECT h.id, h.conversation_id, h.reason, h.status, h.resume_state,
        h.opened_at, h.claimed_at, h.claimed_by, h.returned_at,
+       h.team, h.lead_qualified, h.lead_score,
        c.channel, c.sender_ref, c.contact_id, c.last_inbound_at
 FROM handoffs h JOIN conversations c ON c.id = h.conversation_id
 WHERE h.id = :id
@@ -92,6 +101,13 @@ class Handoff:
     claimed_at: datetime | None = None
     claimed_by: str | None = None
     returned_at: datetime | None = None
+    #: Which sales team the lead was routed to (§11.2), and how it scored.
+    #: All three NULL means the handoff was not a lead — a bot that ran out of
+    #: clarifications is not somebody wanting to buy a villa, and scoring it
+    #: zero would put it in the denominator of a KPI it does not belong to.
+    team: str | None = None
+    lead_qualified: bool | None = None
+    lead_score: int | None = None
     #: Joined from the conversation, because every one of these is something
     #: the inbox has to show or send to and none of them is worth a second
     #: round trip.
@@ -128,6 +144,7 @@ def _handoff(row: Any) -> Handoff:
             "id", "conversation_id", "reason", "status", "resume_state",
             "opened_at", "claimed_at", "claimed_by", "returned_at",
             "channel", "sender_ref", "contact_id", "last_inbound_at",
+            "team", "lead_qualified", "lead_score",
         )
     }
     return Handoff(**fields)
@@ -138,7 +155,14 @@ class HandoffStore:
         self._session = session
 
     async def open(
-        self, *, conversation_id: uuid.UUID, reason: str, resume_state: dict[str, Any]
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        reason: str,
+        resume_state: dict[str, Any],
+        team: str | None = None,
+        lead_qualified: bool | None = None,
+        lead_score: int | None = None,
     ) -> Handoff:
         """Record that a human is needed, and freeze the cursor to come back to.
 
@@ -158,6 +182,12 @@ class HandoffStore:
                     "conversation_id": conversation_id,
                     "reason": reason,
                     "resume_state": json.dumps(resume_state),
+                    # Defaulted to None so every existing caller is unchanged:
+                    # a handoff that is not a lead records no lead, rather
+                    # than a zero that reads as a lead nobody wanted.
+                    "team": team,
+                    "lead_qualified": lead_qualified,
+                    "lead_score": lead_score,
                 },
             )
         ).one()

@@ -78,6 +78,13 @@ export function Inbox() {
             <div className="conv-body">
               <div className="conv-name">{conversation.sender_ref}</div>
               <div className="conv-last">{conversation.reason}</div>
+              {/* The routed team, as text rather than a second pill: one
+                  accent on the screen, and it belongs to "needs a human". */}
+              {conversation.team && (
+                <div className="conv-team">
+                  {t("inbox.routedTo")} {conversation.team}
+                </div>
+              )}
             </div>
             {/* The only coloured pill on the screen — something needs a human. */}
             <span className={conversation.claimed_by ? "pill bot" : "pill needs"}>

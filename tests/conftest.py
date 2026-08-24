@@ -81,6 +81,7 @@ TENANT_SCOPED_TABLES = (
     "tenant_scripts",
     "agent_sessions",
     "agents",
+    "sales_teams",
     "inventory_units",
     "handoffs",
     "messages",

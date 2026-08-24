@@ -349,6 +349,16 @@ body {
   text-overflow: ellipsis;
 }
 
+/* The routed sales team. Greyscale and quieter than the reason above it:
+   §17 gives the screen one accent, and it belongs to "needs a human". */
+.conv-team {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pill {
   font-size: 10px;
   font-weight: 600;

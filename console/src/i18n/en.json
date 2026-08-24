@@ -61,7 +61,8 @@
     "from": {
       "chunk": "From the knowledge base",
       "script": "From the script"
-    }
+    },
+    "routedTo": "Routed to"
   },
   "settings": {
     "title": "Settings",

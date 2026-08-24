@@ -228,7 +228,7 @@ def test_the_available_status_comes_from_config_not_a_literal(monkeypatch):
     monkeypatch.setattr(
         inventory, "_settings", lambda: {"available_status": "vacant", "query": {}}
     )
-    _, params = inventory._where(UnitQuery())
+    _, params = inventory._where(UnitQuery(), None)
     assert params["available"] == "vacant"
 
 

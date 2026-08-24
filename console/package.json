@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "_comment_presmoke": "The gate serves dist/ and never built it, so `npm run smoke` could pass against a build from before the change — a gate that reports on code nobody is shipping. npm runs this automatically before `smoke`.",
+    "presmoke": "npm run build",
     "smoke": "docker run --rm --network none -v \"$PWD\":/work -w /work --user \"$(id -u):$(id -g)\" -e HOME=/tmp mcr.microsoft.com/playwright:v1.56.0-noble node smoke.mjs"
   },
   "dependencies": {

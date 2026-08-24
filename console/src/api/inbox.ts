@@ -42,6 +42,10 @@ export type Conversation = {
   sender_ref: string;
   opened_at: string;
   claimed_by: string | null;
+  /* Which sales team the lead was routed to (§11.2), and whether it had
+     enough to act on. Null on a handoff that is not a lead. */
+  team: string | null;
+  lead_qualified: boolean | null;
 };
 
 async function get<T>(path: string, fallback: T): Promise<T> {

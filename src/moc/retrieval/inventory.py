@@ -7,7 +7,8 @@ from `kb_chunks` — a passage holding the same price would bypass both the
 filter and the disclosure, and nothing would raise. `sold_unit_offered_rate`
 would read zero while a sold unit's price sat in a retrieved chunk.
 
-**The availability filter is unrepresentable-absent, not merely applied.**
+**Two filters are unrepresentable-absent, not merely applied: availability,
+and — since Task 38 — the developer's project scope (§11.2).**
 
 The same shape `vectors.py` uses for the tenant filter, for the same reason: a
 filter whose absence has no behavioural signature is a filter that will
@@ -28,6 +29,13 @@ So the guarantee is structural rather than remembered:
 There is no `count_all` or equivalent. An unfiltered method on the answering
 path would make the filter a convention again, and counting rows is an
 ingestion concern that belongs to whoever loaded them.
+
+The project scope takes the same shape, one level further out: it is read from
+the tenant row through this session rather than passed in, so there is no
+constructor argument to omit and no query field to override. A developer whose
+scope was forgotten does not fail — it answers about the phase next door, with
+real units at real prices, and is discovered when a buyer reaches a sales
+office that cannot sell them.
 
 Tenant scoping is RLS, as everywhere else: no query here names `tenant_id`,
 and the caller supplies a session whose tenant is already set.
@@ -53,6 +61,20 @@ _INVENTORY = "retrieval/inventory"
 #: would be a second thing to keep correct, and the test that counts them is
 #: what makes "written once" checkable rather than aspirational.
 _AVAILABLE = "availability = :available"
+
+#: §11.2's developer scope, written the same way and for the same reason.
+#:
+#: Unconditional, with the parameter bound on every statement — NULL for a
+#: broker, the project's name for a developer. A clause that appeared only
+#: when a project was set would be a clause a statement could be written
+#: without, and the version of this bug that survives review is the query that
+#: is correct on every path anyone tested.
+#:
+#: The cast is load-bearing: asyncpg cannot infer a parameter's type from
+#: `IS NULL` alone, and `:project::text` is not what SQLAlchemy's bind-parameter
+#: parser reads — it leaves the second colon in the statement and Postgres
+#: rejects it.
+_PROJECT = "(cast(:project as text) IS NULL OR compound = :project)"
 
 _COLUMNS = (
     "unit_id, as_of, title, listing_kind, property_type, compound, area, city, "
@@ -122,7 +144,7 @@ def available_status() -> str:
     return _settings()["available_status"]
 
 
-def _where(query: UnitQuery) -> tuple[str, dict[str, Any]]:
+def _where(query: UnitQuery, project: str | None) -> tuple[str, dict[str, Any]]:
     """The one predicate builder, and the only place availability is compared.
 
     A single return on purpose. A conditional availability clause is the
@@ -132,9 +154,14 @@ def _where(query: UnitQuery) -> tuple[str, dict[str, Any]]:
 
     Optional filters append to it and can never replace it. There is no
     argument in `UnitQuery` that could.
+
+    `project` is the developer scope (§11.2) and comes from the repository,
+    not from the caller — see `InventoryRepository._project`. It is a separate
+    argument rather than a `UnitQuery` field precisely so that the object a
+    caller fills in cannot reach it.
     """
-    clauses = [_AVAILABLE]
-    params: dict[str, Any] = {"available": available_status()}
+    clauses = [_AVAILABLE, _PROJECT]
+    params: dict[str, Any] = {"available": available_status(), "project": project}
 
     for column, value in (
         ("city", query.city),
@@ -204,6 +231,27 @@ class InventoryRepository:
 
     def __init__(self, *, session: AsyncSession) -> None:
         self._session = session
+        self._scope: str | None = None
+        self._scope_read = False
+
+    async def _project(self) -> str | None:
+        """This tenant's project, or None for a broker (§11.2).
+
+        Read from the tenant row through the same RLS-scoped session, rather
+        than taken as a constructor argument. A constructor argument is one a
+        caller can pass wrongly or omit — and omitting it produces broker
+        behaviour, which is a developer's bot answering about the phase next
+        door with real units at real prices and nothing raising.
+
+        Read once per repository, which is once per turn.
+        """
+        if not self._scope_read:
+            row = (
+                await self._session.execute(text("SELECT project FROM tenants"))
+            ).one_or_none()
+            self._scope = row.project if row is not None else None
+            self._scope_read = True
+        return self._scope
 
     async def search(self, query: UnitQuery) -> list[Unit]:
         """Available units matching `query`, cheapest first.
@@ -213,7 +261,7 @@ class InventoryRepository:
         closest is where cross-type substitution begins — at the data layer,
         before any model has a chance to be tempted.
         """
-        where, params = _where(query)
+        where, params = _where(query, await self._project())
         order = _settings()["query"]["order_by"]
         # One f-string, not implicit concatenation: the statement is read as a
         # whole by the guard test, and a split literal reads as unfiltered.
@@ -233,7 +281,7 @@ class InventoryRepository:
         applies the availability predicate too — otherwise the filter is
         advisory and the way around it is a single method call.
         """
-        where, params = _where(UnitQuery())
+        where, params = _where(UnitQuery(), await self._project())
         sql = (
             f"SELECT {_COLUMNS} FROM inventory_units "  # noqa: S608
             f"WHERE unit_id = :unit_id AND {where}"
@@ -262,7 +310,7 @@ class InventoryRepository:
         `city`. That replaces a hand-maintained kind map, which is one more
         thing that could disagree with the rows.
         """
-        where, params = _where(UnitQuery())
+        where, params = _where(UnitQuery(), await self._project())
         columns = {}
         for column in ("city", "compound"):
             sql = (
@@ -280,7 +328,7 @@ class InventoryRepository:
         `invented_compound_rate` grades against the inventory rather than a
         second list that would drift from it.
         """
-        where, params = _where(UnitQuery())
+        where, params = _where(UnitQuery(), await self._project())
         sql = (
             f"SELECT DISTINCT compound FROM inventory_units "  # noqa: S608
             f"WHERE {where} AND compound IS NOT NULL"

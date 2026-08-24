@@ -108,6 +108,12 @@ def build_inbox(
                 "sender_ref": handoff.sender_ref,
                 "opened_at": handoff.opened_at.isoformat(),
                 "claimed_by": handoff.claimed_by,
+                # §11.2's routing, carried to the person who has to act on it.
+                # A team chosen and not shown is a lead routed to nobody: the
+                # column is written, the agent cannot see it, and whoever picks
+                # the conversation up is whoever happened to be looking.
+                "team": handoff.team,
+                "lead_qualified": handoff.lead_qualified,
             }
             for handoff in handoffs
         ]

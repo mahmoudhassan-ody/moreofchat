@@ -319,6 +319,8 @@ await page.route("**/inbox", (route) =>
         sender_ref: "+201012345678",
         opened_at: "2026-08-22T09:00:00+00:00",
         claimed_by: null,
+        team: "villas",
+        lead_qualified: true,
       },
     ]),
   }),
@@ -368,6 +370,14 @@ await page.goto(`http://127.0.0.1:${PORT}/#inbox`, { waitUntil: "load" });
 await page.waitForSelector(".conv", { timeout: 5000 });
 
 check("the conversation needing a human is marked", await page.locator(".pill.needs").count(), 1);
+
+/* §11.2's routing, on the row. A team chosen and not shown is a lead routed to
+   nobody: the column is written and whoever picks the conversation up is
+   whoever happened to be looking. */
+check("the routed sales team is on the row", await page.locator(".conv-team").count(), 1);
+const routed = await page.locator(".conv-team").allInnerTexts();
+check("it names the team", routed.join(" ").includes("villas"), true);
+check("and it is labelled from the catalogue", routed.join(" ").includes("Routed to"), true);
 
 await page.locator(".conv").click();
 await page.waitForSelector(".bubble", { timeout: 5000 });

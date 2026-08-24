@@ -72,6 +72,12 @@ class Tenant(Base):
         Text, nullable=False, server_default=text("'Africa/Cairo'")
     )
     default_lang: Mapped[str] = mapped_column(String(8), default="ar")
+    #: §11.2's developer flag, and its value, in one column. NULL is a broker,
+    #: searching across projects; a value is a developer, and every inventory
+    #: read is scoped to it. A boolean beside a separate name column would
+    #: admit "developer, project not set", whose only readings are a bot with
+    #: no stock or broker behaviour with the guarantee silently off.
+    project: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -345,6 +351,14 @@ class Handoff(Base):
             postgresql_where=text("status <> 'returned'"),
         ),
         Index("ix_handoffs_tenant_status", "tenant_id", "status"),
+        # §11.2's KPI reads this: qualified leads per 100 conversations, by
+        # team. Partial, because most handoffs are not leads.
+        Index(
+            "ix_handoffs_team",
+            "tenant_id",
+            "team",
+            postgresql_where=text("team IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -362,6 +376,56 @@ class Handoff(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Which sales team the lead was routed to (§11.2). NULL means it was not
+    #: routed — either the handoff is not a lead, or the tenant has configured
+    #: no team that matches and none as a fallback. Unroutable is not dropped:
+    #: the row is still here and the inbox still shows it.
+    team: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: NULL means this handoff was not a lead at all. A bot that ran out of
+    #: clarifications is not somebody wanting to buy a villa, and scoring it
+    #: zero would put it in the denominator of a KPI it does not belong to.
+    lead_qualified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    lead_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SalesTeam(Base):
+    """Mirrors migration 0017. Who a routed lead goes to (§11.2).
+
+    **The routing rule lives on the team it routes to.** `property_type` is
+    the rule; NULL is the fallback. Kept as one row rather than a rules table
+    beside a teams table, because then a rule cannot name a team that does not
+    exist — the failure where a lead is routed nowhere and nothing says so.
+    """
+
+    __tablename__ = "sales_teams"
+    __table_args__ = (
+        Index("uq_sales_teams_key", "tenant_id", "team_key", unique=True),
+        # One team per type, and at most one fallback. Two of either has no
+        # behavioural signature: the router returns a team either way, and the
+        # lead lands with the wrong closer.
+        Index(
+            "uq_sales_teams_property_type",
+            "tenant_id",
+            "property_type",
+            unique=True,
+            postgresql_where=text("property_type IS NOT NULL"),
+        ),
+        Index(
+            "uq_sales_teams_fallback",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("property_type IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"))
+    team_key: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    #: An address, not a person: people leave and the leads keep arriving.
+    contact: Mapped[str] = mapped_column(Text)
+    property_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class InventoryUnit(Base):

@@ -559,3 +559,70 @@ async def test_a_customer_turn_carries_no_provenance(tenant_db):
         body="كام الرسوم؟",
     )
     assert written.provenance is None
+
+
+async def test_the_routed_sales_team_reaches_the_agent(app_engine, seeded):
+    """§11.2's routing, carried across the API boundary — demo plan Task 38.
+
+    The team is chosen when the handoff opens and written to the row. If the
+    listing drops it, the lead is routed to nobody in the only sense that
+    matters: whoever picks the conversation up is whoever happened to be
+    looking, and the routing exists solely in a column nobody reads.
+
+    This is the same failure the source pane was built to end, one screen over.
+    """
+    from moc.tenancy.context import tenant_session
+
+    async with tenant_session(app_engine, seeded["tenant"]) as session:
+        await HandoffStore(session=session).open(
+            conversation_id=seeded["wa"],
+            reason="lead",
+            resume_state=RESUME_STATE,
+            team="villas",
+            lead_qualified=True,
+            lead_score=4,
+        )
+        await session.commit()
+
+    app = build_inbox(
+        engine=app_engine,
+        publisher=FakePublisher(),
+        events=FakeEvents(),
+        authenticate=principal(seeded["tenant"]),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as client:
+        rows = (await client.get("/inbox")).json()
+
+    assert [row["team"] for row in rows] == ["villas"]
+    assert rows[0]["lead_qualified"] is True
+
+
+async def test_a_handoff_that_is_not_a_lead_carries_no_team(app_engine, seeded):
+    """The negative control, and the reason these columns are nullable. A bot
+    that ran out of clarifications is not somebody wanting to buy a villa, and
+    a zero score would put it in the denominator of a KPI it does not belong
+    to."""
+    from moc.tenancy.context import tenant_session
+
+    async with tenant_session(app_engine, seeded["tenant"]) as session:
+        await HandoffStore(session=session).open(
+            conversation_id=seeded["wa"], reason="three clarifications",
+            resume_state=RESUME_STATE,
+        )
+        await session.commit()
+
+    app = build_inbox(
+        engine=app_engine,
+        publisher=FakePublisher(),
+        events=FakeEvents(),
+        authenticate=principal(seeded["tenant"]),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as client:
+        rows = (await client.get("/inbox")).json()
+
+    assert rows[0]["team"] is None
+    assert rows[0]["lead_qualified"] is None
