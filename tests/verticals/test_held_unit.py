@@ -216,3 +216,58 @@ async def test_the_place_comes_from_this_message_and_not_from_the_merge(broker):
         "the merge outranked the message; the customer named Noor City and the "
         "resolver returned the unit they were shown a turn earlier"
     )
+
+
+# ──────────── the place they moved off, not the unit — Task 42d ────────────
+
+
+async def test_naming_a_region_drops_a_compound_held_from_an_earlier_turn(broker):
+    """The rehearsal's third broker turn, which passed a 10/10 run.
+
+    Browse Madinaty, ask about a Noor City unit, then ask for a studio on the
+    North Coast. The reply was *"مفيش studio في Noor City دلوقتي. عندنا studio
+    في ZED East"* — neither of which is on the North Coast, and ZED East is in
+    New Cairo. The customer named a region and the reply never mentions it.
+
+    Extraction was never at fault: `{city: North Coast, property_type: studio}`
+    came back 5 of 5. The held compound survived the merge and the search
+    filtered on both, so an empty intersection was reported as absent stock in
+    a compound the customer had stopped talking about.
+    """
+    first = await broker.handle(state=fresh(), text="عايز شقة في مدينتي")
+    second = await broker.handle(
+        state=first.state, text="الوحدة في نور سيتي بـ ٦ مليون و نص، القسط كام؟"
+    )
+    assert second.state.slots.get("compound") == "Noor City", (
+        "the setup for this test is the previous one's fix"
+    )
+
+    third = await broker.handle(state=second.state, text="في استوديو في الساحل الشمالي؟")
+
+    assert third.state.slots.get("city") == "North Coast"
+    assert "compound" not in third.state.slots, (
+        "a compound inside a region the customer has left filters the search "
+        "down to nothing and reports it as no stock"
+    )
+    # The alternative may well be a Noor City studio — the catalogue has one,
+    # and "no {type} in {asked_about}, we have a {type} in {compound}" is the
+    # 2026-08-17 owner decision. What must not happen is Noor City standing in
+    # the `asked_about` half, which is the region the customer named.
+    assert "North Coast" in third.reply
+
+
+async def test_the_region_the_customer_named_is_the_one_the_reply_answers_about(broker):
+    """The catalogue holds no studio on the North Coast, so the honest reply
+    names the North Coast as the place without one — the no-substitution rule's
+    shape, and it needs the region to have survived the merge to be sayable."""
+    first = await broker.handle(state=fresh(), text="عايز شقة في مدينتي")
+    second = await broker.handle(
+        state=first.state, text="في استوديو في الساحل الشمالي؟"
+    )
+    assert "North Coast" in second.reply, (
+        "the customer named a region and the reply never mentions it"
+    )
+    assert "شاليه" not in second.reply and "chalet" not in second.reply.lower(), (
+        "the North Coast holds chalets and no studio; offering one is the "
+        "no-substitution rule broken in front of a buyer"
+    )

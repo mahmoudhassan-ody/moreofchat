@@ -417,7 +417,7 @@ about.
 
 ---
 
-### Task 42d: a held compound survives a message naming another region
+### Task 42d: a held compound survives a message naming another region — DONE 2026-08-24
 
 **Pre-existing, unchanged by 42b, and it fails in front of a buyer.** The
 broker's third turn asks `في استوديو في الساحل الشمالي؟` and is answered
@@ -453,6 +453,37 @@ async def test_a_turn_that_names_no_city_keeps_the_compound()
 
 **Acceptance:** the rehearsal's broker third turn names the North Coast, and
 still names no chalet.
+
+**Done.** `في استوديو في الساحل الشمالي؟` now answers *"مفيش studio في North
+Coast دلوقتي. عندنا studio في Noor City بسعر 2,930,000 EGP"* — the region the
+customer named in the half that says what is missing, and the alternative
+still the same type, still no chalet.
+
+**The relation is declared, not coded.** `compound:` in the search script gains
+`narrows: city`, and the engine clears any held slot that declares `narrows: X`
+when a turn names `X` and not the slot itself. The engine never names a
+vertical's slots — asserted over the module's string constants, because the
+word "compound" appears in an unrelated comment and a substring scan reads that
+as the slot.
+
+Distinct from `clear_slots`, and the difference is the whole bug: clearing is
+the customer saying *this no longer applies* with no replacement — "somewhere
+else". Here they named a replacement, one slot up, and every mechanism in the
+system was watching for the other sentence.
+
+Only when this message does not also name the narrower slot: `شقة في مدينتي في
+التجمع الخامس` names both and means both.
+
+Sabotage-verified twice — not clearing the stale slots fails three tests,
+removing `narrows: city` from the script fails four.
+
+**The rehearsal is 10/10 with the tightened checks**, and both suites were
+re-baselined because `config_hash` moved (§2.4, 2026-08-24 later). No eval case
+moved, which is the finding rather than the reassurance: no multi-turn case in
+either suite names a city while holding a compound. That absence is why the
+rehearsal found this and the suites did not, and it is the same shape as the
+gap 42b closed — worth a case per vertical rather than a note here.
+
 
 ---
 

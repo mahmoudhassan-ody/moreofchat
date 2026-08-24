@@ -704,3 +704,98 @@ def test_a_slot_the_node_already_held_does_not_resume_it(script):
         answered.state, turn(intent=None, slots={"faculty": "dentistry"})
     )
     assert decision.node == "fallback"
+
+
+# ─────────────── a held slot the customer just moved off of ───────────────
+#
+# Demo plan Task 42d, found by the rehearsal. `في استوديو في الساحل الشمالي؟`
+# after two turns about Noor City was answered "no studio in Noor City — we
+# have a studio in ZED East". Extraction was correct: `{city: North Coast,
+# property_type: studio}`, 5 of 5. The held `compound` was never cleared, the
+# search filters on compound AND city, and an empty intersection reads as
+# "we have none" about a place the customer had stopped talking about.
+#
+# `clear_slots` is the mechanism and nothing invokes it here: the customer did
+# not say "somewhere else", they said somewhere.
+
+REALESTATE = "scripts/realestate/search"
+
+
+@pytest.fixture
+def search() -> ScriptEngine:
+    return ScriptEngine.from_config(REALESTATE)
+
+
+def state_of(engine: ScriptEngine, **slots) -> ConversationState:
+    return ConversationState(
+        script_id=REALESTATE, script_version=engine.version, slots=dict(slots)
+    )
+
+
+def test_a_slot_named_this_turn_clears_a_held_slot_that_narrows_it(search):
+    """The rehearsal's turn. A city names a region; a compound held from two
+    turns ago is a filter inside a region the customer has left."""
+    held = state_of(search, compound="Noor City", property_type="apartment")
+    decision = search.advance(
+        held, turn(intent="inventory_lookup", slots={"city": "North Coast"})
+    )
+    assert "compound" not in decision.state.slots
+    assert decision.state.slots["city"] == "North Coast"
+    assert decision.state.slots["property_type"] == "apartment", (
+        "only the stale axis goes — they still want the same kind of unit"
+    )
+
+
+def test_a_narrower_slot_named_in_the_same_message_survives(search):
+    """`شقة في مدينتي في التجمع الخامس` names both. The rule is about a value
+    the customer moved off, not about which slot is narrower in general."""
+    held = state_of(search, compound="Noor City")
+    decision = search.advance(
+        held,
+        turn(
+            intent="inventory_lookup",
+            slots={"city": "New Cairo", "compound": "Madinaty"},
+        ),
+    )
+    assert decision.state.slots["compound"] == "Madinaty"
+    assert decision.state.slots["city"] == "New Cairo"
+
+
+def test_a_turn_that_names_no_city_keeps_the_held_compound(search):
+    """The reason held slots exist. "And at 40% down?" names nothing."""
+    held = state_of(search, compound="Noor City", property_type="apartment")
+    decision = search.advance(
+        held, turn(intent="payment_plan", slots={"down_payment_pct": 40})
+    )
+    assert decision.state.slots["compound"] == "Noor City"
+
+
+def test_a_held_slot_is_only_stale_against_a_slot_it_declares(search):
+    """`property_type` does not narrow `city`, so naming one moves neither."""
+    held = state_of(search, compound="Noor City")
+    decision = search.advance(
+        held, turn(intent="inventory_lookup", slots={"property_type": "studio"})
+    )
+    assert decision.state.slots["compound"] == "Noor City"
+
+
+def test_the_narrowing_relation_is_declared_in_the_script_not_in_code():
+    """A hardcoded ("compound", "city") pair is a second place the vertical's
+    slots are described, and the first — the script — is what everything else
+    reads. It would also be silently wrong for any vertical that adds a slot
+    pair of its own."""
+    slots = config_store.load(REALESTATE)["slots"]
+    assert slots["compound"]["narrows"] == "city"
+
+    # String constants, not a substring scan: the engine has the English word
+    # "compound" in a comment about a compound question, and a raw `in` on the
+    # file reads that as the slot.
+    literals = {
+        node.value
+        for node in ast.walk(ast.parse(ENGINE_MODULE.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert not literals & {"compound", "city"}, (
+        "the engine names a vertical's slots, so the relation lives in two "
+        "places and the script is no longer the one that decides"
+    )

@@ -56,6 +56,16 @@ slots:
   compound:
     from: catalogue
     column: compound
+    # A compound sits inside a city, so a turn that names a city has moved off
+    # any compound held from an earlier one — the same axis, and the narrower
+    # value is stale. Without this, `في استوديو في الساحل الشمالي؟` after two
+    # turns about Noor City searches North Coast AND Noor City, finds the empty
+    # intersection, and reports it as "no studio in Noor City" (Task 42d).
+    #
+    # Declared here rather than in the engine because this is the vertical
+    # describing its own slots, and the engine already reads this block for
+    # everything else it knows about them.
+    narrows: city
   bedrooms:
     type: integer
   # Two price slots, one preposition apart in Masri, meaning different things.

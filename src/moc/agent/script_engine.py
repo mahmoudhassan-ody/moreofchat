@@ -90,6 +90,35 @@ class ScriptEngine:
             node=self._script.get("entry"),
         )
 
+    def _stale(self, state: ConversationState, turn: TurnInput) -> tuple[str, ...]:
+        """Held slots this turn made obsolete without saying so.
+
+        A slot may declare that it `narrows` another — one value sits inside
+        the other's. When a turn names the wider value and not the narrower
+        one, the held narrower value is a filter inside something the customer
+        has left, and keeping it intersects two places into none. That reads as
+        "we have nothing there" about the place they just named.
+
+        Distinct from `clear_slots`, which is the customer saying *this no
+        longer applies* — "somewhere else", with no replacement. Here they
+        named a replacement, just one slot up.
+
+        Only when this message does not also name the narrower slot: a message
+        naming both means both, and the narrower one is not stale at all.
+
+        Which slot narrows which is read from the script, so the engine never
+        names a vertical's slots and a vertical that adds a pair does not
+        change this file.
+        """
+        stale = []
+        for name, spec in (self._script.get("slots") or {}).items():
+            wider = (spec or {}).get("narrows")
+            if wider is None:
+                continue
+            if wider in turn.slots and name not in turn.slots and name in state.slots:
+                stale.append(name)
+        return tuple(stale)
+
     def advance(self, state: ConversationState, turn: TurnInput) -> Decision:
         self._require_pinned_version(state)
         # Read against the state as it stood when the question was asked, so
@@ -97,7 +126,7 @@ class ScriptEngine:
         resumed = self._resumed(state, turn)
         # Cleared before the node is chosen, so `requires_any_slot` and the
         # connector both see the state the customer actually left behind.
-        state = state.with_slots(turn.slots, turn.cleared)
+        state = state.with_slots(turn.slots, turn.cleared + self._stale(state, turn))
         node_name = self._by_intent.get(turn.intent or "", _FALLBACK_NODE)
         if turn.intent is None and turn.cleared and state.node in self._script["nodes"]:
             # "In any other location" carries no intent of its own — it is the

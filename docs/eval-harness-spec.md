@@ -307,6 +307,44 @@ of asserting. Being `live`, nothing in CI ran it, and the suite it guards kept
 reporting 100%. It is fixed and passing. A regression guard that errors out is
 indistinguishable from one that passes, in every place anyone looks.
 
+#### Re-baseline, 2026-08-24 (later the same day) — Tasks 42c and 42d
+
+Both changes touch `config/`, so `config_hash` moved and §2.3 applies again.
+Education is re-measured rather than carried forward even though no education
+turn reads the real-estate script: the rule is about the hash, not about a
+judgement of which change could plausibly matter.
+
+| Suite | Metric | Value |
+|---|---|---|
+| real estate | `overall_accuracy` | 100.0% (100.0–100.0) — 21 cases, no verdict changes |
+| real estate | every commercial gate | 0.0% (0.0–0.0) |
+| real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
+| real estate | `unresolved_type_rate` (tracked) | 31.6% (31.6–31.6) |
+| education | `overall_accuracy` | 86.3% (82.4–88.2) — unchanged |
+| education | `expected_action_accuracy` | 98.2% (94.7–100.0) |
+| education | `forbidden_claim_violations` | 1.8% (0.0–5.3) |
+| education | `register_accuracy` | 100.0% (100.0–100.0) |
+| education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
+| education | `hallucinated_figure_rate` | 6.8% (0.0–14.3) — **not measurable at 17 cases** |
+| education | `p95_latency_ms` | **6725 ms (6427–6956)** — measurable, and inside the 7000 ms budget |
+
+**`p95_latency_ms` came back at 6725 ms with a 529 ms spread**, against 10096
+ms and a 6322 ms spread three hours earlier on a system that differs only in a
+real-estate slot declaration. That is the reading the earlier one could not
+give: the budget is met, and the earlier breach was provider variance on the
+day. It is recorded as a measurement, not as an improvement — nothing in 42c
+or 42d touches composition latency, and reading this as a win would be picking
+the flattering arm of the same comparison §2.4 exists to forbid.
+
+The first p95 measurement under this budget also does not retire the concern.
+One reading inside a threshold is one reading; the 2026-08-21 breakdown
+(composition 4551 ms median, audit 940 ms) is still where the time goes.
+
+**42d changed the merge and no case moved.** That is expected rather than
+reassuring: no multi-turn case in either suite names a city while holding a
+compound, which is precisely why the rehearsal found this and the suites did
+not. `tests/agent/test_script_engine.py` holds the rule, sabotage-verified.
+
 
 #### Where the 8990 ms goes (2026-08-21, run 3 of 3)
 
