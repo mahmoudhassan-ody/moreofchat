@@ -379,10 +379,22 @@ def judge(
     # script. A handoff that answers instead, or an answer that quietly hands
     # off, both read as passing.
     expect = turn.get("expect", "any")
+    figures = (provenance or {}).get("figures", [])
     if expect == "handoff" and not handed_off:
         failures.append("expected a handoff and the bot answered")
     if expect == "answer" and handed_off:
         failures.append("expected an answer and the bot handed off")
+    if expect == "refuse":
+        # Nothing stores the action, so a refusal is asserted by what it does
+        # not do: it pulls in no human, and it quotes no figure. Both matter —
+        # the failure this replaced was a real price for a real unit nobody
+        # asked about, and a refusal that quotes one has not refused.
+        if handed_off:
+            failures.append("expected a refusal and the bot handed off")
+        if figures:
+            failures.append(
+                f"a refusal quoted figures: {[f['raw'] for f in figures]}"
+            )
 
     for forbidden in turn.get("must_not_contain", []):
         if forbidden in reply:
@@ -392,7 +404,6 @@ def judge(
         if required not in reply:
             failures.append(f"the reply never names {required!r}")
 
-    figures = (provenance or {}).get("figures", [])
     if turn.get("every_figure_traced"):
         orphans = [f["raw"] for f in figures if not f["grounded"]]
         if orphans:

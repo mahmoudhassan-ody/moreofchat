@@ -329,6 +329,25 @@ class InventoryAgent:
                 session, kind=UsageKind.message_in, channel=self._channel
             )
             await _meter(session, self._channel, getattr(turn, "usage", None))
+
+        outside = await self._outside_project(turn.slots)
+        if outside is not None:
+            if session is not None:
+                await record_usage(
+                    session, kind=UsageKind.message_out, channel=self._channel
+                )
+            voice = Voice.of(Register.masri, text)
+            return InventoryTurn(
+                reply=_fill("outside_project", voice, project=outside),
+                action=Action.refuse,
+                register=Register.masri,
+                # `state`, not a state carrying the compound: a value this
+                # tenant cannot sell must not survive into the next turn, or a
+                # follow-up naming no place searches on it and reports that the
+                # developer has no stock.
+                state=state,
+            )
+
         decision = self._engine.advance(state, turn)
         slots = decision.state.slots
         # Register is the node's; language is the customer's. Resolved once,
@@ -364,6 +383,37 @@ class InventoryAgent:
                 session, kind=UsageKind.message_out, channel=self._channel
             )
         return result
+
+    async def _outside_project(self, said: dict[str, Any]) -> str | None:
+        """This tenant's project, when *this message* named a different one.
+
+        Task 42c. A developer sells one development; their sheet holds more
+        than that, and a customer asking about the phase next door must be
+        told so rather than answered from the phase they did not ask about.
+
+        Read from `tenants.project` and compared in code. It used to depend on
+        the extractor emitting a value outside its own vocabulary and the
+        resulting `ExtractionFailed` being caught — the right outcome produced
+        by the model disobeying the prompt, which stopped being reliable the
+        moment the prompt got clearer (Task 42b).
+
+        `said`, not the merged slots: a compound held from an earlier turn was
+        already inside the project, or that turn refused.
+
+        Returns the project when the turn must refuse, so the caller has the
+        one string the reply needs. None for a broker — `project` is NULL and
+        there is nothing to be outside of.
+        """
+        project = await self._repository.project()
+        if project is None:
+            return None
+        named = said.get("compound")
+        if named is None:
+            return None
+        # `أو` means both, so a compound slot may hold a list. One value
+        # outside the project is enough; the customer named it either way.
+        values = named if isinstance(named, list | tuple) else [named]
+        return project if any(value != project for value in values) else None
 
     # ─────────────────────────── staleness ───────────────────────────
 

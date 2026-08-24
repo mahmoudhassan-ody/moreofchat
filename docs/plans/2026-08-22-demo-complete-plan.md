@@ -342,7 +342,7 @@ run in CI, so nothing reported it. Fixed and passing.
 
 ---
 
-### Task 42c: project scope is not enforced, it was an accident
+### Task 42c: project scope is not enforced, it was an accident — DONE 2026-08-24
 
 **Introduced-by-exposure in 42b, and the underlying gap is older.** The
 rehearsal's developer turn — `وعندكم إيه في نور سيتي؟` asked of a tenant whose
@@ -382,8 +382,38 @@ async def test_the_search_is_still_filtered_to_the_project()
     # Widening the vocabulary must not widen what can be quoted.
 ```
 
-**Acceptance:** the rehearsal's developer turn passes `expect: handoff`
-without the expectation being relaxed.
+**Acceptance:** the rehearsal's developer turn passes without the expectation
+being relaxed.
+
+**Done.** `وعندكم إيه في نور سيتي؟` now answers *"إحنا مطوّري Madinaty وده اللي
+عندنا"* — the project named, no unit, no price, no alternative, because the
+alternative *is* the leak.
+
+`vocabulary()` is the one read not narrowed to the project, and it binds a
+named `_EVERY_PROJECT` rather than a bare `None` at the call site, where an
+omission would read as a bug and be "fixed" by the next person through.
+`search`, `get` and `compounds` stay scoped, each asserted directly. The AST
+guard that every statement shares one predicate is unchanged — what the
+predicate is *bound to* is asserted in behaviour instead.
+
+`refuse`, not `handoff`: a colleague cannot sell Noor City either, and
+escalating a question that has a complete answer makes the answer look like an
+escalation. Task 42's handoff was the shape of an out-of-vocabulary error, not
+a decision about what the customer should hear.
+
+**Task 38's opposite decision was reversed, not deleted.** Its test said an
+unscoped vocabulary lets the extractor resolve a compound the sales team does
+not sell. Right about the consequence, wrong about the cause: offered one
+compound, the extractor does not fail to name the other — it names *this* one.
+Both that test and the docstring arguing for it now say so.
+
+Sabotage-verified in both halves: disabling the guard fails two tests,
+re-scoping the vocabulary fails three.
+
+Nothing stores a turn's action, so the rehearsal asserts `refuse` by what it
+does not do — no handoff row, and no figure in the provenance. Both matter:
+the failure being replaced was a real price for a real unit nobody asked
+about.
 
 ---
 

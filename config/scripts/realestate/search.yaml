@@ -241,6 +241,16 @@ nodes:
 # Customer-facing wording for the outcomes the connector produces. No figure
 # appears here — prices come from a row, never from a template.
 replies:
+  # Task 42c. A project-scoped developer asked about a compound they do not
+  # sell. Names their own project and nothing else: no unit, no price, and no
+  # alternative — the alternative *is* the leak. Not a handoff, because a
+  # colleague cannot sell Noor City either, and pulling one in makes a
+  # complete answer look like an escalation.
+  outside_project:
+    masri: "إحنا مطوّري {project} وده اللي عندنا. للاستفسار عن {project} أنا تحت أمرك."
+    msa: "نحن مطورو {project}، وهو ما يتوفر لدينا. يسعدني الإجابة عن أي استفسار بخصوص {project}."
+    english: "We're the developer of {project}, and that's what we have. I'm happy to help with anything in {project}."
+
   # The requested type exists, just not where the customer asked. Both halves
   # name the SAME type; that is the whole shape of the owner decision of
   # 2026-08-17.

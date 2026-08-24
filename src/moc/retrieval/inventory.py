@@ -74,6 +74,12 @@ _AVAILABLE = "availability = :available"
 #: `IS NULL` alone, and `:project::text` is not what SQLAlchemy's bind-parameter
 #: parser reads — it leaves the second colon in the statement and Postgres
 #: rejects it.
+#: What `_where` binds when a read is deliberately not narrowed to the
+#: tenant's project — see `InventoryRepository.vocabulary`, the only such read.
+#: Named rather than a bare `None` at the call site, where it would read as an
+#: omission and be "fixed" by the next person through.
+_EVERY_PROJECT: str | None = None
+
 _PROJECT = "(cast(:project as text) IS NULL OR compound = :project)"
 
 _COLUMNS = (
@@ -253,6 +259,15 @@ class InventoryRepository:
             self._scope_read = True
         return self._scope
 
+    async def project(self) -> str | None:
+        """This tenant's project, for callers that must *compare* against it.
+
+        The turn has to know whether a compound the customer named is one this
+        tenant sells, and there is no answer to that below the repository — see
+        `moc.verticals.realestate.agent` and demo plan Task 42c.
+        """
+        return await self._project()
+
     async def search(self, query: UnitQuery) -> list[Unit]:
         """Available units matching `query`, cheapest first.
 
@@ -309,8 +324,20 @@ class InventoryRepository:
         Which column a value came from is its kind: a value in `city` filters
         `city`. That replaces a hand-maintained kind map, which is one more
         thing that could disagree with the rows.
+
+        **This one read is deliberately not project-scoped (Task 42c), and it
+        is the only one.** `search`, `get` and `compounds` all are. A
+        project-scoped tenant offered one compound has an extractor that
+        cannot name any other, so a customer asking about the development next
+        door gets *this* development's name back — and the reply is a real unit
+        at a real price answering a question nobody asked. Naming what the
+        customer said is what lets the turn refuse it; the search below never
+        sees the value, because the refusal happens first.
+
+        Scoped to the tenant either way: RLS decides whose rows these are, and
+        the project filter is a narrower thing layered on top of that.
         """
-        where, params = _where(UnitQuery(), await self._project())
+        where, params = _where(UnitQuery(), _EVERY_PROJECT)
         columns = {}
         for column in ("city", "compound"):
             sql = (

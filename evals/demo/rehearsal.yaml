@@ -101,9 +101,15 @@ tenants:
         must_state_asof: true
 
       - ask: "وعندكم إيه في نور سيتي؟"
-        expect: handoff
+        expect: refuse
         must_not_contain: ["نور سيتي", "Noor City"]
+        must_contain: ["Madinaty"]
         note: >
           §11.2's project scope. Their sheet holds Noor City rows and this
           tenant does not sell them — an answer quoting one sends a buyer to a
           sales office that cannot help.
+
+          `refuse` rather than `handoff` (Task 42c): a colleague cannot sell
+          Noor City either, and escalating a question with a complete answer
+          makes the answer look like an escalation. The reply names the
+          project this developer does sell and quotes nothing.

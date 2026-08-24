@@ -12,6 +12,12 @@ than they should: a second phase, a sister development, last year's launch,
 the row somebody pasted in to compare against. RLS says which tenant; nothing
 until now said which project.
 
+**One decision here was reversed by Task 42c**: the extraction vocabulary is
+no longer scoped to the project, because scoping it did not prevent a
+cross-project answer — it produced one. `search`, `get` and `compounds` are
+still scoped, and the guard that refuses an out-of-project compound lives in
+`test_project_scope.py`.
+
 **`test_an_alternative_never_comes_from_another_project` is the one that
 matters.** The no-substitution rule permits one alternative — the same type
 somewhere else — and for a broker that is the whole point. For a developer,
@@ -228,12 +234,14 @@ def test_the_builder_binds_the_scope_on_every_call_including_a_brokers():
 
 
 def test_every_statement_that_reads_inventory_is_project_filtered():
-    """Including `vocabulary`, which feeds the extractor.
+    """Every statement shares one predicate, including `vocabulary`.
 
-    An unscoped vocabulary is worse than an unscoped search: the extractor
-    resolves a compound the sales team does not sell, the search then returns
-    nothing, and the customer is told the developer has no stock — about a
-    project they never asked about.
+    `vocabulary` binds `_EVERY_PROJECT` to it rather than the tenant's project
+    (Task 42c), which is a different thing from reaching `inventory_units`
+    without the predicate at all: the scope is still expressed in one place and
+    a read that skips it entirely is still the bug this guards. What the
+    argument is set to is asserted in behaviour, above and in
+    `test_project_scope.py`.
 
     Read from source segments rather than bare constants: the queries are
     f-strings, and a constant-only scan sees `... FROM inventory_units WHERE `
@@ -292,9 +300,28 @@ async def test_a_unit_in_another_project_is_unreachable_even_by_id(developer):
     assert (await developer.get("SH-1")) is not None
 
 
-async def test_the_extraction_vocabulary_holds_only_the_projects_own_names(developer):
+async def test_the_extraction_vocabulary_is_not_scoped_to_the_project(developer):
+    """**Reversed by Task 42c**, and the reversal is the fix rather than a
+    relaxation.
+
+    This asserted `frozenset({PROJECT})` from Task 38, on the reasoning that an
+    unscoped vocabulary lets the extractor resolve a compound the sales team
+    does not sell. That reasoning was right about the consequence and wrong
+    about the cause: offered one compound, the extractor does not fail to name
+    the other one — it names *this* one, and the developer's bot answers a
+    question about Noor City with a Madinaty unit at a Madinaty price.
+
+    Scoping the vocabulary never prevented that. It depended on the model
+    emitting an out-of-vocabulary value anyway, which raised and was caught as
+    a refusal, and that stopped the moment the extraction prompt got clearer.
+
+    So the vocabulary widens and the guard moves into code, where it does not
+    depend on a model breaking a rule: `tests/verticals/test_project_scope.py`.
+    Everything else — `search`, `get`, `compounds` — stays scoped, asserted
+    directly above and below this line.
+    """
     vocabulary = await developer.vocabulary()
-    assert vocabulary["compound"] == frozenset({PROJECT})
+    assert vocabulary["compound"] == frozenset({PROJECT, OTHER})
 
 
 async def test_the_compound_catalogue_is_scoped_too(developer):
