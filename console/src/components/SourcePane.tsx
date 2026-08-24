@@ -14,6 +14,19 @@ import type { Provenance } from "../api/inbox";
  * source would be making §19.3's claim as a rendering default rather than as a
  * measurement — and the one time it matters is the one time it would lie.
  *
+ * **One pane for both grounding modes.** A document answer's figure traces to
+ * a chunk; an inventory answer's traces to a unit row and its `as_of`, and an
+ * instalment to the calculator's inputs. Same keys, same renderer — a second
+ * shape would be a second thing this file can fail to render, and the promise
+ * made to a university and to a broker is one promise.
+ *
+ * **Gates are rendered from what the payload carries, never from a list here.**
+ * The two verticals run different checks: there is no figure audit on an
+ * inventory reply, because no model composed those numbers and there is
+ * nothing for a second model to check. A hardcoded pair drew that missing gate
+ * as a failed one — a red mark for a check that never ran, on the screen whose
+ * whole job is to say what was and was not verified.
+ *
  * **The figure goes in `.mono`; the label does not.** IBM Plex Mono carries no
  * Arabic glyphs, so a translated string placed there falls back to a system
  * serif — it renders, it looks right in English, and nothing logs. A test
@@ -33,16 +46,13 @@ export function SourcePane({ provenance }: { provenance: Provenance | null }) {
       </div>
 
       <div className="gates">
-        {(
-          [
-            ["numeric_grounding", provenance.gates.numeric_grounding],
-            ["figure_audit", provenance.gates.figure_audit],
-          ] as const
-        ).map(([name, passed]) => (
-          <p className={passed ? "gate on" : "gate"} key={name}>
-            {t(`inbox.gate.${name}`)}
-          </p>
-        ))}
+        {Object.entries(provenance.gates)
+          .filter(([name]) => name !== "figure_audit_degraded")
+          .map(([name, passed]) => (
+            <p className={passed ? "gate on" : "gate"} key={name}>
+              {t(`inbox.gate.${name}`)}
+            </p>
+          ))}
         {provenance.gates.figure_audit_degraded && (
           <p className="gate degraded">{t("inbox.gate.degraded")}</p>
         )}

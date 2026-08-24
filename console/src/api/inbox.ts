@@ -9,7 +9,10 @@ export type FigureSource = {
   value: number;
   raw: string;
   grounded: boolean;
-  source: "chunk" | "script" | null;
+  /* Where the figure came from. `chunk` and `script` are a document answer;
+     `inventory` is a unit row and `calculator` is a tool output — §3.2's
+     grounding mode, same shape. */
+  source: "chunk" | "script" | "inventory" | "calculator" | null;
   chunkId: string | null;
   title: string | null;
   asOf: string | null;
@@ -18,10 +21,13 @@ export type FigureSource = {
 
 export type Provenance = {
   figures: FigureSource[];
+  /* Optional, because the two verticals run different checks: an inventory
+     reply has no figure audit, since no model composed those numbers. The pane
+     renders what is here rather than a list of its own. */
   gates: {
-    numeric_grounding: boolean;
-    figure_audit: boolean;
-    figure_audit_degraded: boolean;
+    numeric_grounding?: boolean;
+    figure_audit?: boolean;
+    figure_audit_degraded?: boolean;
   };
 };
 

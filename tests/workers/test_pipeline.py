@@ -1912,6 +1912,26 @@ async def test_a_broker_tenant_is_answered_from_its_own_inventory(
         "the broker's customer was answered by the education script"
     )
 
+    # The evidence reaches the thread an agent reads — demo plan Task 41b.
+    # `InventoryTurn` has carried the unit and the schedule since P1b and the
+    # worker discarded both, which is the failure Task 32 fixed one screen over.
+    from moc.agent.handoff import ContactStore, MessageLog
+    from moc.tenancy.context import tenant_session
+
+    async with tenant_session(app_engine, broker) as session:
+        contact_id = await ContactStore(session=session).resolve(
+            contact_ref=message.sender_ref
+        )
+        history = await MessageLog(session=session).history_for_contact(
+            contact_id=contact_id
+        )
+    replies = [row for row in history if row.provenance]
+    assert replies, "the broker's reply reached the inbox with no evidence behind it"
+    assert {f["source"] for f in replies[0].provenance["figures"]} <= {
+        "inventory",
+        "calculator",
+    }
+
 
 async def _stock(engine, tenant_id) -> None:
     """Two units, through the real ingestion path."""

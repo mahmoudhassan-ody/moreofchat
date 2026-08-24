@@ -60,7 +60,9 @@
     },
     "from": {
       "chunk": "From the knowledge base",
-      "script": "From the script"
+      "script": "From the script",
+      "inventory": "Unit record",
+      "calculator": "Payment calculator"
     },
     "routedTo": "Routed to"
   },

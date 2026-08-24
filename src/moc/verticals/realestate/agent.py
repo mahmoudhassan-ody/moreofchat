@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from moc.agent.provenance import Computation, Row, trace_figures
 from moc.agent.replies import Voice, refusal
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
@@ -77,6 +78,51 @@ class InventoryTurn:
     computation: PaymentSchedule | None = None
     script_constants: tuple[str, ...] = ()
     as_of: str | None = None
+    #: The rows this reply quoted from, as evidence. Not the ids —
+    #: `presented_unit_ids` already carries those, and "which unit" is the
+    #: question restated rather than the answer to "where did 5,500,000 come
+    #: from?". See `moc.agent.provenance.Row`.
+    rows: tuple[Row, ...] = ()
+
+    @property
+    def provenance(self) -> dict[str, Any] | None:
+        """Where each figure in this reply came from — demo plan Task 41b.
+
+        A property rather than a field set at each of the seven construction
+        sites: every one of them already passes the unit or the schedule, so
+        deriving it here means a new answer path cannot ship without evidence
+        by forgetting a keyword argument.
+
+        None when the reply quotes nothing. An empty `figures` list would make
+        the pane draw an empty panel for a clarification that had nothing to
+        show, which reads as evidence that went missing.
+
+        **`script_constants` is deliberately not passed in.** On this vertical
+        it is `_figures(reply)` — every number in the reply, harvested from the
+        reply itself — so feeding it to the tracer would mark every figure
+        grounded by definition and the pane would say "script" for a figure
+        that came from nowhere. The trace has to find the origin or say it
+        could not.
+        """
+        if self.action is not Action.answer:
+            return None
+        figures = trace_figures(
+            reply=self.reply,
+            rows=self.rows,
+            computations=(
+                (_computation_of(self.computation),) if self.computation else ()
+            ),
+        )
+        if not figures:
+            return None
+        return {
+            "figures": [figure.to_dict() for figure in figures],
+            # Only the gate this vertical actually runs. There is no figure
+            # audit here: no model composed these numbers, so there is nothing
+            # for a second model to check — and showing a gate that never ran,
+            # green or red, is a claim about a check that did not happen.
+            "gates": {"numeric_grounding": all(f.grounded for f in figures)},
+        }
 
 
 class KeywordSlotExtractor:
@@ -358,6 +404,7 @@ class InventoryAgent:
             named_compounds=(unit.compound,) if unit.compound else (),
             script_constants=_figures(reply),
             as_of=str(unit.as_of),
+            rows=(_row_of(unit),),
         )
 
     # ─────────────────────────── inventory ───────────────────────────
@@ -421,6 +468,7 @@ class InventoryAgent:
             presented_unit_ids=(alternative.unit_id,) if alternative else (),
             script_constants=_figures(reply),
             as_of=as_of,
+            rows=(_row_of(alternative),) if alternative else (),
         )
 
     async def _payment_plan(
@@ -459,6 +507,7 @@ class InventoryAgent:
                 named_compounds=(unit.compound,) if unit.compound else (),
                 script_constants=_figures(reply),
                 as_of=str(unit.as_of),
+                rows=(_row_of(unit),),
             )
 
         reply = _fill(
@@ -482,6 +531,7 @@ class InventoryAgent:
             computation=schedule,
             script_constants=_figures(reply),
             as_of=str(unit.as_of),
+            rows=(_row_of(unit),),
         )
 
 
@@ -555,7 +605,70 @@ def _answer(
         named_compounds=(unit.compound,) if unit.compound else (),
         script_constants=_figures(reply),
         as_of=str(unit.as_of),
+        rows=(_row_of(unit),),
     )
+
+
+def _row_of(unit: Any) -> Row:
+    """One unit, as the evidence behind whatever the reply quoted from it.
+
+    Every numeric column, not only the price: a reply can state an area, a
+    bedroom count and a delivery year from the same row, and the pane has to
+    say which of them each figure is.
+    """
+    return Row(
+        unit_id=unit.unit_id,
+        values={
+            "price": unit.price,
+            "bedrooms": unit.bedrooms,
+            "bathrooms": unit.bathrooms,
+            "unit_area_sqm": unit.unit_area_sqm,
+        },
+        title=unit.compound or unit.unit_id,
+        as_of=unit.as_of,
+    )
+
+
+def _computation_of(schedule: PaymentSchedule) -> Computation:
+    """One schedule, as the evidence behind the figures it produced.
+
+    `inputs` carries what the calculator ran with, because that is what makes
+    an instalment checkable. `total` is in `values` too even though the row
+    also holds it — the tracer prefers the row, and listing it here keeps the
+    computation an honest record of what the tool returned rather than an
+    edited one.
+    """
+    return Computation(
+        tool="payment_plan_calculator",
+        unit_id=schedule.unit_id,
+        values={
+            "total": schedule.total,
+            "down_payment": schedule.down_payment,
+            "down_payment_pct": schedule.down_payment_pct,
+            "installment_amount": schedule.installment_amount,
+            "installment_count": schedule.installment_count,
+            "final_installment_amount": schedule.final_installment_amount,
+            "years": schedule.years,
+        },
+        inputs={
+            "price": schedule.total,
+            "down_payment_pct": schedule.down_payment_pct,
+            "years": schedule.years,
+            "frequency": schedule.frequency,
+        },
+        as_of=_as_date(schedule.as_of),
+    )
+
+
+def _as_date(value: Any) -> Any:
+    from datetime import date
+
+    if value in (None, "") or isinstance(value, date):
+        return value or None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
 
 
 async def _meter(session: Any, channel: str, completion: Any) -> None:

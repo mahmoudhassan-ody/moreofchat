@@ -131,3 +131,137 @@ def test_the_trace_agrees_with_the_grounding_gate():
 
         assert [f.value for f in traced if not f.grounded] == gate.orphan_numbers, reply
         assert sorted(f.value for f in traced) == sorted(gate.reply_numbers), reply
+
+
+# ─────────────────────── the other grounding mode ───────────────────────
+#
+# Demo plan Task 41b. A document answer traces to a chunk; an inventory answer
+# traces to a row and a calculator output. Same promise, same `figures` list,
+# same renderer — a second provenance shape would be a second thing the pane
+# can fail to render, and the promise made to all three tenants is one promise.
+
+
+def test_a_price_traces_to_the_row_it_was_read_from():
+    from datetime import date
+
+    from moc.agent.provenance import INVENTORY, Row, trace_figures
+
+    traced = trace_figures(
+        reply="عندنا شقة في مدينتي بسعر 5,500,000 جنيه.",
+        rows=(
+            Row(
+                unit_id="MD-1",
+                values={"price": 5_500_000, "bedrooms": 3},
+                title="Madinaty",
+                as_of=date(2026, 8, 1),
+            ),
+        ),
+    )
+    assert [figure.value for figure in traced] == [5_500_000]
+    assert traced[0].source == INVENTORY
+    assert traced[0].chunk_id == "MD-1"
+    assert traced[0].title == "Madinaty"
+    assert "price" in traced[0].excerpt
+
+
+def test_an_instalment_traces_to_the_calculator_inputs_that_produced_it():
+    """Not to the row. §19.3: the arithmetic is the tool's, and the evidence
+    for a figure the model never composed is the computation — the tool that
+    ran and what it ran with."""
+    from moc.agent.provenance import CALCULATOR, Computation, trace_figures
+
+    traced = trace_figures(
+        reply="المقدم 1,100,000 والقسط 137,500 على 8 سنين.",
+        computations=(
+            Computation(
+                tool="payment_plan_calculator",
+                unit_id="MD-1",
+                values={
+                    "down_payment": 1_100_000,
+                    "installment_amount": 137_500,
+                    "years": 8,
+                },
+                inputs={"price": 5_500_000, "down_payment_pct": 20, "years": 8},
+            ),
+        ),
+    )
+    assert {figure.value for figure in traced} == {1_100_000, 137_500, 8}
+    assert {figure.source for figure in traced} == {CALCULATOR}
+    down = next(f for f in traced if f.value == 1_100_000)
+    assert "payment_plan_calculator" in down.excerpt
+    assert "price=5,500,000" in down.excerpt
+
+
+def test_the_row_wins_when_the_calculator_only_echoed_it():
+    """A schedule carries the total it was built from, so a price appears in
+    both. The row is where the figure originated and the calculator is where it
+    passed through, and a pane that named the calculator would send a broker
+    looking for a computation that did not compute anything."""
+    from moc.agent.provenance import INVENTORY, Computation, Row, trace_figures
+
+    traced = trace_figures(
+        reply="السعر 5,500,000.",
+        rows=(Row(unit_id="MD-1", values={"price": 5_500_000}),),
+        computations=(
+            Computation(
+                tool="payment_plan_calculator",
+                unit_id="MD-1",
+                values={"total": 5_500_000},
+                inputs={},
+            ),
+        ),
+    )
+    assert traced[0].source == INVENTORY
+
+
+def test_the_as_of_travels_with_the_figure_rather_than_beside_it():
+    """A price separated from its date is a price the tenant cannot stand
+    behind. The pane shows it on the figure, not once at the top, because a
+    reply can quote two units snapshotted on different days."""
+    from datetime import date
+
+    from moc.agent.provenance import Row, trace_figures
+
+    traced = trace_figures(
+        reply="مدينتي 5,500,000 وزايد 7,200,000.",
+        rows=(
+            Row(unit_id="MD-1", values={"price": 5_500_000}, as_of=date(2026, 8, 1)),
+            Row(unit_id="SZ-9", values={"price": 7_200_000}, as_of=date(2026, 7, 2)),
+        ),
+    )
+    assert {f.value: f.as_of for f in traced} == {
+        5_500_000: date(2026, 8, 1),
+        7_200_000: date(2026, 7, 2),
+    }
+
+
+def test_a_figure_from_neither_a_row_nor_a_computation_is_an_orphan():
+    """The same honesty the chunk path already has. A pane where every figure
+    has a source would be making §19.3's claim as a rendering default."""
+    from moc.agent.provenance import Row, trace_figures
+
+    traced = trace_figures(
+        reply="السعر 5,500,000 والمقدم 999,999.",
+        rows=(Row(unit_id="MD-1", values={"price": 5_500_000}),),
+    )
+    orphan = next(f for f in traced if f.value == 999_999)
+    assert orphan.grounded is False
+    assert orphan.source is None
+
+
+def test_an_inventory_figure_uses_the_wire_shape_the_pane_already_renders():
+    """One renderer. The keys are the ones `SourcePane` reads today; only the
+    value of `source` is new."""
+    from datetime import date
+
+    from moc.agent.provenance import Row, trace_figures
+
+    figure = trace_figures(
+        reply="5,500,000",
+        rows=(Row(unit_id="MD-1", values={"price": 5_500_000}, title="Madinaty",
+                  as_of=date(2026, 8, 1)),),
+    )[0].to_dict()
+    assert set(figure) == {
+        "value", "raw", "grounded", "source", "chunkId", "title", "asOf", "excerpt"
+    }
+    assert figure["asOf"] == "2026-08-01"

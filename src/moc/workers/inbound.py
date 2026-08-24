@@ -288,11 +288,13 @@ class InboundWorker:
                     # sources went missing shows a customer-visible figure with
                     # no evidence behind it, which is the one thing the source
                     # pane exists to rule out.
-                    # Absent on an inventory turn: those figures came from a
-                    # row and a calculator, not from chunks, and the source
-                    # pane renders chunk provenance. Recorded as nothing rather
-                    # than as an empty trace, which would read as "we looked
-                    # and found no source".
+                    # Both grounding modes, one field. A document answer's
+                    # figures trace to chunks; an inventory answer's trace to a
+                    # unit row and the calculator's inputs (Task 41b). `getattr`
+                    # because the two turn types are separate verticals with no
+                    # common base — and a runner that produced no provenance at
+                    # all would record None rather than an empty trace, which
+                    # would read as "we looked and found no source".
                     provenance=getattr(result, "provenance", None),
                 )
             await session.commit()

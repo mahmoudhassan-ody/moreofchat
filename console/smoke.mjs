@@ -362,6 +362,43 @@ await page.route("**/inbox/*/thread", (route) =>
           },
         },
       },
+      {
+        /* §3.2's grounding mode, in the same pane. A price traces to a unit
+           row and its snapshot date; an instalment to the calculator and the
+           inputs it ran with. There is no figure audit on this one — no model
+           composed the numbers — and a pane holding its own list of gates drew
+           that absence as a failed check. */
+        channel: "whatsapp",
+        author: "bot",
+        body: "شقة في مدينتي بـ 5,500,000 جنيه، المقدم 1,100,000.",
+        created_at: "2026-08-22T09:00:09+00:00",
+        provenance: {
+          figures: [
+            {
+              value: 5500000,
+              raw: "5,500,000",
+              grounded: true,
+              source: "inventory",
+              chunkId: "MD-1",
+              title: "Madinaty",
+              asOf: "2026-08-01",
+              excerpt: "price = 5,500,000",
+            },
+            {
+              value: 1100000,
+              raw: "1,100,000",
+              grounded: true,
+              source: "calculator",
+              chunkId: "MD-1",
+              title: null,
+              asOf: "2026-08-01",
+              excerpt:
+                "down_payment = 1,100,000 — payment_plan_calculator(down_payment_pct=20, price=5,500,000, years=8)",
+            },
+          ],
+          gates: { numeric_grounding: true },
+        },
+      },
     ]),
   }),
 );
@@ -381,10 +418,10 @@ check("and it is labelled from the catalogue", routed.join(" ").includes("Routed
 
 await page.locator(".conv").click();
 await page.waitForSelector(".bubble", { timeout: 5000 });
-check("the thread renders both turns", await page.locator(".bubble").count(), 2);
+check("the thread renders every turn", await page.locator(".bubble").count(), 3);
 check("no source pane until a reply is picked", await page.locator(".sources").count(), 0);
 
-await page.locator(".row.out .bubble").click();
+await page.locator(".row.out .bubble").first().click();
 await page.waitForSelector(".sources", { timeout: 5000 });
 
 check("the figure is shown", await page.locator(".figure .mono").innerText(), "1400");
@@ -399,6 +436,36 @@ check(
   true,
 );
 check("and the gates that passed", await page.locator(".gate.on").count(), 2);
+
+/* The other grounding mode, in the same pane — demo plan Task 41b. The source
+   pane is the demo's centrepiece and it was blank for two of the three
+   tenants: a price traces to a unit row and its snapshot date, an instalment
+   to the calculator and the inputs it ran with. */
+await page.locator(".row.out .bubble").nth(1).click();
+await page.waitForSelector(".sources", { timeout: 5000 });
+
+const traced = await page.locator(".source").allInnerTexts();
+check("a broker's price traces to the row it came from", traced[0].includes("price ="), true);
+check("named by the compound", traced[0].includes("Madinaty"), true);
+check("with the date the row was snapshotted", traced[0].includes("2026-08-01"), true);
+check(
+  "an instalment traces to the calculator and its inputs",
+  traced[1].includes("payment_plan_calculator") && traced[1].includes("price=5,500,000"),
+  true,
+);
+check(
+  "labelled from the catalogue rather than by a tool identifier",
+  traced[1].includes("Payment calculator"),
+  true,
+);
+/* One gate, not two. There is no figure audit on an inventory reply — no model
+   composed those numbers — and a pane holding its own list drew that absence
+   as a failed check: a red mark for something that never ran, on the screen
+   whose whole job is to say what was verified. */
+check("only the gate this vertical runs is drawn", await page.locator(".gate").count(), 1);
+
+await page.locator(".row.out .bubble").first().click();
+await page.waitForSelector(".sources", { timeout: 5000 });
 
 /* The trap from Task 30, on the screen that has forty chances at it: the
  * figure is monospace and the Arabic label is not. Asked of the renderer,
