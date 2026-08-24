@@ -1,0 +1,84 @@
+# Email via SendGrid Inbound Parse — design §6.1, §6.2, demo plan Task 37.
+#
+# ── Nothing signs the body ───────────────────────────────────────────────────
+#
+# Twilio HMACs the request; Meta HMACs the payload. SendGrid's Inbound Parse
+# does neither — it POSTs an unauthenticated multipart form to whatever URL is
+# configured for the receiving hostname. The only credential the vendor offers
+# is HTTP basic auth embedded in that URL, so what the webhook checks is a
+# bearer credential:
+#
+#   - it proves the sender knows the credential, not that the body is intact;
+#   - it is replayable by anyone who obtains the header;
+#   - there is nothing binding it to this particular delivery.
+#
+# Same honesty rule as Telegram: the function is called `verify_secret`, not
+# `verify_signature`, because it verifies no signature.
+#
+# ── SPF says nothing about the From address ──────────────────────────────────
+#
+# SPF authenticates the envelope sender — the Return-Path, which no mail client
+# shows anyone. A message can pass SPF on a domain the sender owns while
+# claiming `From: registrar@sinai.edu.eg`. So the adapter computes DMARC-style
+# alignment (SPF *or* DKIM passing on a domain that matches the From domain)
+# and refuses anything that fails it, because `sender_ref` is the key the
+# conversation store threads on: an unauthenticated From selects somebody
+# else's conversation.
+#
+# What each tenant must publish in DNS so their own replies survive this at the
+# other end is in `docs/ops/email-sending-domains.md`. It is not a code
+# concern and it is the one with a multi-day lead time.
+
+version: 1
+
+api_base: https://api.sendgrid.com
+
+# One Inbound Parse hostname per tenant, so the mailbox is in the path and the
+# credential is per tenant rather than platform-wide. The reference is
+# guessable on purpose — it selects which credential to check and is not itself
+# one. Same rule as the Telegram bot reference and the WhatsApp address.
+webhook_path: /webhooks/email/{account_ref}
+
+# HTTP basic auth, which is what SendGrid can put on an Inbound Parse URL.
+auth_header: Authorization
+auth_scheme: "Basic "
+
+# No service window. Email has no 24-hour rule and no template concept, so a
+# sender that inherited WhatsApp's refusal would reject every reply to a
+# message older than a day.
+service_window_hours: null
+
+http:
+  connect_timeout_seconds: 5
+  read_timeout_seconds: 30
+
+# RFC 3834. Set on every reply so an out-of-office autoresponder at the other
+# end does not answer it — the only way a loop can be stopped from a mailbox
+# nobody here controls.
+auto_submitted: auto-generated
+
+reply_prefix: "Re: "
+# Already-a-reply, in the subject lines this platform will actually meet.
+# Matched case-insensitively; without it every turn adds another "Re:" and the
+# thread subject grows a prefix per message.
+reply_prefix_pattern: '^\s*(re|رد|fwd|fw)\s*:'
+
+# Where the customer's own words end and the thread they quoted begins.
+#
+# These are heuristics and they are tuned to be shy: a marker that fires too
+# eagerly truncates a real question, which is invisible — the bot answers the
+# half it saw. If stripping leaves nothing the original is kept instead, on the
+# same principle.
+quote_markers:
+  - 'wrote:\s*$'
+  - 'كتب:\s*$'
+  - '^-{2,}\s*Original Message\s*-{2,}'
+  - '^_{10,}\s*$'
+  - '^--\s*$'
+
+# What crosses the queue. A mail thread has no size bound, this box has 3.3 GB,
+# and every quoted reply carries the whole conversation again. The cap is on
+# the text the turn reads; the marker exists so nobody reads the cut as the end
+# of what the customer wrote.
+max_body_chars: 20000
+truncation_marker: " […]"

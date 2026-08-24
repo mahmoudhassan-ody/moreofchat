@@ -248,6 +248,7 @@ class TwilioWhatsApp:
         template: str | None = None,
         template_variables: dict[str, str] | None = None,
         last_inbound_at: datetime | None = None,
+        thread_ref: str | None = None,
         now: datetime | None = None,
     ) -> OutboundReceipt:
         """Send one message, refusing freeform text outside the window (§6.2).

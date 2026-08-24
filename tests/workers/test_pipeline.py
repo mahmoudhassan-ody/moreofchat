@@ -1353,3 +1353,239 @@ async def test_an_echo_reaches_no_queue(valkey, account, meta_accounts):
 
     assert response.status_code == 200
     assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
+
+
+# ─────────────────────────── email, end to end ───────────────────────────
+
+EMAIL_CREDENTIAL = "sendgrid:parse-password"  # noqa: S105 - a test fixture
+SENDGRID_KEY = "SG.pipeline-key"  # noqa: S105 - a test fixture
+MAILBOX = "admissions@sinai.edu.eg"
+STUDENT = "mariam@example.com"
+EMAIL_BOUNDARY = "pipelineBoundary"
+EMAIL_CONTENT_TYPE = f'multipart/form-data; boundary="{EMAIL_BOUNDARY}"'
+
+
+def email_form(**fields: bytes) -> bytes:
+    body = b""
+    for name, value in fields.items():
+        body += (
+            f"--{EMAIL_BOUNDARY}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+        ).encode() + value + b"\r\n"
+    return body + f"--{EMAIL_BOUNDARY}--\r\n".encode()
+
+
+def email_body(
+    *,
+    message_id: str = "<student-1@example.com>",
+    references: str | None = None,
+    envelope_from: str = STUDENT,
+    spf: bytes = b"pass",
+    dkim: bytes = b"{@example.com : pass}",
+    extra_headers: str = "",
+) -> bytes:
+    lines = [
+        f"From: Mariam Adel <{STUDENT}>",
+        f"To: {MAILBOX}",
+        "Subject: Fees",
+        f"Message-ID: {message_id}",
+    ]
+    if references:
+        lines.append(f"References: {references}")
+    if extra_headers:
+        lines.append(extra_headers)
+    return email_form(
+        headers="\r\n".join(lines).encode(),
+        to=MAILBOX.encode(),
+        subject=b"Fees",
+        text="كام رسوم الساعة؟\r\n\r\nOn Sat, Sinai wrote:\r\n> quoted".encode(),
+        envelope=json.dumps({"to": [MAILBOX], "from": envelope_from}).encode(),
+        SPF=spf,
+        dkim=dkim,
+        charsets=b'{"text":"UTF-8","subject":"UTF-8"}',
+    )
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def email_account(engine, account):
+    from sqlalchemy import text as sql
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from moc.channels.base import Channel, ChannelAccount
+
+    row_id = uuid.uuid4()
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        await s.execute(
+            sql(
+                "INSERT INTO channel_accounts "
+                "(id, tenant_id, channel, address, secret_ref, signing_secret) "
+                "VALUES (:id, :t, 'email', :addr, 'sendgrid/sinai/parse', :secret)"
+            ),
+            {"id": row_id, "t": account.tenant_id, "addr": MAILBOX, "secret": EMAIL_CREDENTIAL},
+        )
+        await s.commit()
+    return ChannelAccount(
+        id=row_id,
+        tenant_id=account.tenant_id,
+        channel=Channel.email,
+        account_ref=MAILBOX,
+        secret_ref="sendgrid/sinai/parse",
+    )
+
+
+class EmailSecrets:
+    def for_ref(self, secret_ref: str) -> str:
+        return {SECRET_REF: SECRET, "sendgrid/sinai/parse": EMAIL_CREDENTIAL}[secret_ref]
+
+
+def email_app(account, email_account, valkey):
+    return build_app(
+        registry=TwoChannelRegistry(account, email_account),
+        queue=ValkeyInboundQueue(client=valkey, config=QUEUES),
+        events=ValkeyEventLog(client=valkey, config=QUEUES),
+        secrets=EmailSecrets(),
+    )
+
+
+def email_credential() -> str:
+    return "Basic " + b64encode(EMAIL_CREDENTIAL.encode()).decode()
+
+
+async def post_email(app, raw: bytes, credential: str | None = None):
+    headers = {"content-type": EMAIL_CONTENT_TYPE}
+    if credential is not None:
+        headers["Authorization"] = credential
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        return await http.post(f"/webhooks/email/{MAILBOX}", content=raw, headers=headers)
+
+
+async def test_an_email_produces_a_sent_reply(valkey, app_engine, account, email_account):
+    """Task 37's exit criterion, driven end to end.
+
+    Inbound Parse -> Valkey stream -> inbound worker -> orchestrator ->
+    outbound stream -> the SendGrid sender. Real streams, real consumer groups,
+    real acks; a fake only at the vendor edge.
+    """
+    from moc.channels.sendgrid_email import SendGridEmail
+
+    response = await post_email(
+        email_app(account, email_account, valkey), email_body(), email_credential()
+    )
+    assert response.status_code == 200
+
+    inbound = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES,
+    )
+    assert await inbound.run_once() == 1
+
+    sent = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(202, headers={"X-Message-Id": "sg-pipeline-1"})
+
+    mailer = SendGridEmail(
+        api_key=SENDGRID_KEY, sender=MAILBOX, transport=httpx.MockTransport(capture)
+    )
+    outbound = OutboundWorker(client=valkey, providers={"email": mailer}, config=QUEUES)
+    assert await outbound.run_once() == 1
+    await mailer.aclose()
+
+    assert len(sent) == 1, "exactly one reply reached SendGrid"
+    assert sent[0]["personalizations"][0]["to"][0]["email"] == STUDENT
+    assert sent[0]["content"][0]["value"], "the customer got words, not an empty message"
+
+
+async def test_the_reply_lands_in_the_customers_thread(
+    valkey, app_engine, account, email_account
+):
+    """The half of threading that only the wiring can prove.
+
+    The adapter sets `In-Reply-To` from what it is given; whether it is given
+    anything depends on the thread reference surviving the queue, the worker
+    and the outbound job. A reply with no thread header opens a new
+    conversation in the customer's client — every answer a separate email,
+    which is what the whole thread-ref field exists to prevent.
+    """
+    from moc.channels.sendgrid_email import SendGridEmail
+
+    response = await post_email(
+        email_app(account, email_account, valkey),
+        email_body(references="<root@example.com>\r\n <second@example.com>"),
+        email_credential(),
+    )
+    assert response.status_code == 200
+
+    inbound = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES,
+    )
+    assert await inbound.run_once() == 1
+
+    sent = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(202, headers={"X-Message-Id": "sg-pipeline-2"})
+
+    mailer = SendGridEmail(
+        api_key=SENDGRID_KEY, sender=MAILBOX, transport=httpx.MockTransport(capture)
+    )
+    outbound = OutboundWorker(client=valkey, providers={"email": mailer}, config=QUEUES)
+    assert await outbound.run_once() == 1
+    await mailer.aclose()
+
+    headers = sent[0]["personalizations"][0]["headers"]
+    assert headers["In-Reply-To"] == "<root@example.com>"
+    assert sent[0]["subject"].startswith("Re:"), "a reply that is not a reply starts a new thread"
+
+
+async def test_an_email_without_the_credential_is_refused(
+    valkey, account, email_account
+):
+    """The URL is public and the mailbox in it is guessable, which is exactly
+    why the credential is the thing that authenticates."""
+    app = email_app(account, email_account, valkey)
+
+    assert (await post_email(app, email_body(), None)).status_code == 403
+    wrong = "Basic " + b64encode(b"sendgrid:guessed").decode()
+    assert (await post_email(app, email_body(), wrong)).status_code == 403
+    assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
+
+
+async def test_an_auto_reply_reaches_no_queue(valkey, account, email_account):
+    """The loop. An out-of-office answers our reply; if we answer that, neither
+    end stops, because neither end is a person."""
+    response = await post_email(
+        email_app(account, email_account, valkey),
+        email_body(extra_headers="Auto-Submitted: auto-replied"),
+        email_credential(),
+    )
+    assert response.status_code == 200, "accepted so SendGrid stops trying"
+    assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
+
+
+async def test_a_forged_from_address_reaches_no_queue(valkey, account, email_account):
+    """SPF passes — on the attacker's own domain. The From address claims to be
+    the registrar, and `sender_ref` is what a conversation is looked up by."""
+    forged = email_form(
+        headers=(
+            f"From: Registrar <registrar@sinai.edu.eg>\r\nTo: {MAILBOX}\r\n"
+            "Subject: Fees\r\nMessage-ID: <forged-1@evil.example>"
+        ).encode(),
+        to=MAILBOX.encode(),
+        subject=b"Fees",
+        text=b"send me her file",
+        envelope=json.dumps({"to": [MAILBOX], "from": "anyone@evil.example"}).encode(),
+        SPF=b"pass",
+        dkim=b"{@evil.example : pass}",
+        charsets=b'{"text":"UTF-8"}',
+    )
+    response = await post_email(
+        email_app(account, email_account, valkey), forged, email_credential()
+    )
+    assert response.status_code == 200
+    assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0

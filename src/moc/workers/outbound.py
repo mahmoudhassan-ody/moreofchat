@@ -77,6 +77,7 @@ class OutboundWorker:
             template=job.template,
             template_variables=job.template_variables,
             last_inbound_at=job.inbound_at(),
+            thread_ref=job.thread_ref,
         )
 
     # ─────────────────────────── token bucket ───────────────────────────

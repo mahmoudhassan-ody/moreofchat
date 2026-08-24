@@ -201,6 +201,11 @@ class InboundWorker:
             # A reply to a message we just received is always inside the
             # 24-hour window (§6.2) — the inbound message is what opened it.
             last_inbound_at=message.received_at.isoformat(),
+            # Email's threading, carried back out. §6.1 gives the inbound
+            # message a thread reference and nothing read it, so every reply
+            # started a new thread in the customer's client — one answer per
+            # email, none of them attached to the question.
+            thread_ref=message.thread_ref,
         )
         await self._client.xadd(self._outbound_stream, {"payload": job.to_json()})
 

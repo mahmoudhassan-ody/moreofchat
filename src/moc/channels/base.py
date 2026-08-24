@@ -119,6 +119,14 @@ class OutboundJob:
     time: the window (§6.2) is a property of the conversation as it stood when
     the turn ran, and re-reading it later would let a reply become
     window-invalid purely because the sender was backed up.
+
+    `thread_ref` travels for the same reason and is email's alone — §6.1 gives
+    it to the inbound message and nothing carried it back out, so every reply
+    opened a new thread in the customer's client. Like `template`, it is a
+    field one channel reads and the others ignore, which is the price of one
+    send path: the alternative is the sender asking which channel it is
+    talking to before it builds a call, and that is the branch that eventually
+    hands a chat id to a phone network.
     """
 
     tenant_id: str
@@ -128,6 +136,7 @@ class OutboundJob:
     template: str | None = None
     template_variables: dict[str, str] | None = None
     last_inbound_at: str | None = None
+    thread_ref: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -139,6 +148,7 @@ class OutboundJob:
                 "template": self.template,
                 "template_variables": self.template_variables,
                 "last_inbound_at": self.last_inbound_at,
+                "thread_ref": self.thread_ref,
             },
             ensure_ascii=False,
         )
@@ -224,6 +234,7 @@ class MessagingProvider(Protocol):
         template: str | None = None,
         template_variables: dict[str, str] | None = None,
         last_inbound_at: datetime | None = None,
+        thread_ref: str | None = None,
     ) -> OutboundReceipt: ...
 
 

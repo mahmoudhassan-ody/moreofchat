@@ -23,6 +23,14 @@ the raw bytes only after the signature checks out, and the pre-verification
 read is used for exactly one thing — the lookup key. An unknown address is
 refused there, before any tenant work is done on a stranger's behalf.
 
+**Email verifies something weaker, and says so.** Twilio signs the request and
+Meta signs the payload; SendGrid's Inbound Parse signs nothing at all, and the
+only credential it can carry is HTTP basic auth on the URL. So that route
+checks a bearer credential — it establishes that the sender knows a secret and
+nothing about the body — and the message's own authenticity is established
+separately, from SPF and DKIM alignment inside the adapter. Two weaker checks
+in place of one strong one, which is what the vendor offers.
+
 **Why the duplicate check comes after verification.** Claiming a message id
 first would let anyone suppress a real inbound message by posting its id ahead
 of the vendor, with no signature required. It is a spend of a scarce resource
@@ -50,6 +58,9 @@ from moc.channels.base import (
 from moc.channels.meta import UnknownObject, account_refs, verify_challenge
 from moc.channels.meta import parse_inbound as parse_meta
 from moc.channels.meta import verify_signature as verify_meta_signature
+from moc.channels.sendgrid_email import NotACustomerTurn, Unauthenticated
+from moc.channels.sendgrid_email import parse_inbound as parse_email
+from moc.channels.sendgrid_email import verify_secret as verify_email_credential
 from moc.channels.telegram import NotAMessage, verify_secret
 from moc.channels.telegram import parse_inbound as parse_telegram
 from moc.channels.twilio_wa import parse_inbound, verify_signature
@@ -58,6 +69,7 @@ from moc.config_store import load
 _WHATSAPP = "channels/whatsapp"
 _TELEGRAM = "channels/telegram"
 _META = "channels/meta"
+_EMAIL = "channels/email"
 #: Platform-level rather than per tenant: one Meta app serves every page,
 #: so the verify token and the app secret are the platform's.
 _META_VERIFY_REF = "meta/app/verify_token"
@@ -281,6 +293,62 @@ def build_app(
             except Exception:
                 await events.release(message.provider_message_id)
                 return Response(status_code=_UNAVAILABLE)
+        return Response(status_code=_OK)
+
+    email_settings = load(_EMAIL)
+
+    @app.post(email_settings["webhook_path"])
+    async def email_inbound(account_ref: str, request: Request) -> Response:
+        """SendGrid Inbound Parse, which signs nothing.
+
+        One Parse hostname per tenant, so the mailbox is in the path and the
+        credential is per tenant. What arrives is HTTP basic auth: a bearer
+        credential that proves the sender knows a secret and says nothing about
+        the body. The adapter names it for what it proves.
+        """
+        raw_body = await request.body()
+
+        account = await registry.resolve(channel=Channel.email, account_ref=account_ref)
+        if account is None:
+            return Response(status_code=_FORBIDDEN)
+
+        if not verify_email_credential(
+            presented=request.headers.get(email_settings["auth_header"]),
+            expected=secrets.for_ref(account.secret_ref),
+            config=email_settings,
+        ):
+            return Response(status_code=_FORBIDDEN)
+
+        try:
+            message = parse_email(
+                raw_body=raw_body,
+                content_type=request.headers.get("content-type", ""),
+                account=account,
+                config=email_settings,
+            )
+        except (NotACustomerTurn, Unauthenticated):
+            # Accepted and deliberately not processed. An autoresponder or a
+            # bounce answered would be a loop with a mailbox nobody here
+            # controls; a From address neither SPF nor DKIM stands behind is a
+            # request to be handed somebody else's conversation. 200 either
+            # way, because a retry would deliver the same message again.
+            return Response(status_code=_OK)
+        except ValueError:
+            return Response(status_code=_BAD_REQUEST)
+
+        if not await events.claim(message.provider_message_id):
+            return Response(status_code=_OK)
+
+        try:
+            await queue.publish(message)
+        except Exception:
+            # The claim is released so a retry is not discarded as a duplicate.
+            # Whether a retry comes at all is SendGrid's to decide and not
+            # something this handler can rely on — which is a property of the
+            # vendor, not a reason to answer 200 for a message that is not on
+            # the queue.
+            await events.release(message.provider_message_id)
+            return Response(status_code=_UNAVAILABLE)
         return Response(status_code=_OK)
 
     return app

@@ -135,7 +135,14 @@ name = The agent inbox never reaches a channel adapter or the queue directly
 type = forbidden
 source_modules =
     moc.api.inbox
+# Every adapter, enumerated. A forbidden contract on `moc.channels` as a
+# whole would also forbid `moc.channels.base`, which is where `OutboundJob`
+# lives and is exactly what the inbox is supposed to use — so the list is
+# per adapter, and a new channel has to be added here by whoever adds it.
 forbidden_modules =
     moc.channels.twilio_wa
+    moc.channels.telegram
+    moc.channels.meta
+    moc.channels.sendgrid_email
     moc.channels.valkey
     moc.workers
