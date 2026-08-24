@@ -176,11 +176,13 @@ async def valkey():
     """
     import os
 
-    import redis.asyncio as redis
-
+    from moc.channels.valkey import valkey_client
     from moc.config import settings
 
-    client = redis.from_url(settings.valkey_url(VALKEY_TEST_DB), decode_responses=True)
+    # The same factory the workers use. A fixture that built its own client
+    # would be a second set of timeouts, and the first one hid a worker that
+    # could not stay up on an idle stream.
+    client = valkey_client(db=VALKEY_TEST_DB)
     try:
         await client.ping()
     except Exception as exc:

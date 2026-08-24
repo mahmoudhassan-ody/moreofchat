@@ -1,0 +1,38 @@
+# The one process that listens on a public port — design §14, Task 39.
+#
+# CLAUDE.md says compose ports bind to 127.0.0.1 only, and this is the single
+# deliberate exception: a webhook is a URL a vendor's servers must reach, so
+# something has to answer on 443. The rule is not weakened, it is narrowed —
+# Caddy is the only service publishing outside loopback, and a test asserts
+# that about `compose.yaml` rather than leaving it to review.
+#
+# TLS is automatic from MOC_DOMAIN. Twilio and Meta both refuse a webhook URL
+# that is not HTTPS with a valid certificate, so a self-signed certificate is
+# not a shortcut here — it is a webhook that never fires.
+
+{
+	email {$MOC_TLS_EMAIL}
+}
+
+{$MOC_DOMAIN} {
+	encode zstd gzip
+
+	# The public path. Everything under it reaches the webhook process, which
+	# holds no application database credentials at all (see `moc.api.main`).
+	handle /webhooks/* {
+		reverse_proxy api:8000
+	}
+
+	# The health check is not published. It exists for the container's own
+	# healthcheck on the compose network; answering it from the internet tells
+	# a stranger when the service is degraded enough to be worth attacking.
+	handle /healthz {
+		respond 404
+	}
+
+	# Nothing else is served yet. The console is a separate process and is not
+	# deployed — see docs/ops/real-phone-path.md.
+	handle {
+		respond 404
+	}
+}

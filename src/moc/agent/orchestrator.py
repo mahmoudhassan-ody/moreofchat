@@ -269,6 +269,7 @@ class Orchestrator:
         text: str,
         channel: str,
         engine: ScriptEngine | None = None,
+        retriever: Retriever | None = None,
     ) -> TurnResult:
         """Run one inbound message to a reply.
 
@@ -278,6 +279,16 @@ class Orchestrator:
         cannot bill the wrong tenant if it is never holding an id to pass.
         """
         clock = Stopwatch()
+        # **Which corpus this turn reads.** `FusionRetriever` is built with a
+        # tenant id and a vertical, so a process-lifetime retriever answers
+        # every tenant from whichever tenant it was started with — a
+        # cross-tenant read that arrives as a fluent, correctly-cited reply
+        # about somebody else's fees. RLS cannot catch it: the retriever holds
+        # the id it filters on, and it holds the wrong one.
+        #
+        # Same shape as `engine` above it, and for the same reason: what a turn
+        # runs against is a property of the turn.
+        search_with = retriever or self._retriever
         redaction = redact(text)
         # `text` is not read again below. Everything downstream takes
         # `redaction.text`, which is the point of §7.3.
@@ -289,7 +300,7 @@ class Orchestrator:
 
         async def search() -> Any:
             with clock.phase("intake.retrieval"):
-                return await self._retriever.search(query=redaction.text)
+                return await search_with.search(query=redaction.text)
 
         try:
             # Concurrently. Both consume `redaction.text` and neither reads the

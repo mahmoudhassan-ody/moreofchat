@@ -21,6 +21,7 @@ from typing import Any
 from moc.channels.base import InboundMessage, MediaRef
 
 _PAYLOAD = "payload"
+_QUEUES = "workers/queues"
 
 
 def _encode(message: InboundMessage) -> str:
@@ -70,6 +71,38 @@ def decode(document: str | dict[str, Any]) -> InboundMessage:
             for m in record.get("media") or []
         ),
         raw=record.get("raw") or {},
+    )
+
+
+def valkey_client(*, db: int | None = None, config: dict[str, Any] | None = None) -> Any:
+    """The one place a Valkey client is constructed.
+
+    **The socket timeout has to outlast the longest blocking read.** A worker
+    calling `run_once(block=True)` holds an XREADGROUP open for `block_ms`;
+    redis-py 8 defaults `socket_timeout` to 5 seconds, and `block_ms` is 5000.
+    A worker started against an idle stream therefore raised `TimeoutError` and
+    exited — which is to say, no worker could stay up with nothing to do, which
+    is what a worker does most of the time.
+
+    Nothing caught it because nothing ever blocked: every test polls with
+    `block=False`. So the coupling lives here, derived from the same config the
+    workers read, rather than in whichever process happens to build a client.
+    """
+    from redis.asyncio import Redis
+
+    from moc.config import settings
+    from moc.config_store import load
+
+    queues = config or load(_QUEUES)
+    longest = max(
+        section["block_ms"]
+        for section in queues.values()
+        if isinstance(section, dict) and "block_ms" in section
+    )
+    return Redis.from_url(
+        settings.valkey_url(db),
+        decode_responses=True,
+        socket_timeout=longest / 1000 + queues["client"]["socket_timeout_margin_seconds"],
     )
 
 

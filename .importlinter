@@ -19,6 +19,16 @@ forbidden_modules =
     openai
     twilio
 
+# The exemption below is the same edge the `qdrant-client-in-one-module`
+# contract already ignores, and it has to be repeated here because this
+# contract follows chains too: the composition root imports `QdrantRepository`
+# — the filtered object, which is the whole point of it existing — and that
+# module imports the SDK. Without the ignore, "the workers may not reach
+# Qdrant" also means "the workers may not construct the safe repository", and
+# the system cannot be started at all.
+#
+# What stays forbidden is what matters: a direct `import qdrant_client`
+# anywhere outside `vectors.py`.
 [importlinter:contract:vector-store-isolation]
 name = Qdrant and Meilisearch only inside the retrieval adapters
 type = forbidden
@@ -33,6 +43,8 @@ source_modules =
 forbidden_modules =
     qdrant_client
     meilisearch
+ignore_imports =
+    moc.retrieval.vectors -> qdrant_client
 
 [importlinter:contract:layers]
 name = Layered architecture
@@ -97,22 +109,26 @@ forbidden_modules =
 ignore_imports =
     moc.retrieval.vectors -> qdrant_client
 
-# Nothing in moc imports the Meilisearch SDK at all — `lexical.py` takes an
-# injected client and uses only its call shape, so it needs no import and no
-# exemption. Stated as a contract rather than left implicit because the first
-# person to want `AsyncClient` for a type hint will add the import without
-# noticing they have widened the surface; this makes that a deliberate edit
-# here rather than a quiet one there.
+# This said "imported nowhere in moc" until Task 39, and it was true because
+# nothing in moc could be *started*: every client came from a test fixture.
+# Running the system means something has to construct one, and the choice was
+# between the SDK appearing in the composition root or in the module that
+# already owns lexical search. It belongs in `lexical.py`: one file importing
+# it is a fact this contract can pin, and a composition root importing it is
+# the beginning of a second search path.
 #
-# Contrast with Qdrant, where `vectors.py` genuinely needs `models` to build a
-# filter and therefore carries an explicit exemption.
-[importlinter:contract:meilisearch-client-is-injected-not-imported]
-name = The Meilisearch SDK is imported nowhere in moc
+# The repository itself still takes an injected client and uses only its call
+# shape. Same shape as the Qdrant contract below it, and now for the same
+# reason.
+[importlinter:contract:meilisearch-client-in-one-module]
+name = The Meilisearch SDK is imported only by the lexical repository
 type = forbidden
 source_modules =
     moc
 forbidden_modules =
     meilisearch_python_sdk
+ignore_imports =
+    moc.retrieval.lexical -> meilisearch_python_sdk
 
 # Task 22. An agent's reply is a message to a customer on a messaging
 # platform, so it is subject to the same rate limit and the same 24-hour

@@ -157,6 +157,22 @@ def sign(raw: bytes) -> str:
     return b64encode(hmac.new(SECRET.encode(), canonical.encode(), hashlib.sha1).digest()).decode()
 
 
+class ByChannel:
+    """Single-tenant test wiring: one adapter per channel, tenant ignored.
+
+    Deliberately not in `src`. The production registry keys on the tenant as
+    well, and a convenience that ignores it, living in the source tree, is the
+    one that ends up wired — after which every tenant's replies go out under
+    one name.
+    """
+
+    def __init__(self, providers: dict) -> None:
+        self._providers = dict(providers)
+
+    async def for_job(self, *, tenant_id: str, channel: str):
+        return self._providers.get(channel)
+
+
 def orchestrator() -> Orchestrator:
     provider = FakeProvider("anthropic", text="unused — retrieval is empty")
     router = Router(
@@ -226,7 +242,7 @@ async def test_a_signed_webhook_produces_a_sent_reply(valkey, app_engine, accoun
         return httpx.Response(201, json={"sid": "SM-out", "status": "queued"})
 
     outbound = OutboundWorker(
-        client=valkey, providers={"whatsapp": sender(capture)}, config=QUEUES
+        client=valkey, providers=ByChannel({"whatsapp": sender(capture)}), config=QUEUES
     )
     assert await outbound.run_once() == 1
 
@@ -475,7 +491,7 @@ async def test_outbound_dead_letters_after_the_configured_attempts(valkey):
     )
 
     worker = OutboundWorker(
-        client=valkey, providers={"whatsapp": sender(rejects)}, config=QUEUES
+        client=valkey, providers=ByChannel({"whatsapp": sender(rejects)}), config=QUEUES
     )
     for _ in range(QUEUES["outbound"]["max_attempts"] + 1):
         await worker.run_once()
@@ -494,10 +510,10 @@ async def test_the_rate_limiter_is_shared_across_sender_processes(valkey):
     limit = QUEUES["rate_limit"]
     tenant = str(uuid4())
     one = OutboundWorker(
-        client=valkey, providers={"whatsapp": sender(lambda r: None)}, config=QUEUES
+        client=valkey, providers=ByChannel({"whatsapp": sender(lambda r: None)}), config=QUEUES
     )
     two = OutboundWorker(
-        client=valkey, providers={"whatsapp": sender(lambda r: None)}, config=QUEUES
+        client=valkey, providers=ByChannel({"whatsapp": sender(lambda r: None)}), config=QUEUES
     )
 
     taken = 0
@@ -755,7 +771,7 @@ async def test_a_live_handoff_suspends_the_bot(valkey, app_engine, account):
 
     # And nothing was queued for the customer.
     outbound = OutboundWorker(
-        client=valkey, providers={"whatsapp": sender(lambda r: None)}, config=QUEUES
+        client=valkey, providers=ByChannel({"whatsapp": sender(lambda r: None)}), config=QUEUES
     )
     assert await outbound.run_once() == 0
 
@@ -887,7 +903,7 @@ async def test_a_second_channel_is_not_sent_through_the_first_channels_adapter(v
     whatsapp, telegram = Recording("whatsapp"), Recording("telegram")
     worker = OutboundWorker(
         client=valkey,
-        providers={"whatsapp": whatsapp, "telegram": telegram},
+        providers=ByChannel({"whatsapp": whatsapp, "telegram": telegram}),
         config=QUEUES,
     )
 
@@ -912,7 +928,7 @@ async def test_a_job_for_a_channel_with_no_provider_is_dead_lettered(valkey):
     from moc.channels.base import OutboundJob
 
     worker = OutboundWorker(
-        client=valkey, providers={}, config=QUEUES
+        client=valkey, providers=ByChannel({}), config=QUEUES
     )
     await valkey.xadd(
         QUEUES["outbound"]["stream"],
@@ -1051,7 +1067,7 @@ async def test_a_telegram_message_produces_a_sent_reply(
 
     bot = TelegramBot(token=TELEGRAM_TOKEN, transport=httpx.MockTransport(capture))
     outbound = OutboundWorker(
-        client=valkey, providers={"telegram": bot}, config=QUEUES
+        client=valkey, providers=ByChannel({"telegram": bot}), config=QUEUES
     )
     assert await outbound.run_once() == 1
     await bot.aclose()
@@ -1279,7 +1295,7 @@ async def test_a_meta_message_produces_a_sent_reply(
         page_id=page, access_token="tok", transport=httpx.MockTransport(capture)
     )
     outbound = OutboundWorker(
-        client=valkey, providers={channel: bot}, config=QUEUES
+        client=valkey, providers=ByChannel({channel: bot}), config=QUEUES
     )
     assert await outbound.run_once() == 1
     await bot.aclose()
@@ -1490,7 +1506,7 @@ async def test_an_email_produces_a_sent_reply(valkey, app_engine, account, email
     mailer = SendGridEmail(
         api_key=SENDGRID_KEY, sender=MAILBOX, transport=httpx.MockTransport(capture)
     )
-    outbound = OutboundWorker(client=valkey, providers={"email": mailer}, config=QUEUES)
+    outbound = OutboundWorker(client=valkey, providers=ByChannel({"email": mailer}), config=QUEUES)
     assert await outbound.run_once() == 1
     await mailer.aclose()
 
@@ -1534,7 +1550,7 @@ async def test_the_reply_lands_in_the_customers_thread(
     mailer = SendGridEmail(
         api_key=SENDGRID_KEY, sender=MAILBOX, transport=httpx.MockTransport(capture)
     )
-    outbound = OutboundWorker(client=valkey, providers={"email": mailer}, config=QUEUES)
+    outbound = OutboundWorker(client=valkey, providers=ByChannel({"email": mailer}), config=QUEUES)
     assert await outbound.run_once() == 1
     await mailer.aclose()
 
@@ -1589,3 +1605,242 @@ async def test_a_forged_from_address_reaches_no_queue(valkey, account, email_acc
     )
     assert response.status_code == 200
     assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
+
+
+# ─────────────────── two tenants through one pair of workers ───────────────────
+#
+# Everything above drives one tenant, and every worker in this file is
+# constructed with that tenant's collaborators. Task 39 is the first time the
+# question "can one process serve the second tenant?" is asked, and the answer
+# has to be yes before a phone is pointed at any of it: the demo is three
+# tenants and the workers are one pair of processes.
+#
+# Three separate single-tenant assumptions are pinned here. None of them fails
+# loudly when it is wrong — each one produces a reply.
+
+
+class RecordingRetriever:
+    """A retriever that knows which corpus it is."""
+
+    def __init__(self, owner: str) -> None:
+        self.owner = owner
+        self.asked: list[str] = []
+
+    async def search(self, *, query: str):
+        self.asked.append(query)
+        return Retrieval(passages=(), confidence=0.0)
+
+
+class Retrievers:
+    """A per-tenant retriever factory, as the composition root supplies."""
+
+    def __init__(self) -> None:
+        self.built: dict[str, RecordingRetriever] = {}
+
+    async def for_tenant(self, *, tenant_id, vertical: str):
+        key = str(tenant_id)
+        self.built.setdefault(key, RecordingRetriever(key))
+        return self.built[key]
+
+
+async def test_a_second_tenants_question_is_never_answered_from_the_firsts_corpus(
+    valkey, app_engine, engine, account, tenant_tables
+):
+    """The retriever is bound to one tenant by construction.
+
+    `FusionRetriever` takes `tenant_id` and `vertical` when it is built, and the
+    orchestrator takes the retriever when *it* is built. One worker process
+    therefore retrieves every tenant's answers from whichever tenant's corpus
+    it was started with — a cross-tenant read that produces a fluent, grounded,
+    correctly-cited reply about somebody else's fees.
+
+    RLS does not catch it: the retriever holds the tenant id it filters on, and
+    it holds the wrong one.
+    """
+    second = await _a_second_tenant(engine, "second-tenant")
+
+    retrievers = Retrievers()
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+        retrievers=retrievers,
+    )
+
+    for tenant_id in (account.tenant_id, second):
+        await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(
+            _message_for(tenant_id, account)
+        )
+    assert await worker.run_once() == 2
+
+    assert set(retrievers.built) == {str(account.tenant_id), str(second)}, (
+        "one retriever served both tenants; the second tenant's question was "
+        "answered from the first tenant's corpus"
+    )
+    # Built is not enough: the orchestrator holds one from construction, and a
+    # per-turn retriever it accepts and ignores looks identical from here.
+    for owner, retriever in retrievers.built.items():
+        assert retriever.asked, f"{owner}'s retriever was built and never asked"
+
+
+async def test_a_reply_goes_out_over_the_tenants_own_sender(valkey, app_engine, account):
+    """One number for every tenant puts Sinai's reply under the broker's name.
+
+    The Twilio adapter says so in its own docstring — the sender comes from the
+    tenant's `channel_accounts` row and is never platform-wide — and then the
+    worker holds exactly one adapter per channel for the life of the process.
+    The customer sees a reply from a business they never wrote to.
+    """
+    senders = {}
+
+    def capture(owner):
+        def handler(request: httpx.Request) -> httpx.Response:
+            senders.setdefault(owner, []).append(request.url.path)
+            return httpx.Response(201, json={"sid": "SM-out", "status": "queued"})
+
+        return handler
+
+    registry = TenantSenders(
+        {
+            (str(account.tenant_id), "whatsapp"): sender(capture("first")),
+            ("22222222-2222-2222-2222-222222222222", "whatsapp"): sender(capture("second")),
+        }
+    )
+    worker = OutboundWorker(client=valkey, providers=registry, config=QUEUES)
+
+    for tenant in (str(account.tenant_id), "22222222-2222-2222-2222-222222222222"):
+        await valkey.xadd(
+            QUEUES["outbound"]["stream"],
+            {
+                "payload": OutboundJob(
+                    tenant_id=tenant,
+                    channel="whatsapp",
+                    to=CUSTOMER,
+                    text="أهلا",
+                    last_inbound_at=datetime.now(UTC).isoformat(),
+                ).to_json()
+            },
+        )
+    assert await worker.run_once() == 2
+
+    assert set(senders) == {"first", "second"}, (
+        "both replies went out through one tenant's Twilio account"
+    )
+
+
+async def test_a_tenant_the_worker_cannot_serve_is_refused_rather_than_answered(
+    valkey, app_engine, engine, account
+):
+    """A real-estate tenant has no path through this worker.
+
+    Inventory turns are a different agent with a different result type
+    (`InventoryTurn`, no passages, no retrieval confidence). The education
+    orchestrator will happily run its own script against a broker's customer
+    and produce a fluent reply about credit-hour fees — the worst available
+    outcome, because it is indistinguishable from working.
+
+    Dead-lettered on the first attempt: retrying will not change the tenant's
+    vertical.
+    """
+    broker = await _a_second_tenant(engine, "broker-tenant", vertical="realestate")
+
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+        retrievers=Retrievers(),
+    )
+    await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(
+        _message_for(broker, account)
+    )
+    await worker.run_once()
+
+    dead = await valkey.xrange(QUEUES["inbound"]["dead_letter_stream"])
+    assert len(dead) == 1, "a vertical this worker cannot serve was answered anyway"
+    assert "realestate" in dead[0][1]["reason"]
+
+
+class TenantSenders:
+    """The production registry's shape: one adapter per (tenant, channel)."""
+
+    def __init__(self, senders: dict) -> None:
+        self._senders = senders
+
+    async def for_job(self, *, tenant_id: str, channel: str):
+        return self._senders.get((tenant_id, channel))
+
+
+async def _a_second_tenant(engine, slug: str, vertical: str = "education"):
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from moc.tenancy.models import Tenant
+
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        row = Tenant(slug=slug, name=slug, vertical=vertical)
+        s.add(row)
+        await s.commit()
+        return row.id
+
+
+def _message_for(tenant_id, account):
+    from moc.channels.base import Channel, InboundMessage
+
+    return InboundMessage(
+        tenant_id=tenant_id,
+        channel=Channel.whatsapp,
+        channel_account_id=account.id,
+        provider_message_id=f"SM-{uuid.uuid4()}",
+        sender_ref=f"+2010{uuid.uuid4().int % 10**8:08d}",
+        received_at=datetime.now(UTC),
+        text="كام رسوم الساعة؟",
+    )
+
+
+async def test_a_worker_blocking_on_an_idle_stream_stays_up(valkey):
+    """The read every worker in production actually performs.
+
+    `block=True` had never run. Every test in this file polls with the default
+    `block=False`, which returns immediately, so the one call shape a deployed
+    worker uses was the one shape nothing exercised — and it raised
+    `TimeoutError` within five seconds of starting, because `block_ms` is 5000
+    and redis-py 8 defaults `socket_timeout` to exactly 5.
+
+    An idle stream is what a worker sees almost all the time. This asserts the
+    boring case: nothing to do, and still alive.
+    """
+    from moc.workers.streams import consumer_from_config
+
+    consumer = consumer_from_config(
+        client=valkey, section=QUEUES["inbound"], consumer="idle-1"
+    )
+
+    async def never_called(payload: str) -> None:  # pragma: no cover
+        raise AssertionError("the stream was supposed to be empty")
+
+    assert await consumer.run_once(never_called, block=True) == 0
+
+
+def test_the_socket_timeout_outlasts_the_longest_blocking_read():
+    """The coupling, asserted where it can be read.
+
+    Two numbers in different files that must not be equal is the shape of a
+    bug that comes back. This one costs a worker that cannot stay up with
+    nothing to do.
+    """
+    from moc.channels.valkey import valkey_client
+
+    client = valkey_client(config=QUEUES)
+    configured = client.connection_pool.connection_kwargs["socket_timeout"]
+    longest = max(
+        section["block_ms"]
+        for section in QUEUES.values()
+        if isinstance(section, dict) and "block_ms" in section
+    )
+    assert configured > longest / 1000, (
+        f"socket_timeout {configured}s does not outlast a {longest}ms blocking "
+        "read; a worker on an idle stream exits rather than waiting"
+    )

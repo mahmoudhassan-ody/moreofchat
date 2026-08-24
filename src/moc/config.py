@@ -22,10 +22,16 @@ class Settings(BaseSettings):
     qdrant_host: str = "127.0.0.1"
     qdrant_port: int = 6333
     qdrant_key: str = ""
+    #: A field rather than a literal in the client factory. §2.4 keeps endpoint
+    #: strings out of every package but `moc.llm`, and this one genuinely
+    #: varies: compose serves Qdrant over plaintext on loopback and a managed
+    #: instance is TLS. A hardcoded scheme is a redeploy to change hosting.
+    qdrant_scheme: str = "http"
 
     meili_host: str = "127.0.0.1"
     meili_port: int = 7700
     meili_key: str = ""
+    meili_scheme: str = "http"
 
     valkey_password: str = ""
     valkey_host: str = "127.0.0.1"
@@ -38,6 +44,14 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.pg_user}:{self.pg_password}"
             f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
         )
+
+    @property
+    def qdrant_url(self) -> str:
+        return f"{self.qdrant_scheme}://{self.qdrant_host}:{self.qdrant_port}"
+
+    @property
+    def meili_url(self) -> str:
+        return f"{self.meili_scheme}://{self.meili_host}:{self.meili_port}"
 
     def valkey_url(self, db: int | None = None) -> str:
         """Streams and the token bucket both live here.

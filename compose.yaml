@@ -35,7 +35,75 @@ services:
     volumes: ["meili:/meili_data"]
     restart: unless-stopped
 
+  # ── the application, added in Task 39 ────────────────────────────────────
+  #
+  # Three services from one image. Inside the compose network the backing
+  # stores are reachable by service name, not on 127.0.0.1 — the host values in
+  # `.env` are for processes running on the host, and a container inheriting
+  # them would resolve 127.0.0.1 to itself and report the database as down.
+
+  api:
+    build: .
+    command:
+      - uvicorn
+      - --factory
+      - moc.api.main:webhook_app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    env_file: [.env]
+    environment: &in_network
+      MOC_PG_HOST: postgres
+      MOC_VALKEY_HOST: valkey
+      MOC_QDRANT_HOST: qdrant
+      MOC_MEILI_HOST: meilisearch
+    # Loopback only. Caddy reaches it over the compose network by name; this
+    # publish exists so the drive script and a human with SSH can reach it.
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_started}
+    restart: unless-stopped
+
+  worker-inbound:
+    build: .
+    command: ["python", "-m", "moc.workers.run", "inbound"]
+    env_file: [.env]
+    environment: *in_network
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_started}
+    restart: unless-stopped
+
+  worker-outbound:
+    build: .
+    command: ["python", "-m", "moc.workers.run", "outbound"]
+    env_file: [.env]
+    environment: *in_network
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_started}
+    restart: unless-stopped
+
+  # The one service that publishes outside loopback, and the only one. See the
+  # Caddyfile for why the rule is narrowed here rather than broken.
+  caddy:
+    image: caddy:2
+    ports: ["0.0.0.0:80:80", "0.0.0.0:443:443"]
+    environment:
+      MOC_DOMAIN: ${MOC_DOMAIN:-localhost}
+      MOC_TLS_EMAIL: ${MOC_TLS_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+    restart: unless-stopped
+
 volumes:
   pgdata:
   qdrant:
   meili:
+  caddy_data:
+  caddy_config:

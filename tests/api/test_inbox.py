@@ -272,6 +272,22 @@ async def test_agent_reply_goes_out_through_the_same_provider_adapter(
     # The window is a property of the conversation, and the sender applies it.
     # Omitting it here would make every agent reply look freeform-eligible.
     assert job.last_inbound_at is not None
+class ByChannel:
+    """Single-tenant test wiring: one adapter per channel, tenant ignored.
+
+    Deliberately not in `src`. The production registry keys on the tenant as
+    well, and a convenience that ignores it, living in the source tree, is the
+    one that ends up wired — after which every tenant's replies go out under
+    one name.
+    """
+
+    def __init__(self, providers: dict) -> None:
+        self._providers = dict(providers)
+
+    async def for_job(self, *, tenant_id: str, channel: str):
+        return self._providers.get(channel)
+
+
 
 
 async def test_the_agent_reply_reaches_the_channel_adapter_through_the_sender(valkey):
@@ -302,7 +318,7 @@ async def test_the_agent_reply_reaches_the_channel_adapter_through_the_sender(va
     await valkey.xadd(stream, {"payload": job.to_json()})
 
     worker = OutboundWorker(
-        client=valkey, providers={"whatsapp": RecordingProvider()}, config=QUEUES
+        client=valkey, providers=ByChannel({"whatsapp": RecordingProvider()}), config=QUEUES
     )
     assert await worker.run_once() == 1
     assert len(sent) == 1

@@ -15,11 +15,22 @@ retried at a widening interval rather than as fast as the loop can spin.
 template that was never approved — is an alert to the tenant's admin, not an
 infinite retry. Retrying it forever is how one bad row becomes a sender that
 delivers nothing else.
+
+**The adapter is resolved per job, not per process.** Every adapter here is
+built from one tenant's credentials — Twilio's own docstring says the sender
+comes from that tenant's `channel_accounts` row and is never platform-wide —
+and a worker holding one adapter per channel for its whole life sends every
+tenant's replies from one number. The customer gets an answer from a business
+they never wrote to, correctly worded, on the right channel, under the wrong
+name. Nothing raises, at either end.
+
+So `providers` is a registry keyed by (tenant, channel) rather than a mapping
+keyed by channel. There is no mapping form accepted here, because the mapping
+form is right for exactly one tenant and every process eventually serves two.
 """
 
 import time
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from moc.channels.base import MessagingProvider, OutboundJob
 from moc.workers.streams import TerminalFailure, consumer_from_config
@@ -27,18 +38,31 @@ from moc.workers.streams import TerminalFailure, consumer_from_config
 _CONSUMER = "outbound-1"
 
 
+class ProviderRegistry(Protocol):
+    """(tenant, channel) -> the adapter built from that tenant's credentials.
+
+    Async because the production implementation reads the tenant's channel
+    account. Returns None for a pair it cannot serve, which the worker turns
+    into a dead letter rather than a guess.
+    """
+
+    async def for_job(
+        self, *, tenant_id: str, channel: str
+    ) -> MessagingProvider | None: ...
+
+
 class OutboundWorker:
     def __init__(
         self,
         *,
         client: Any,
-        providers: Mapping[str, MessagingProvider],
+        providers: ProviderRegistry,
         config: dict[str, Any],
         consumer: str = _CONSUMER,
         clock: Any = time.monotonic,
     ) -> None:
         self._client = client
-        self._providers = dict(providers)
+        self._providers = providers
         self._clock = clock
         limit = config["rate_limit"]
         self._bucket_prefix = limit["key_prefix"]
@@ -59,12 +83,14 @@ class OutboundWorker:
         # reply handed to Twilio carries a chat id where a phone number
         # belongs: Twilio rejects it, the customer is silently unanswered, and
         # the dead-letter row blames the number.
-        provider = self._providers.get(job.channel)
+        provider = await self._providers.for_job(
+            tenant_id=job.tenant_id, channel=job.channel
+        )
         if provider is None:
             raise Unroutable(
-                f"no provider wired for channel {job.channel!r} — the reply cannot "
-                "be sent, and sending it through another channel's adapter would "
-                "deliver a chat id to a phone network"
+                f"no sender for tenant {job.tenant_id} on channel {job.channel!r} — "
+                "the reply cannot be sent, and sending it through another tenant's "
+                "account would put their name on somebody else's answer"
             )
         if not await self.take_token(job.tenant_id):
             # No token: raise so the entry stays pending and is retried on the

@@ -37,6 +37,20 @@ outbound:
 # Webhook idempotency (§6.2). Vendors retry for hours; a week of memory costs
 # almost nothing and covers a redelivery after an incident, which is precisely
 # when a duplicate is least welcome.
+# How the client is built, and why it is here rather than at the call site.
+#
+# A worker calling `run_once(block=True)` holds an XREADGROUP open for
+# `block_ms`. redis-py 8 defaults `socket_timeout` to 5 seconds, which is
+# exactly `block_ms` above — so a worker started against an idle stream raises
+# `TimeoutError` and exits, every time, within five seconds of starting.
+#
+# It went unnoticed because nothing ever ran `block=True`: every test polls
+# with `block=False` and returns immediately. The margin is what keeps the two
+# numbers from being equal, and it lives beside `block_ms` so that raising one
+# without the other is visible in the same file.
+client:
+  socket_timeout_margin_seconds: 10
+
 idempotency:
   key_prefix: "moc:seen:"
   ttl_seconds: 604800

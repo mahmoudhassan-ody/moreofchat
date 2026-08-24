@@ -244,6 +244,26 @@ class _TenantScope:
         await self.client.wait_for_task(task.task_uid)
 
 
+def meilisearch_client(**overrides: Any) -> Any:
+    """The one place an `AsyncClient` is constructed.
+
+    Until Task 39 nothing in `moc` imported this SDK at all, because nothing in
+    `moc` could be started — every client came from a test fixture. Running the
+    system means something has to build one, and the choice is between the SDK
+    appearing in the composition root or in the module that already owns
+    lexical search. It belongs here: `import meilisearch_python_sdk` in one
+    file is a fact a contract can pin, and in the composition root it is the
+    beginning of a second search path.
+
+    The repository still takes an injected client and uses only its call shape.
+    """
+    from meilisearch_python_sdk import AsyncClient
+
+    from moc.config import settings
+
+    return AsyncClient(settings.meili_url, settings.meili_key or None, **overrides)
+
+
 class MeilisearchAdmin:
     """Index topology and settings. Searches nothing.
 

@@ -200,6 +200,24 @@ def collection_for(vertical: str, *, config: dict[str, Any] | None = None) -> st
     return (config or load(_DEFAULTS))["qdrant"]["collections"][vertical]
 
 
+def qdrant_client(**overrides: Any) -> Any:
+    """The one place an `AsyncQdrantClient` is constructed.
+
+    Here rather than in the composition root because the contract is "the
+    Qdrant client is imported by exactly one module" — and that contract is
+    what makes the tenant filter checkable. A composition root that imported
+    the SDK to build a client would be a second module able to query, which is
+    a second place a filter can be forgotten.
+    """
+    from qdrant_client import AsyncQdrantClient
+
+    from moc.config import settings
+
+    return AsyncQdrantClient(
+        url=settings.qdrant_url, api_key=settings.qdrant_key or None, **overrides
+    )
+
+
 class QdrantAdmin:
     """Collection topology. Reads and writes **no points**.
 
