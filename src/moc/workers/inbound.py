@@ -41,6 +41,16 @@ class TurnRunner(Protocol):
     async def handle(self, **kwargs: Any) -> Any: ...
 
 
+class Indicators(Protocol):
+    """(tenant, channel) -> that tenant's typing indicator, or None.
+
+    A factory for the same reason the senders are one: the indicator
+    authenticates as the tenant's own Twilio account.
+    """
+
+    async def typing_for(self, *, tenant_id: Any, channel: str) -> Any: ...
+
+
 class RetrieverFactory(Protocol):
     """(tenant, vertical) -> the retriever that reads *their* corpus.
 
@@ -88,6 +98,7 @@ class InboundWorker:
         config: dict[str, Any],
         scripts: Any = None,
         retrievers: RetrieverFactory | None = None,
+        indicators: Indicators | None = None,
         vertical: str = _EDUCATION,
         runners: Mapping[str, Served] | None = None,
         consumer: str = _CONSUMER,
@@ -128,6 +139,9 @@ class InboundWorker:
         #: `self._served`; a vertical absent from it is refused rather than
         #: run through another vertical's script.
         self._vertical = vertical
+        #: §2.5's perceived-latency mitigation. Optional, and its failure is
+        #: never the turn's — see `_show_typing`.
+        self._indicators = indicators
         self._outbound_stream = config["outbound"]["stream"]
         self._consumer = consumer_from_config(
             client=client, section=config["inbound"], consumer=consumer
@@ -219,6 +233,11 @@ class InboundWorker:
                 await session.commit()
                 return
 
+            # After the handoff check and before the model call. Both halves
+            # matter: a bot that says it is typing while a human has the thread
+            # is lying, and an indicator sent after the reply covers nothing.
+            await self._show_typing(message)
+
             result = await served.runner.handle(
                 session=session,
                 state=state,
@@ -279,6 +298,30 @@ class InboundWorker:
             await session.commit()
 
         await self._enqueue_reply(message, result.reply)
+
+    async def _show_typing(self, message: InboundMessage) -> None:
+        """"Seen, typing", and never anything more than that.
+
+        Every failure is swallowed, including ones nobody predicted. This is a
+        courtesy on the turn path: an exception here would fail a turn that was
+        otherwise fine, and the customer would lose the answer to save the hint.
+        The adapter already returns False rather than raising; this catches the
+        rest — a factory that cannot reach the database, a vendor client that
+        was closed, whatever the next one turns out to be.
+
+        The cost is that a permanently broken indicator is silent. That is what
+        the preflight's check exists to ask out loud.
+        """
+        if self._indicators is None:
+            return
+        try:
+            indicator = await self._indicators.typing_for(
+                tenant_id=message.tenant_id, channel=str(message.channel)
+            )
+            if indicator is not None:
+                await indicator.typing(message_id=message.provider_message_id)
+        except Exception:  # noqa: BLE001 - see the docstring
+            return
 
     async def _enqueue_reply(self, message: InboundMessage, reply: str) -> None:
         """Hand the words to the sender.

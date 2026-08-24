@@ -42,3 +42,39 @@ http:
 # `sender_ref` is an E.164 number, restored on the way out — downstream code
 # should never learn which vendor carried the message.
 address_prefix: "whatsapp:"
+
+# ── The typing indicator — design §2.5, demo plan Task 40 ────────────────────
+#
+# Perceived latency, not real latency. A p95 turn is about 9 seconds and the
+# design's answer to that is not a faster model: nine seconds of silence reads
+# worse than nine seconds of "seen, typing".
+#
+# A different host *and* a different API version from everything else this
+# adapter sends (`api.twilio.com/2010-04-01/Accounts/{sid}`), taking JSON where
+# the rest takes form encoding. Config rather than a literal for the usual
+# §2.4 reason, and because the vendor's own status for it is contradictory:
+# the changelog dated 2026-06-14 announces GA for RCS and WhatsApp while the
+# WhatsApp resource page still carries a Public Beta banner. Treated as beta —
+# a demo claim should not rest on the more flattering of two vendor pages.
+#
+# **It marks the customer's message read, and that is not separable.** Twilio's
+# WhatsApp path sends the read receipt as part of the indicator. Every message
+# acknowledged gets a blue tick, including ones that end in a handoff. That is
+# why `enabled` exists: it is a product decision, not a capability question.
+typing_indicator:
+  enabled: true
+  api_base: https://messaging.twilio.com
+  path: /v3/Indicators/Typing.json
+  # Twilio's own value for this field, not our channel name.
+  channel: WHATSAPP
+  # Cleared on delivery or after this many seconds, whichever comes first. Not
+  # ours to set — recorded so the arithmetic against §2.5's p95 is visible:
+  # 9 seconds of turn inside a 25-second indicator leaves 16 seconds spare, so
+  # one call covers a whole turn and nothing needs to extend it.
+  clears_after_seconds: 25
+  http:
+    connect_timeout_seconds: 3
+    # Short on purpose. This is a courtesy on the turn path: an indicator that
+    # takes longer than the reply is worse than no indicator, and a turn must
+    # never wait on one.
+    read_timeout_seconds: 5

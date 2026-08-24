@@ -30,6 +30,28 @@ we do not get a vote.
 No endpoint string appears here (§2.4's guard). The API base is config, which
 is also what makes the §6.2 migration to Meta's Graph API a new adapter plus a
 config edit rather than a search for everything that assumed Twilio.
+
+**`TwilioTypingIndicator` is a second client on purpose** (§2.5, Task 40). It
+talks to a different host, at a different API version, in a different encoding
+from everything above — `messaging.twilio.com/v3` taking JSON where
+`api.twilio.com/2010-04-01/Accounts/{sid}` takes form data — so folding it into
+`TwilioWhatsApp` would give that class two base URLs and two content types and
+no way to tell at a glance which call used which.
+
+Two things about it are not technical and are worth reading before it is
+switched on:
+
+- **It marks the customer's message read, and Twilio does not separate the
+  two.** Every message acknowledged gets a blue tick, including the ones that
+  end in a handoff, and a read receipt followed by silence is a worse signal
+  than no receipt at all. That is why the config carries `enabled`.
+- **Its authentication has never been verified against the real host.** Twilio
+  documents an API key/secret pair for this resource; this adapter holds an
+  account SID and auth token, and whether those authenticate against
+  `messaging.twilio.com/v3` is not stated in the vendor docs and cannot be
+  tested without an account. `scripts/preflight.py` answers it on the first
+  host that has credentials: a 401 says the scheme is wrong, anything else says
+  it is not.
 """
 
 import base64
@@ -300,10 +322,81 @@ class TwilioWhatsApp:
         await self._client.aclose()
 
 
+class TwilioTypingIndicator:
+    """"Seen, typing" on the turn path — §2.5, demo plan Task 40.
+
+    Not a message: no content, no service window, and deliberately not on the
+    outbound queue. A courtesy that arrives after the reply it was meant to
+    precede is worse than none, and the token bucket is exactly what would
+    delay it.
+
+    **Nothing here raises.** `typing` returns whether the indicator was
+    accepted, and every failure — refusal, timeout, no route — is False. It
+    runs on the turn path, so an exception would fail a turn that was otherwise
+    fine and the customer would lose the answer to save the hint. The cost of
+    that choice is that a permanently broken indicator is silent; the preflight
+    is what asks the question out loud.
+    """
+
+    name = "twilio_typing"
+
+    def __init__(
+        self,
+        *,
+        account_sid: str,
+        auth_token: str,
+        config: dict[str, Any] | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        settings = (config or _config())["typing_indicator"]
+        self._settings = settings
+        self._enabled = bool(settings["enabled"])
+        http = settings["http"]
+        self._client = httpx.AsyncClient(
+            base_url=settings["api_base"],
+            # The SID/token pair the adapter already holds. See the module
+            # docstring: the vendor documents an API key/secret for this
+            # resource and does not say whether these also work.
+            auth=(account_sid, auth_token),
+            timeout=httpx.Timeout(
+                connect=http["connect_timeout_seconds"],
+                read=http["read_timeout_seconds"],
+                write=http["read_timeout_seconds"],
+                pool=http["connect_timeout_seconds"],
+            ),
+            transport=transport,
+        )
+
+    async def typing(self, *, message_id: str) -> bool:
+        """Show the indicator for the turn answering `message_id`.
+
+        One call covers a whole turn: Twilio clears it on delivery or after
+        `clears_after_seconds`, and §2.5's p95 turn is well inside that.
+        """
+        if not self._enabled or not message_id:
+            return False
+        try:
+            response = await self._client.post(
+                self._settings["path"],
+                json={"messageId": message_id, "channel": self._settings["channel"]},
+            )
+        except httpx.HTTPError:
+            return False
+        return response.is_success
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 def _config() -> dict[str, Any]:
     from moc.config_store import load
 
     return load("channels/whatsapp")
 
 
-__all__ = ["TwilioWhatsApp", "parse_inbound", "verify_signature"]
+__all__ = [
+    "TwilioTypingIndicator",
+    "TwilioWhatsApp",
+    "parse_inbound",
+    "verify_signature",
+]

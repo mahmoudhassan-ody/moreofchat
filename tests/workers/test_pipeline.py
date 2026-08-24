@@ -1952,3 +1952,146 @@ async def _stock(engine, tenant_id) -> None:
     async with tenant_session(engine, tenant_id) as session:
         await load_units(session=session, path=path)
         await session.commit()
+
+
+# ─────────────────────── "seen, typing", on the turn path ───────────────────────
+
+
+class RecordingIndicators:
+    """A per-tenant typing indicator factory, as the composition root supplies."""
+
+    def __init__(self, *, order: list[str], works: bool = True) -> None:
+        self.order = order
+        self.works = works
+        self.asked: list[tuple[str, str]] = []
+
+    async def typing_for(self, *, tenant_id, channel: str):
+        return self
+
+    async def typing(self, *, message_id: str) -> bool:
+        self.asked.append((message_id, "typing"))
+        self.order.append("typing")
+        return self.works
+
+
+class RecordingOrchestrator:
+    """The real turn, with a mark left when it starts."""
+
+    def __init__(self, *, order: list[str]) -> None:
+        self._inner = orchestrator()
+        self._order = order
+
+    async def handle(self, **kwargs):
+        self._order.append("turn")
+        return await self._inner.handle(**kwargs)
+
+
+async def test_the_customer_sees_typing_before_the_turn_runs(valkey, app_engine, account):
+    """§2.5's mitigation, in the only place it can work.
+
+    Not from the webhook: that handler has a millisecond budget and a vendor
+    call inside it is the slow work it is forbidden from reaching. Not from the
+    outbound queue either — the indicator would then queue behind replies and
+    wait on the token bucket, and a courtesy that arrives after the reply it
+    was meant to precede is worse than none.
+
+    So it fires at the top of the turn, from the worker that already holds the
+    inbound message id.
+    """
+    order: list[str] = []
+    indicators = RecordingIndicators(order=order)
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=RecordingOrchestrator(order=order),
+        script=SCRIPT,
+        config=QUEUES,
+        indicators=indicators,
+    )
+
+    message = _message_for(account.tenant_id, account)
+    await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(message)
+    assert await worker.run_once() == 1
+
+    assert order == ["typing", "turn"], (
+        "the indicator did not precede the turn; it exists to cover the wait"
+    )
+    assert indicators.asked == [(message.provider_message_id, "typing")], (
+        "the indicator must name the inbound message — Twilio keys it on the SID"
+    )
+
+
+async def test_a_broken_indicator_does_not_cost_the_customer_their_answer(
+    valkey, app_engine, account
+):
+    """A courtesy on the turn path. Losing the answer to save the hint is the
+    one outcome worse than no hint."""
+    order: list[str] = []
+
+    class Explodes(RecordingIndicators):
+        async def typing(self, *, message_id: str) -> bool:
+            raise RuntimeError("the vendor is having a day")
+
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+        indicators=Explodes(order=order),
+    )
+    await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(
+        _message_for(account.tenant_id, account)
+    )
+    assert await worker.run_once() == 1
+    assert await valkey.xlen(QUEUES["outbound"]["stream"]) == 1, "the reply was lost"
+
+
+async def test_a_conversation_a_human_has_taken_gets_no_typing_indicator(
+    valkey, app_engine, account
+):
+    """"Typing" from a bot while an officer is reading is a lie, and this is
+    exactly the case the vendor research flagged: the indicator also marks the
+    message read, so a customer would see a blue tick and then wait on a person
+    who has not started."""
+
+    from moc.agent.conversations import ConversationStore
+    from moc.agent.handoff import HandoffStore
+    from moc.agent.script_engine import ScriptEngine
+    from moc.tenancy.context import tenant_session
+
+    order: list[str] = []
+    indicators = RecordingIndicators(order=order)
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+        indicators=indicators,
+    )
+
+    first = _message_for(account.tenant_id, account)
+    await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(first)
+    assert await worker.run_once() == 1
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        store = ConversationStore(session=session, engine=ScriptEngine.from_config(SCRIPT))
+        conversation_id = await store.find(channel="whatsapp", sender_ref=first.sender_ref)
+        await HandoffStore(session=session).open(
+            conversation_id=conversation_id, reason="asked for a person", resume_state={}
+        )
+        await session.commit()
+
+    order.clear()
+    follow_up = _message_for(account.tenant_id, account)
+    follow_up = type(follow_up)(
+        **{
+            **{f: getattr(follow_up, f) for f in follow_up.__dataclass_fields__},
+            "sender_ref": first.sender_ref,
+        }
+    )
+    await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(follow_up)
+    assert await worker.run_once() == 1
+
+    assert order == [], "the bot told a customer it was typing while a human had the thread"

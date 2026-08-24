@@ -58,14 +58,27 @@ ACCOUNT_SID = "AC00000000000000000000000000000000"
 SECRET_REF = "twilio/drive/wa"  # noqa: S105 - a reference, not a secret
 
 received: list[dict] = []
+indicators: list[dict] = []
 
 
 class Vendor(BaseHTTPRequestHandler):
-    """Stands in for api.twilio.com, on loopback."""
+    """Stands in for api.twilio.com and messaging.twilio.com, on loopback."""
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's shape
         length = int(self.headers.get("content-length", 0))
         body = self.rfile.read(length).decode("utf-8")
+        if self.headers.get("content-type", "").startswith("application/json"):
+            # The typing indicator: JSON, on the messaging host. Recorded
+            # separately because it is not a message and must not be counted
+            # as the reply.
+            indicators.append(json.loads(body))
+            payload = json.dumps({"success": True}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         received.append(dict(parse_qsl(body)))
         payload = json.dumps({"sid": "SM-drive", "status": "queued"}).encode()
         self.send_response(201)
@@ -100,6 +113,11 @@ def config_tree_pointing_at(vendor_port: int) -> Path:
     whatsapp = root / "channels" / "whatsapp.yaml"
     document = yaml.safe_load(whatsapp.read_text(encoding="utf-8"))
     document["api_base"] = f"http://127.0.0.1:{vendor_port}"
+    # The indicator too. It is a *different host* in the real config, so a copy
+    # that rewrote only the message base left every drive quietly posting to
+    # api.twilio.com with fixture credentials — a real external call from a
+    # script whose whole point is that nothing leaves the machine.
+    document["typing_indicator"]["api_base"] = f"http://127.0.0.1:{vendor_port}"
     whatsapp.write_text(yaml.safe_dump(document, allow_unicode=True), encoding="utf-8")
     return root
 
@@ -451,6 +469,11 @@ def main() -> int:
             _tails(logs)
             return 1
 
+        say(
+            "the customer was shown a typing indicator",
+            indicators[0]["messageId"] if indicators else "NONE — §2.5's mitigation "
+            "did not fire, and the customer sees silence for the whole turn",
+        )
         reply = received[0]
         say("a reply reached the vendor", reply.get("To", ""))
         print(f"\n  the customer would have received:\n\n    {reply.get('Body', '')}\n")

@@ -9,6 +9,10 @@ would have gone out from whichever number the process was started with. The
 customer gets an answer from a business they never wrote to: correctly worded,
 on the right channel, under the wrong name, with nothing raising at either end.
 
+`typing_for` returns the same account's typing indicator (§2.5, Task 40) —
+a different host, a different API version and a different client, cached under
+its own key so that closing one does not close the other's connection pool.
+
 **Which secret is which.** The inbound-verification secret is what
 `channel_accounts.secret_ref` names. Outbound credentials are different values
 and hang off the same reference with a suffix, so an operator can derive every
@@ -46,6 +50,9 @@ _ACCOUNT = text(
 _SID = "/sid"
 _TOKEN = "/token"  # noqa: S105 - a reference suffix, not a secret
 _API_KEY = "/apikey"
+#: A cache-key discriminator, not a reference suffix. The typing indicator is a
+#: different client on a different host from the sender for the same account.
+_TYPING = "typing"
 
 
 class NoAccount(LookupError):
@@ -73,10 +80,10 @@ class SqlSenderRegistry:
         #: Injected only by tests. Production passes nothing and httpx opens
         #: real sockets.
         self._transport = transport
-        self._cache: dict[tuple[str, str], MessagingProvider] = {}
+        self._cache: dict[tuple[str, ...], Any] = {}
 
     async def for_job(self, *, tenant_id: str, channel: str) -> MessagingProvider | None:
-        key = (str(tenant_id), channel)
+        key = (str(tenant_id), channel, "send")
         if key not in self._cache:
             built = await self._build(tenant_id=tenant_id, channel=channel)
             if built is None:
@@ -84,11 +91,17 @@ class SqlSenderRegistry:
             self._cache[key] = built
         return self._cache[key]
 
-    async def _build(self, *, tenant_id: str, channel: str) -> MessagingProvider | None:
+    async def _account(self, *, tenant_id: str, channel: str) -> Any:
+        """The tenant's row for this channel. No query here names a tenant —
+        RLS does the scoping, so a registry asked for tenant A cannot return
+        tenant B's row even when the channel matches."""
         import uuid as _uuid
 
         async with tenant_session(self._engine, _uuid.UUID(str(tenant_id))) as session:
-            row = (await session.execute(_ACCOUNT, {"channel": channel})).one_or_none()
+            return (await session.execute(_ACCOUNT, {"channel": channel})).one_or_none()
+
+    async def _build(self, *, tenant_id: str, channel: str) -> MessagingProvider | None:
+        row = await self._account(tenant_id=tenant_id, channel=channel)
         if row is None:
             # None rather than an exception: the worker turns it into a dead
             # letter naming the tenant and the channel, which is a better
@@ -130,6 +143,37 @@ class SqlSenderRegistry:
                 transport=self._transport,
             )
         return None
+
+    async def typing_for(self, *, tenant_id: str, channel: str) -> Any:
+        """That tenant's typing indicator, or None where the channel has none.
+
+        Only WhatsApp has one today. Returning None rather than raising is the
+        point: the worker treats an absent indicator and a failed one
+        identically, because both mean "no hint" and neither is worth a turn.
+
+        Cached separately from the sender: it is a different host, a different
+        API version and a different client, and sharing one would mean the
+        first `aclose` closed the other's connection pool.
+        """
+        key = (str(tenant_id), channel, _TYPING)
+        if key in self._cache:
+            return self._cache[key]
+        if channel != Channel.whatsapp:
+            return None
+
+        row = await self._account(tenant_id=tenant_id, channel=channel)
+        if row is None:
+            return None
+
+        from moc.channels.twilio_wa import TwilioTypingIndicator
+
+        indicator = TwilioTypingIndicator(
+            account_sid=self._secrets.for_ref(row.secret_ref + _SID),
+            auth_token=self._secrets.for_ref(row.secret_ref),
+            transport=self._transport,
+        )
+        self._cache[key] = indicator
+        return indicator
 
     async def aclose(self) -> None:
         for provider in self._cache.values():

@@ -40,6 +40,7 @@ _OUTBOUND_SUFFIXES = {
 
 _OK = "  ok  "
 _BAD = " FAIL "
+_SKIP = " skip "
 
 failures: list[str] = []
 
@@ -281,6 +282,93 @@ async def channel_secrets() -> None:
         )
 
 
+async def typing_indicator() -> None:
+    """Does the SID/token pair authenticate against `messaging.twilio.com/v3`?
+
+    The vendor documents an API key/secret pair for that resource and the
+    adapter holds an account SID and auth token. Whether the second works is
+    not stated anywhere and cannot be answered without credentials — so it is
+    answered here, on the first host that has them, by asking for an indicator
+    on a message id that cannot exist:
+
+      - 401/403 — the scheme is wrong, and every indicator silently does
+        nothing, because the adapter swallows its own failures by design;
+      - anything else — the request was authenticated and the id was rejected,
+        which is the answer we wanted.
+
+    The request is built here rather than through `TwilioTypingIndicator`
+    because that class reports a bool on purpose: the turn must not care why an
+    indicator failed. This is the one place that does, and reading the status
+    is the whole check.
+
+    Skipped, not failed, when there is no account or no credentials. A check
+    that cannot run must not read as one that passed, and must not read as a
+    failure either.
+    """
+    import httpx
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from moc.channels.accounts import EnvSecretResolver
+    from moc.config import settings
+    from moc.config_store import load
+
+    indicator = load("channels/whatsapp")["typing_indicator"]
+    if not indicator["enabled"]:
+        print(f"{_SKIP}typing indicator: switched off in config")
+        return
+
+    engine = create_async_engine(settings.database_url)
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT secret_ref FROM channel_accounts "
+                    "WHERE channel = 'whatsapp' LIMIT 1"
+                )
+            )
+        ).one_or_none()
+    await engine.dispose()
+    if row is None:
+        print(f"{_SKIP}typing indicator: no WhatsApp account to test with")
+        return
+
+    resolver = EnvSecretResolver()
+    try:
+        credentials = (
+            resolver.for_ref(row.secret_ref + "/sid"),
+            resolver.for_ref(row.secret_ref),
+        )
+    except KeyError:
+        print(f"{_SKIP}typing indicator: credentials not on this host")
+        return
+
+    async with httpx.AsyncClient(
+        base_url=indicator["api_base"], auth=credentials, timeout=10
+    ) as client:
+        try:
+            response = await client.post(
+                indicator["path"],
+                json={
+                    # Well-formed and non-existent. An id that cannot resolve
+                    # cannot mark anything read.
+                    "messageId": "SM" + "0" * 32,
+                    "channel": indicator["channel"],
+                },
+            )
+        except httpx.HTTPError as exc:
+            check("the typing indicator endpoint is reachable", False, str(exc)[:120])
+            return
+
+    check(
+        "the typing indicator authenticates against messaging.twilio.com",
+        response.status_code not in (401, 403),
+        f"{response.status_code} — the SID/token pair does not work on that host, "
+        "and every indicator will silently do nothing",
+        note=f"{response.status_code} (not an auth refusal)",
+    )
+
+
 async def main() -> int:
     print("\npreflight\n")
     env_file_has_no_duplicate_keys()
@@ -289,6 +377,7 @@ async def main() -> int:
     await queue()
     await search_backends()
     await channel_secrets()
+    await typing_indicator()
 
     print()
     if failures:

@@ -150,6 +150,8 @@ async def inbound() -> None:
     from moc.agent.orchestrator import Orchestrator
     from moc.agent.script_engine import ScriptEngine
     from moc.agent.scripts import ScriptStore
+    from moc.channels.accounts import EnvSecretResolver
+    from moc.channels.senders import SqlSenderRegistry
     from moc.llm.router import Router
     from moc.retrieval.lexical import MeilisearchRepository, meilisearch_client
     from moc.retrieval.vectors import QdrantRepository, qdrant_client
@@ -162,6 +164,12 @@ async def inbound() -> None:
 
     meili = meilisearch_client()
     qdrant = qdrant_client()
+    # §2.5's perceived-latency mitigation, per tenant. The same registry the
+    # sender worker uses: the indicator authenticates as the tenant's own
+    # Twilio account, and it is not a message — it never touches the outbound
+    # queue, because a courtesy that queues behind replies arrives after the
+    # thing it was meant to precede.
+    indicators = SqlSenderRegistry(engine=engine, secrets=EnvSecretResolver())
     retrievers = TenantRetrievers(
         lexical=MeilisearchRepository(client=meili, config=load(_LEXICAL)),
         dense=QdrantRepository(client=qdrant),
@@ -186,6 +194,7 @@ async def inbound() -> None:
         config=load(_QUEUES),
         scripts=ScriptStore(engine=engine),
         retrievers=retrievers,
+        indicators=indicators,
         vertical=_EDUCATION,
         runners={
             _REALESTATE: Served(
@@ -206,6 +215,7 @@ async def inbound() -> None:
         while True:
             await worker.run_once(block=True)
     finally:
+        await indicators.aclose()
         await client.aclose()
         await engine.dispose()
         await qdrant.close()
