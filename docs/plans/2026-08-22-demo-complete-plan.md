@@ -261,6 +261,66 @@ by removing the trace and watching the figure fail to send.
 
 Run the demo script end to end on the real tenants. Every question you plan to ask, plus three you don't.
 
+**The runner exists:** `evals/demo/rehearsal.yaml` is the script and
+`scripts/rehearse.py` runs it — three tenants, their own numbers and data,
+through the real programs, with every figure's provenance checked on every
+turn. `--only <slug>` re-runs one tenant. Replace the questions with the real
+ones before the run that counts.
+
+**What the first runs found**, all fixed and pinned by tests:
+
+- An out-of-vocabulary slot value **killed the turn and the customer got
+  silence** — a student asking about a faculty this university does not run, and
+  a customer asking a project-scoped developer about the project next door.
+  §2.6 is not "no wrong answer reaches the customer", it is "no error does",
+  and nothing at all is the worst version of one. Both verticals.
+- `quoted_unit_id` outranked the unit named in the current message, so browsing
+  Madinaty and then asking about a Noor City unit was answered about Madinaty —
+  fluent, grounded, every figure traced, wrong property. Nothing in the eval
+  suite caught it because every payment-plan case is a first turn.
+- A dead-letter row carried `repr(exc)` and no traceback, which is the one
+  place "why did this customer get nothing" has to be answerable.
+- Orphaned workers from a killed run kept consuming the same consumer group,
+  so two generations answered alternate messages and the older one won some.
+  That is what a deploy which forgets to stop the old containers does.
+
+---
+
+### Task 42b: A customer cannot change their mind
+
+Found by the rehearsal and **not fixed** — it needs a graded artefact changed
+and an eval case to hold it.
+
+`extraction_v1.md` shows the model the slots already held. On the second turn
+of "I want an apartment in Madinaty" → "the unit in Noor City at six and a
+half million, what's the instalment?", the extractor returns `near_price` and
+**no compound**: it has been told Madinaty is held, and it does not contradict
+it. Everything downstream is then correct about the wrong unit, and no fix
+below extraction can recover a value the model did not return.
+
+The prompt already carries the rule — *"Repeat a held slot only if this message
+changes it"* — with a worked example of an explicit correction (`مش التجمع،
+الشيخ زايد`). This phrasing is not explicit: naming a unit in another compound
+reads as continuing the same conversation.
+
+**Tests first:**
+
+```python
+async def test_naming_a_unit_in_another_compound_changes_the_compound()
+async def test_an_explicit_correction_still_works():
+    """The existing case, so the fix does not trade one for the other."""
+async def test_a_message_that_names_no_place_still_keeps_the_held_one():
+    """The reason held slots exist. "And at 40% down?" names nothing."""
+```
+
+**Notes:** an eval case in `evals/cases/realestate.yaml` as a *second* turn —
+every payment-plan case today is a first turn, which is exactly why the suite
+was silent. The prompt version is pinned by the harness (§19.4), so this is a
+measured change rather than an edit.
+
+**Acceptance:** the rehearsal's broker section passes without the expectation
+being relaxed.
+
 ---
 
 ## Exit criteria

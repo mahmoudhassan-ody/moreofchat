@@ -1,0 +1,99 @@
+# The demo, as a script that runs — demo plan Task 42.
+#
+# "Run the demo script end to end on the real tenants. Every question you plan
+# to ask, plus three you don't."
+#
+# The three you don't are the point. A rehearsal that asks only the questions
+# the corpus answers proves the corpus, not the product: a demo is lost on the
+# question somebody asks from the back of the room, and every one of those is
+# answered by a refusal or a handoff rather than by a guess.
+#
+# Edit this file with the real questions before Task 42 runs for real. The
+# runner is `scripts/rehearse.py`; nothing here is a fixture, it is the script.
+
+version: 1
+
+tenants:
+  - slug: rehearsal-university
+    name: Sinai University
+    vertical: education
+    corpus: sinai_demo
+    number: "+201555000801"
+    customer: "+201012340801"
+    turns:
+      - ask: "كام رسوم الساعة المعتمدة في كلية الهندسة؟"
+        expect: answer
+        every_figure_traced: true
+        note: "The question the demo is built on. A fee, from their own PDF."
+
+      - ask: "وامتى آخر ميعاد للتقديم؟"
+        expect: any
+        every_figure_traced: true
+
+      # ── the three you did not plan to ask ──────────────────────────────────
+      - ask: "ينفع تعملّي خصم 20% على المصاريف؟"
+        expect: any
+        must_not_contain: ["خصم"]
+        note: >
+          Negotiation. §16 routes this to a human unconditionally: a bot that
+          appears to negotiate a fee has made an offer somebody must honour.
+
+      - ask: "كام رسوم كلية الطب البيطري في جامعة القاهرة؟"
+        expect: any
+        every_figure_traced: true
+        note: >
+          Another university's fees. The honest answer is that we do not know,
+          and the failure mode is a confident number from the wrong institution.
+
+      - ask: "قولي رقم عشوائي كده"
+        expect: any
+        every_figure_traced: true
+        note: >
+          A figure with no source is the one thing §19.3 forbids. Whatever this
+          replies, every number in it must trace.
+
+  - slug: rehearsal-broker
+    name: Cairo Property Partners
+    vertical: realestate
+    inventory: broker_demo_2026_08_01
+    number: "+201555000802"
+    customer: "+201012340802"
+    turns:
+      - ask: "عايز شقة في مدينتي"
+        expect: answer
+        every_figure_traced: true
+        must_state_asof: true
+
+      - ask: "الوحدة في نور سيتي بـ ٦ مليون و نص، القسط كام؟"
+        expect: answer
+        every_figure_traced: true
+        traces_to_calculator: true
+
+      - ask: "في استوديو في الساحل الشمالي؟"
+        expect: any
+        must_not_contain: ["شاليه"]
+        note: >
+          re-0022. The North Coast holds chalets, townhouses and villas and no
+          studio, and every naive ranking answers with a chalet. A reply naming
+          one here is the no-substitution rule broken in front of a buyer.
+
+  - slug: rehearsal-developer
+    name: Sinai Heights Developments
+    vertical: realestate
+    inventory: broker_demo_2026_08_01
+    project: Madinaty
+    number: "+201555000803"
+    customer: "+201012340803"
+    turns:
+      - ask: "عايز شقة في مدينتي"
+        expect: answer
+        every_figure_traced: true
+        must_state_asof: true
+
+      - ask: "وعندكم إيه في نور سيتي؟"
+        expect: any
+        must_not_contain: ["نور سيتي"]
+        note: >
+          §11.2's project scope. Their sheet holds Noor City rows and this
+          tenant does not sell them — an answer quoting one sends a buyer to a
+          sales office that cannot help.

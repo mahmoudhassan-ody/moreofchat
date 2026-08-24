@@ -50,6 +50,7 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.composition import render_composition
+from moc.agent.extraction import ExtractionFailed
 from moc.agent.figure_audit import FigureAudit, audit_figures
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
 from moc.agent.provenance import Passage, trace_figures
@@ -324,6 +325,21 @@ class Orchestrator:
             # made it call one is the thing that found this.
             await record_usage(session, kind=UsageKind.message_out, channel=channel)
             return self._unavailable(state, channel, redaction, clock)
+        except ExtractionFailed:
+            # A slot value outside the configured vocabulary. The extractor is
+            # right to refuse it — a value the resolver cannot parse back
+            # filters nothing and reads as absent stock — but refusing by
+            # raising killed the turn, and the customer got **silence**. §2.6
+            # is not "no wrong answer reaches the customer", it is "no error
+            # does", and nothing at all is the worst version of one.
+            #
+            # Found by the Task 42 rehearsal, on a question nobody planned to
+            # ask: a student asking about a faculty this university does not
+            # have. It is also what a customer asking a project-scoped
+            # developer about another project produces, because the scope is
+            # what makes the other project out-of-vocabulary.
+            await record_usage(session, kind=UsageKind.message_out, channel=channel)
+            return self._beyond_vocabulary(state, redaction, clock)
         # Extraction runs on every turn, where composition runs on about two in
         # three, and it was metered in neither vertical.
         await self._meter(session, channel, getattr(turn, "usage", None))
@@ -374,6 +390,32 @@ class Orchestrator:
         # Stamped last, so `total` covers the ledger writes too. They are part
         # of what the customer waits through and nothing else times them.
         return replace(result, timings=clock.timings())
+
+    def _beyond_vocabulary(
+        self,
+        state: ConversationState,
+        redaction: Redaction,
+        clock: Stopwatch,
+    ) -> TurnResult:
+        """The customer named something this tenant does not have.
+
+        A handoff rather than an outage message: nothing is broken, and the
+        honest answer to "what are the fees for a faculty we do not run" is a
+        person. `degraded` stays False for the same reason — this turn is not a
+        degraded version of a working one, it is the working behaviour for a
+        question outside the catalogue.
+        """
+        document = load(_REPLIES)["replies"][_HANDOFF]
+        reply = Voice(Register.masri, reply_language(redaction.text)).say(document)
+        return TurnResult(
+            reply=reply,
+            action=Action.handoff,
+            register=Register.masri,
+            state=state,
+            redacted=redaction.found,
+            authorised=(reply,),
+            timings=clock.timings(),
+        )
 
     def _unavailable(
         self,

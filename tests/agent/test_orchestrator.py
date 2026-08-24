@@ -1416,3 +1416,39 @@ async def test_the_breakdown_still_accounts_for_every_millisecond(turn_session):
     assert "intake.retrieval" in result.timings
     counted = sum(v for k, v in result.timings.items() if k != "total" and "." not in k)
     assert counted <= result.timings["total"] + 1e-6
+
+
+async def test_a_slot_outside_the_vocabulary_answers_rather_than_raising(turn_session):
+    """§2.6, on the path the Task 42 rehearsal broke.
+
+    A student asked about a faculty this university does not run. The extractor
+    refused the value — correctly, since one that filters nothing reads as
+    absent stock — by raising, which killed the turn, dead-lettered the
+    message, and left the customer waiting. "No error ever reaches the
+    customer" is not satisfied by nothing reaching them at all.
+    """
+    from moc.agent.extraction import ExtractionFailed
+
+    class RefusesTheFaculty:
+        async def extract(self, *, text, state):
+            raise ExtractionFailed("faculty='veterinary_medicine' is outside the vocabulary")
+
+    orchestrator, *_ = build()
+    # Swapped in rather than built separately: `build` wires the router, the
+    # retriever and the script the way every other test here does, and a second
+    # assembly would be a second thing to keep in step.
+    orchestrator._extractor = RefusesTheFaculty()
+
+    result = await orchestrator.handle(
+        session=turn_session,
+        state=ConversationState(script_id=SCRIPT, script_version=1),
+        text="كام رسوم كلية الطب البيطري؟",
+        channel="whatsapp",
+    )
+
+    assert result.reply, "the customer got silence"
+    assert result.action is Action.handoff
+    assert result.degraded is False, (
+        "this is the working behaviour for a question outside the catalogue, "
+        "not a degraded version of a working turn"
+    )

@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from moc.agent.extraction import ExtractionFailed
 from moc.agent.provenance import Computation, Row, trace_figures
 from moc.agent.replies import Voice, refusal
 from moc.agent.state import Action, ConversationState, Register, TurnInput
@@ -300,7 +301,29 @@ class InventoryAgent:
         connector tests drive this agent without one and a required argument
         would make metering a reason to rewrite them.
         """
-        turn = await self._extractor.extract(text=text, state=state)
+        try:
+            turn = await self._extractor.extract(text=text, state=state)
+        except ExtractionFailed:
+            # A slot value outside this tenant's vocabulary — for a
+            # project-scoped developer, that is any compound they do not sell,
+            # because `vocabulary()` is scoped to the project. The extractor is
+            # right to refuse the value; refusing by raising killed the turn
+            # and the customer got **silence**, which §2.6 forbids more plainly
+            # than a wrong answer.
+            #
+            # Found by the Task 42 rehearsal, asking a developer about the
+            # project next door.
+            if session is not None:
+                await record_usage(
+                    session, kind=UsageKind.message_out, channel=self._channel
+                )
+            voice = Voice.of(Register.masri, text)
+            return InventoryTurn(
+                reply=_scripted("handoff", voice),
+                action=Action.handoff,
+                register=Register.masri,
+                state=state,
+            )
         if session is not None:
             await record_usage(
                 session, kind=UsageKind.message_in, channel=self._channel
@@ -330,7 +353,10 @@ class InventoryAgent:
         elif decision.node == "delivery_date":
             result = await self._delivery_date(decision, slots, voice)
         elif decision.node == "payment_plan":
-            result = await self._payment_plan(decision, slots, voice)
+            # `turn.slots` is what *this message* said; `slots` is that merged
+            # over everything held. Which unit the customer means has to come
+            # from the message — see `_resolve_unit`.
+            result = await self._payment_plan(decision, slots, voice, said=turn.slots)
         else:
             result = await self._lookup(decision, slots, voice)
         if session is not None:
@@ -472,9 +498,13 @@ class InventoryAgent:
         )
 
     async def _payment_plan(
-        self, decision: Any, slots: dict[str, Any], voice: Voice
+        self,
+        decision: Any,
+        slots: dict[str, Any],
+        voice: Voice,
+        said: dict[str, Any] | None = None,
     ) -> InventoryTurn:
-        unit = await self._resolve_unit(slots, decision.state.quoted_unit_id)
+        unit = await self._resolve_unit(slots, decision.state.quoted_unit_id, said)
         if unit is None:
             return InventoryTurn(
                 reply=_scripted("handoff", voice),
@@ -536,33 +566,76 @@ class InventoryAgent:
 
 
     async def _resolve_unit(
-        self, slots: dict[str, Any], quoted: str | None = None
+        self,
+        slots: dict[str, Any],
+        quoted: str | None = None,
+        said: dict[str, Any] | None = None,
     ) -> Any | None:
         """Which unit the customer means.
 
-        By id when a previous turn quoted one, otherwise by the compound
-        they named and the price they quoted — re-0005 is "the unit in Noor
-        City at six and a half million", which identifies a row without naming
-        one. Nearest price rather than exact: customers round, and refusing to
-        recognise a rounded figure would hand off a question the catalogue can
-        answer.
+        **The current message beats the held context.** `quoted_unit_id` exists
+        for a turn that names nothing — "and at 40% down?" identifies a unit
+        only by what preceded it — and it was outranking a unit the customer
+        named in the message. Browse Madinaty, then ask about a Noor City unit
+        by name and price, and the answer came back about Madinaty: fluent,
+        grounded, every figure traced, and about the wrong property.
+
+        Nothing in the eval suite caught it because every payment-plan case is
+        a first turn, and a first turn holds no context to be outranked. The
+        Task 42 rehearsal walked into it on the second question it asked.
+
+        Precedence, in order:
+
+        1. An id in this message.
+        2. The held unit, when this message names no place, or names the place
+           that unit is already in. Repeating the compound is not a new
+           request, and re-resolving would move the customer onto a different
+           unit in the same development without saying so.
+        3. The place **this message** names — by compound, narrowed by the
+           price they quoted. The message's own slots, not the merge: the
+           engine merges each turn over everything held, so the merge reads
+           "Madinaty" for a message that said nothing and for a message that
+           said Noor City in a spelling the extractor dropped.
+
+           re-0005 is "the unit in Noor City at six and a half million", which
+           identifies a row without naming one. Nearest price rather than
+           exact: customers round.
+        4. Nothing. **Never the held unit as a fallback** — that is how the
+           first bug got in, and for a project-scoped developer it would be an
+           answer about a project they do not sell.
 
         Still filtered. `get` and `search` both apply the availability
         predicate, so a sold unit cannot be resolved through this path either.
         """
-        known = slots.get("unit_id") or quoted
-        if known:
-            unit = await self._repository.get(str(known))
+        named = slots.get("unit_id")
+        if named:
+            unit = await self._repository.get(str(named))
             if unit is not None:
                 return unit
             # An id that matches nothing is an extraction slip, not a dead end.
             # re-0007 gave `unit_id: 95` — the area in square metres — and
             # returning None here handed off a question whose compound was
             # sitting in the same turn.
-        if not slots.get("compound"):
-            return None
+
+        held = await self._repository.get(str(quoted)) if quoted else None
+        # **The place named in this message, not the one merged into state.**
+        # The script engine merges each turn's slots over everything held, so a
+        # customer who named Madinaty and then asks about Noor City arrives
+        # here with `compound` still reading Madinaty when the second message
+        # left it out — and reading Noor City only if the extractor put it
+        # there. Comparing the merge against the held unit therefore said "same
+        # place, keep the held one" for a message that named a different place.
+        #
+        # `said` is the message's own slots. Falling back to the merge keeps
+        # every other caller working, and those are turns with nothing held.
+        wanted = (said if said is not None else slots).get("compound")
+        if held is not None and (not wanted or wanted == held.compound):
+            return held
+        if not wanted:
+            return held
+
         units = await self._repository.search(
-            UnitQuery(compound=slots["compound"], limit=50)
+            UnitQuery(compound=wanted, limit=50)
         )
         planned = [unit for unit in units if unit.payment_plan]
         if not planned:

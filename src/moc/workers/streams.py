@@ -25,6 +25,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 _PAYLOAD = "payload"
+#: A dead letter is not a log file.
+_TRACEBACK_LIMIT = 4000
 _NEW_MESSAGES = ">"
 _FROM_START = "0"
 
@@ -121,11 +123,11 @@ class StreamConsumer:
             # a job for a channel nobody configured is five delays in front of
             # every other tenant's reply, and the outcome is the same row in
             # the same dead-letter stream either way.
-            await self._bury(entry_id, payload, repr(exc))
+            await self._bury(entry_id, payload, repr(exc), exc)
             return False
         except Exception as exc:  # noqa: BLE001 - the handler decides nothing; we retry or bury
             if await self._attempts(entry_id) >= self._max_attempts:
-                await self._bury(entry_id, payload, repr(exc))
+                await self._bury(entry_id, payload, repr(exc), exc)
             # Otherwise: no ack. The entry stays pending and is retried on the
             # next pass, with the delivery count Valkey keeps for us.
             return False
@@ -138,16 +140,41 @@ class StreamConsumer:
         )
         return pending[0]["times_delivered"] if pending else 1
 
-    async def _bury(self, entry_id: str, payload: str, reason: str) -> None:
+    async def _bury(
+        self, entry_id: str, payload: str, reason: str, exc: BaseException | None = None
+    ) -> None:
         """Move an entry to the dead-letter stream and ack the original.
 
         The payload travels with the reason so the alert is actionable — a dead
         letter that says only "failed" sends someone hunting through logs for a
         message they cannot identify.
+
+        **And the traceback travels too.** `repr(exc)` names the exception and
+        not the line: the first rehearsal produced
+        `PermissionError(13, 'Permission denied')` with no path, no frame and no
+        clue, on a turn where a customer got silence — and finding it meant
+        re-running the whole path by hand. This row is the one place that
+        question has to be answerable, and the process whose log would have
+        held the frames is by then a container that has restarted.
+
+        Capped, because a dead-letter entry is not a log file and a runaway
+        recursion would otherwise write a megabyte per failed message.
         """
+        frames = ""
+        if exc is not None:
+            import traceback
+
+            frames = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )[-_TRACEBACK_LIMIT:]
         await self._client.xadd(
             self._dead_letter,
-            {_PAYLOAD: payload, "reason": reason, "entry_id": entry_id},
+            {
+                _PAYLOAD: payload,
+                "reason": reason,
+                "entry_id": entry_id,
+                "traceback": frames,
+            },
         )
         await self._client.xack(self._stream, self._group, entry_id)
 

@@ -2115,3 +2115,31 @@ async def test_a_conversation_a_human_has_taken_gets_no_typing_indicator(
     assert await worker.run_once() == 1
 
     assert order == [], "the bot told a customer it was typing while a human had the thread"
+
+
+async def test_a_dead_letter_says_where_it_died_and_not_only_what_it_raised(valkey):
+    """`repr(exc)` names the exception and not the line.
+
+    The first rehearsal produced `PermissionError(13, 'Permission denied')` with
+    no path, no frame and no clue, on a turn where a customer got silence — and
+    finding it meant re-running the whole path by hand. This row is the one
+    place that question has to be answerable, because the process whose log
+    would have held the frames is by then a container that has restarted.
+    """
+    from moc.workers.streams import TerminalFailure, consumer_from_config
+
+    consumer = consumer_from_config(
+        client=valkey, section=QUEUES["inbound"], consumer="buried-1"
+    )
+
+    async def dies(payload: str) -> None:
+        raise TerminalFailure("nothing to retry here")
+
+    await valkey.xadd(QUEUES["inbound"]["stream"], {"payload": "{}"})
+    await consumer.run_once(dies)
+
+    dead = await valkey.xrange(QUEUES["inbound"]["dead_letter_stream"])
+    assert len(dead) == 1
+    frames = dead[0][1]["traceback"]
+    assert "test_pipeline.py" in frames, "the row does not say where it died"
+    assert "raise TerminalFailure" in frames
