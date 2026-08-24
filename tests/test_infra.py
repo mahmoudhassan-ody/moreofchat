@@ -65,7 +65,7 @@ def test_the_application_containers_do_not_inherit_the_hosts_loopback_addresses(
     reports the database as down — which reads as an outage rather than as
     configuration, and costs an hour on the wrong thing."""
     services = _compose()["services"]
-    for name in ("api", "worker-inbound", "worker-outbound"):
+    for name in ("api", "console", "worker-inbound", "worker-outbound"):
         environment = services[name].get("environment") or {}
         assert environment.get("MOC_PG_HOST") == "postgres", (
             f"{name} would resolve the database to its own loopback"

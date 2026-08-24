@@ -19,6 +19,13 @@ reach: sending a WhatsApp message needs Twilio, a business number and a phone.
 Run it with the compose stack up and `.env` sourced:
 
     uv run python scripts/drive_the_path.py
+
+`--compose` instead drives the *containers*: it publishes a message onto the
+inbound stream and watches the running `worker-inbound` turn it into a queued
+reply. That exercises what only the composed system can get wrong — image
+contents, service-name resolution for the four backing stores, environment
+propagation — and skips the signature, which `POST /webhooks/...` through Caddy
+already exercises by refusing an unsigned body with a 403.
 """
 
 import asyncio
@@ -244,6 +251,115 @@ def _tails(logs: dict[str, Path], lines: int = 25) -> None:
         print("\n".join(body))
 
 
+def against_compose() -> int:
+    """Prove the containers process a turn.
+
+    Deliberately publishes to the stream rather than posting to the webhook.
+    The containers read `.env` at start, and the signing secret for a
+    throwaway account is not something to write into somebody's secrets file
+    to make a driver work — the webhook leg is proven by the host-process mode
+    above and by an unsigned POST through Caddy being refused.
+    """
+    print("\ndriving the composed system\n")
+
+    tenant_id = asyncio.run(seed())
+    say("tenant and channel account seeded", str(tenant_id))
+
+    before = asyncio.run(_outbound_length())
+    asyncio.run(_publish_inbound(tenant_id))
+    say("message published onto the inbound stream", "")
+
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        after = asyncio.run(_outbound_length())
+        if after > before:
+            say("a containerised worker produced a reply", f"outbound {before} -> {after}")
+            job = asyncio.run(_last_outbound())
+            print(f"\n  the customer would have received:\n\n    {job.get('text', '')}\n")
+            # Drop the queued reply before removing the tenant it belongs to.
+            # Left behind, `worker-outbound` resolves a sender for a tenant
+            # that no longer has a channel account and dead-letters — correct
+            # behaviour, and debris this script created.
+            asyncio.run(_drop_last_outbound())
+            asyncio.run(purge())
+            return 0
+        time.sleep(1)
+
+    say("no reply was queued", "")
+    print("\n  queue state:")
+    print(asyncio.run(_stream_state()))
+    asyncio.run(purge())
+    return 1
+
+
+async def _outbound_length() -> int:
+    from moc.channels.valkey import valkey_client
+    from moc.config_store import load
+
+    client = valkey_client()
+    length = await client.xlen(load("workers/queues")["outbound"]["stream"])
+    await client.aclose()
+    return length
+
+
+async def _last_outbound() -> dict:
+    from moc.channels.valkey import valkey_client
+    from moc.config_store import load
+
+    client = valkey_client()
+    entries = await client.xrevrange(load("workers/queues")["outbound"]["stream"], count=1)
+    await client.aclose()
+    return json.loads(entries[0][1]["payload"]) if entries else {}
+
+
+async def _drop_last_outbound() -> None:
+    from moc.channels.valkey import valkey_client
+    from moc.config_store import load
+
+    client = valkey_client()
+    stream = load("workers/queues")["outbound"]["stream"]
+    entries = await client.xrevrange(stream, count=1)
+    if entries:
+        await client.xdel(stream, entries[0][0])
+    await client.aclose()
+
+
+async def _publish_inbound(tenant_id) -> None:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from moc.channels.base import Channel, InboundMessage
+    from moc.channels.valkey import ValkeyInboundQueue, valkey_client
+    from moc.config import settings
+    from moc.config_store import load
+
+    engine = create_async_engine(settings.database_url)
+    async with AsyncSession(engine) as session:
+        account_id = (
+            await session.execute(
+                text("SELECT id FROM channel_accounts WHERE address = :a"),
+                {"a": BUSINESS_NUMBER},
+            )
+        ).scalar_one()
+    await engine.dispose()
+
+    client = valkey_client()
+    await ValkeyInboundQueue(client=client, config=load("workers/queues")).publish(
+        InboundMessage(
+            tenant_id=tenant_id,
+            channel=Channel.whatsapp,
+            channel_account_id=account_id,
+            provider_message_id=f"SM{uuid.uuid4().hex}",
+            sender_ref=CUSTOMER,
+            received_at=datetime.now(UTC),
+            text="كام رسوم الساعة المعتمدة؟",
+        )
+    )
+    await client.aclose()
+
+
 def main() -> int:
     # Synchronous on purpose. This starts subprocesses, blocks on sockets and
     # polls — all of which are correct here and all of which are mistakes
@@ -353,4 +469,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(against_compose() if "--compose" in sys.argv else main())

@@ -162,5 +162,70 @@ class ValkeyEventLog:
         """
         await self._client.delete(self._key(provider_message_id))
 
+class ValkeyOutboundPublisher:
+    """The agent inbox's reply, onto the same stream the bot's replies use.
 
-__all__ = ["ValkeyEventLog", "ValkeyInboundQueue", "decode"]
+    The narrowest possible adapter, and deliberately not a provider. §6.2's one
+    send path is the reason: an agent's reply is a message to a customer on a
+    messaging platform, so it is subject to the same rate limit and the same
+    24-hour window as a bot reply. A second send path means a second token
+    bucket, and two buckets each allowing the full rate is the same as no
+    limit.
+
+    Had no implementation until Task 39b — the console had never been served,
+    so the port had only ever been filled by a fake.
+    """
+
+    def __init__(self, *, client: Any, config: dict[str, Any] | None = None) -> None:
+        from moc.config_store import load
+
+        self._client = client
+        self._stream = (config or load(_QUEUES))["outbound"]["stream"]
+
+    async def publish(self, job: Any) -> None:
+        await self._client.xadd(self._stream, {_PAYLOAD: job.to_json()})
+
+
+class ValkeyInboxEvents:
+    """Fan-out for the inbox's live updates, scoped by tenant at the source.
+
+    One pub/sub channel per tenant rather than one channel carrying a tenant
+    id that subscribers are trusted to filter on. A filter in the subscriber is
+    a filter somebody can forget, and forgetting it here streams one tenant's
+    conversations into another tenant's console.
+    """
+
+    def __init__(self, *, client: Any, prefix: str = "moc:inbox:") -> None:
+        self._client = client
+        self._prefix = prefix
+
+    def _channel(self, tenant_id: Any) -> str:
+        return f"{self._prefix}{tenant_id}"
+
+    async def publish(self, *, tenant_id: Any, event: dict[str, Any]) -> None:
+        await self._client.publish(
+            self._channel(tenant_id), json.dumps(event, ensure_ascii=False)
+        )
+
+    async def subscribe(self, *, tenant_id: Any) -> Any:
+        pubsub = self._client.pubsub()
+        await pubsub.subscribe(self._channel(tenant_id))
+        try:
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                yield json.loads(message["data"])
+        finally:
+            await pubsub.unsubscribe(self._channel(tenant_id))
+            await pubsub.aclose()
+
+
+
+__all__ = [
+    "ValkeyEventLog",
+    "ValkeyInboundQueue",
+    "ValkeyInboxEvents",
+    "ValkeyOutboundPublisher",
+    "decode",
+    "valkey_client",
+]

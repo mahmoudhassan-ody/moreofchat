@@ -21,9 +21,17 @@ process-wide.** They are the reason this file exists rather than a
    one number, under one name. See `moc.channels.senders`.
 
 3. **The vertical.** Real estate is a different agent with a different result
-   type. This worker serves education, and refuses anything else loudly —
-   because the education orchestrator will run its own script against a
-   broker's customer perfectly happily.
+   type — a price came from a row, not a passage. Both are wired here, keyed by
+   the tenant's vertical, and a vertical with no runner is refused loudly:
+   answering a broker's customer with the education script produces a fluent
+   reply about credit-hour fees, which is the worst outcome available because
+   it is indistinguishable from working.
+
+   The real-estate extractor is built **per turn**, not per process. The
+   catalogue it resolves compounds against is the tenant's own inventory, so
+   one extractor per process resolves every broker's areas against whichever
+   broker started first — and the failure is a confident answer about the wrong
+   compound.
 
 **One process per channel is not what this is.** §14 lists `worker-inbound` and
 `worker-outbound`, one each. Channels are a routing key inside the job, not a
@@ -42,7 +50,9 @@ _QUEUES = "workers/queues"
 _ROUTING = "llm/routing"
 _LEXICAL = "retrieval/lexical"
 _SCRIPT = "scripts/education/fees"
+_REALESTATE_SCRIPT = "scripts/realestate/search"
 _EDUCATION = "education"
+_REALESTATE = "realestate"
 
 
 class RouterEmbedder:
@@ -143,7 +153,8 @@ async def inbound() -> None:
     from moc.llm.router import Router
     from moc.retrieval.lexical import MeilisearchRepository, meilisearch_client
     from moc.retrieval.vectors import QdrantRepository, qdrant_client
-    from moc.workers.inbound import InboundWorker
+    from moc.verticals.realestate.runner import InventoryRunner
+    from moc.workers.inbound import InboundWorker, Served
 
     engine = _app_engine()
     client = await _valkey()
@@ -176,6 +187,19 @@ async def inbound() -> None:
         scripts=ScriptStore(engine=engine),
         retrievers=retrievers,
         vertical=_EDUCATION,
+        runners={
+            _REALESTATE: Served(
+                runner=InventoryRunner(
+                    script=_REALESTATE_SCRIPT,
+                    # A factory, because the catalogue is the tenant's own
+                    # inventory and there is no tenant-independent extractor.
+                    extractor=lambda catalogue: LlmSlotExtractor(
+                        router=router, script=_REALESTATE_SCRIPT, catalogue=catalogue
+                    ),
+                ),
+                script=_REALESTATE_SCRIPT,
+            )
+        },
     )
 
     try:

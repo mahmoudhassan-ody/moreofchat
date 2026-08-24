@@ -10,9 +10,12 @@
 # that is not HTTPS with a valid certificate, so a self-signed certificate is
 # not a shortcut here — it is a webhook that never fires.
 
-{
-	email {$MOC_TLS_EMAIL}
-}
+# No global `email` directive. `email {$MOC_TLS_EMAIL}` with the variable unset
+# expands to `email` with no argument, which is a Caddyfile parse error — so
+# the reverse proxy crash-loops and every webhook 502s, on a deployment where
+# nobody thought to set an optional variable. Let's Encrypt accepts an ACME
+# account with no contact address; the only thing lost is expiry notices, and
+# Caddy renews automatically anyway.
 
 {$MOC_DOMAIN} {
 	encode zstd gzip
@@ -23,6 +26,37 @@
 		reverse_proxy api:8000
 	}
 
+	# The console's API. Authenticated by an httpOnly cookie, on a separate
+	# process from the webhook: agent sessions and the whole `moc_app` surface
+	# do not belong in the process strangers can post to.
+	handle /auth/* {
+		reverse_proxy console:8001
+	}
+
+	handle /inbox* {
+		reverse_proxy console:8001
+	}
+
+	handle /knowledge/* {
+		reverse_proxy console:8001
+	}
+
+	handle /settings {
+		reverse_proxy console:8001
+	}
+
+	handle /scripts/* {
+		reverse_proxy console:8001
+	}
+
+	handle /analytics {
+		reverse_proxy console:8001
+	}
+
+	handle /tenant* {
+		reverse_proxy console:8001
+	}
+
 	# The health check is not published. It exists for the container's own
 	# healthcheck on the compose network; answering it from the internet tells
 	# a stranger when the service is degraded enough to be worth attacking.
@@ -30,9 +64,11 @@
 		respond 404
 	}
 
-	# Nothing else is served yet. The console is a separate process and is not
-	# deployed — see docs/ops/real-phone-path.md.
+	# The console itself: static files, served by Caddy rather than by Python.
+	# Hash routing (`/#inbox`), so there is no history fallback to arrange —
+	# every URL the browser asks for is `/`.
 	handle {
-		respond 404
+		root * /srv/console
+		file_server
 	}
 }

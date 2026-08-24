@@ -66,6 +66,24 @@ services:
       valkey: {condition: service_started}
     restart: unless-stopped
 
+  console:
+    build: .
+    command:
+      - uvicorn
+      - --factory
+      - moc.api.main:console_app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    env_file: [.env]
+    environment: *in_network
+    ports: ["127.0.0.1:8001:8001"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_started}
+    restart: unless-stopped
+
   worker-inbound:
     build: .
     command: ["python", "-m", "moc.workers.run", "inbound"]
@@ -92,13 +110,19 @@ services:
     image: caddy:2
     ports: ["0.0.0.0:80:80", "0.0.0.0:443:443"]
     environment:
+      # `localhost` by default so `docker compose up` works on a laptop with
+      # Caddy's internal CA. A real deployment sets the hostname the vendor
+      # will call, and Caddy gets a public certificate for it.
       MOC_DOMAIN: ${MOC_DOMAIN:-localhost}
-      MOC_TLS_EMAIL: ${MOC_TLS_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The built console. `npm run build` first — Caddy serves files, it does
+      # not compile them, and an unbuilt `dist` is a 404 that looks like a
+      # routing problem.
+      - ./console/dist:/srv/console:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on: [api]
+    depends_on: [api, console]
     restart: unless-stopped
 
 volumes:

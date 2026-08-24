@@ -24,6 +24,7 @@ import json
 import uuid
 from base64 import b64encode
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -1844,3 +1845,110 @@ def test_the_socket_timeout_outlasts_the_longest_blocking_read():
         f"socket_timeout {configured}s does not outlast a {longest}ms blocking "
         "read; a worker on an idle stream exits rather than waiting"
     )
+
+
+# ─────────────────────── the broker's turn, through the worker ───────────────────────
+
+
+async def test_a_broker_tenant_is_answered_from_its_own_inventory(
+    valkey, app_engine, engine, account, tenant_tables
+):
+    """A real-estate tenant has a path through the worker.
+
+    Until now it did not, and the refusal above was the honest version of that:
+    the education orchestrator would have answered a broker's customer with a
+    credit-hour fee script. A broker's number could not be connected at all.
+
+    Driven through the same worker as every education turn, because "one pair
+    of processes serves every tenant" is the claim, and two workers would let
+    it stop being true in one of them.
+    """
+    import json as _json
+
+    from moc.verticals.realestate.agent import KeywordSlotExtractor
+    from moc.verticals.realestate.runner import InventoryRunner
+    from moc.workers.inbound import Served
+
+    broker = await _a_second_tenant(engine, "broker-with-stock", vertical="realestate")
+    await _stock(engine, broker)
+
+    script = "scripts/realestate/search"
+    worker = InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+        retrievers=Retrievers(),
+        runners={
+            "realestate": Served(
+                runner=InventoryRunner(
+                    script=script,
+                    extractor=lambda catalogue: KeywordSlotExtractor(catalogue=catalogue),
+                ),
+                script=script,
+            )
+        },
+    )
+
+    message = _message_for(broker, account)
+    message = type(message)(
+        **{
+            **{f: getattr(message, f) for f in message.__dataclass_fields__},
+            "text": "عايز شقة في مدينتي",
+        }
+    )
+    await ValkeyInboundQueue(client=valkey, config=QUEUES).publish(message)
+    assert await worker.run_once() == 1
+
+    entries = await valkey.xrange(QUEUES["outbound"]["stream"])
+    assert len(entries) == 1, "the broker's customer got no reply"
+    job = _json.loads(entries[0][1]["payload"])
+    assert job["tenant_id"] == str(broker)
+    assert job["text"], "an empty reply is a customer left waiting"
+    # The engine that ran is the real-estate one, so the reply is inventory
+    # wording rather than the education script's slot question.
+    assert "كلية" not in job["text"], (
+        "the broker's customer was answered by the education script"
+    )
+
+
+async def _stock(engine, tenant_id) -> None:
+    """Two units, through the real ingestion path."""
+    import json as _json
+    import tempfile
+
+    from moc.retrieval.inventory import load_units
+    from moc.tenancy.context import tenant_session
+
+    rows = [
+        {
+            "unit_id": "MD-1",
+            "as_of": "2026-08-01",
+            "property_type": "apartment",
+            "compound": "Madinaty",
+            "city": "New Cairo",
+            "price": 5_500_000,
+            "currency": "EGP",
+            "availability": "available",
+            "bedrooms": 3,
+        },
+        {
+            "unit_id": "MD-2",
+            "as_of": "2026-08-01",
+            "property_type": "apartment",
+            "compound": "Madinaty",
+            "city": "New Cairo",
+            "price": 6_100_000,
+            "currency": "EGP",
+            "availability": "available",
+            "bedrooms": 3,
+        },
+    ]
+    path = Path(tempfile.mkdtemp()) / "units.jsonl"
+    path.write_text(
+        "\n".join(_json.dumps(row, ensure_ascii=False) for row in rows), encoding="utf-8"
+    )
+    async with tenant_session(engine, tenant_id) as session:
+        await load_units(session=session, path=path)
+        await session.commit()

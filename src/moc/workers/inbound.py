@@ -15,6 +15,8 @@ would mean a Twilio 429 fails a turn that was otherwise complete, and the retry
 would re-run the model.
 """
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from sqlalchemy import text
@@ -50,6 +52,20 @@ class RetrieverFactory(Protocol):
     async def for_tenant(self, *, tenant_id: Any, vertical: str) -> Any: ...
 
 
+@dataclass(frozen=True)
+class Served:
+    """One vertical this worker can carry: its turn runner and its script.
+
+    The two travel together because they are one decision. A worker holding a
+    real-estate runner and an education script would advance the broker's
+    conversation through faculty slots and then hand the state to an inventory
+    agent that has never heard of them.
+    """
+
+    runner: TurnRunner
+    script: str
+
+
 class WrongVertical(TerminalFailure):
     """This worker has no turn handler for the tenant's vertical.
 
@@ -73,28 +89,44 @@ class InboundWorker:
         scripts: Any = None,
         retrievers: RetrieverFactory | None = None,
         vertical: str = _EDUCATION,
+        runners: Mapping[str, Served] | None = None,
         consumer: str = _CONSUMER,
     ) -> None:
         self._client = client
         self._engine = engine
         self._orchestrator = orchestrator
         self._script = script
-        self._engine_for_script = ScriptEngine.from_config(script)
+        #: Every vertical this process can carry. `orchestrator` and `script`
+        #: are the first entry rather than a special case, so the education
+        #: path and the real-estate path are the same code and neither can
+        #: quietly stop resembling the other.
+        self._served: dict[str, Served] = {
+            vertical: Served(runner=orchestrator, script=script),
+            **dict(runners or {}),
+        }
+        self._engines = {
+            name: ScriptEngine.from_config(spec.script)
+            for name, spec in self._served.items()
+        }
         #: Optional so every existing caller keeps working, and passed by the
         #: production wiring. Without it the worker runs the config file for
         #: every tenant, which is what it did before Task 33's publish had
         #: anything reading it.
         self._scripts = (
-            ScriptResolver(store=scripts, fallback=script) if scripts is not None else None
+            {
+                name: ScriptResolver(store=scripts, fallback=spec.script)
+                for name, spec in self._served.items()
+            }
+            if scripts is not None
+            else None
         )
         #: Per turn, from the tenant the message belongs to. Optional so the
         #: existing single-tenant tests keep working; the composition root
         #: always supplies one, and a test asserts it.
         self._retrievers = retrievers
-        #: What this process can actually answer. Real estate is a different
-        #: agent with a different result type, and there is no path from here
-        #: to it — so a broker's message is refused rather than run through the
-        #: education script.
+        #: Kept for the error message. What this process can answer is
+        #: `self._served`; a vertical absent from it is refused rather than
+        #: run through another vertical's script.
         self._vertical = vertical
         self._outbound_stream = config["outbound"]["stream"]
         self._consumer = consumer_from_config(
@@ -117,12 +149,13 @@ class InboundWorker:
             vertical = (
                 await session.execute(text("SELECT vertical FROM tenants"))
             ).scalar_one_or_none()
-            if vertical != self._vertical:
+            served = self._served.get(vertical or "")
+            if served is None:
                 raise WrongVertical(
                     f"tenant {message.tenant_id} is {vertical!r} and this worker "
-                    f"serves {self._vertical!r}. Answering anyway would run the "
-                    f"{self._vertical} script against their customer and produce a "
-                    "fluent reply about the wrong business."
+                    f"serves {sorted(self._served)}. Answering anyway would run "
+                    "another vertical's script against their customer and produce "
+                    "a fluent reply about the wrong business."
                 )
 
             retriever = None
@@ -137,9 +170,10 @@ class InboundWorker:
             # The engine a NEW conversation would start on — the tenant's
             # published script, or the config file if they have published
             # none. Used by `load` only to build a fresh state.
-            engine = self._engine_for_script
-            if self._scripts is not None:
-                engine = await self._scripts.current(tenant_id=message.tenant_id)
+            engine = self._engines[vertical]
+            resolver = self._scripts.get(vertical) if self._scripts is not None else None
+            if resolver is not None:
+                engine = await resolver.current(tenant_id=message.tenant_id)
 
             store = ConversationStore(session=session, engine=engine)
             state = await store.load(
@@ -150,8 +184,8 @@ class InboundWorker:
             # this, publishing a new version does not merely fail to take
             # effect — `_require_pinned_version` raises, and every customer
             # mid-conversation gets an error the moment a script is published.
-            if self._scripts is not None and state.script_version != engine.version:
-                pinned = await self._scripts.at(
+            if resolver is not None and state.script_version != engine.version:
+                pinned = await resolver.at(
                     tenant_id=message.tenant_id,
                     script_id=state.script_id,
                     version=state.script_version,
@@ -185,7 +219,7 @@ class InboundWorker:
                 await session.commit()
                 return
 
-            result = await self._orchestrator.handle(
+            result = await served.runner.handle(
                 session=session,
                 state=state,
                 text=message.text or "",
@@ -235,7 +269,12 @@ class InboundWorker:
                     # sources went missing shows a customer-visible figure with
                     # no evidence behind it, which is the one thing the source
                     # pane exists to rule out.
-                    provenance=result.provenance,
+                    # Absent on an inventory turn: those figures came from a
+                    # row and a calculator, not from chunks, and the source
+                    # pane renders chunk provenance. Recorded as nothing rather
+                    # than as an empty trace, which would read as "we looked
+                    # and found no source".
+                    provenance=getattr(result, "provenance", None),
                 )
             await session.commit()
 

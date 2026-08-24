@@ -18,9 +18,14 @@ Three processes from one image, plus Caddy.
 | Process | Command | Can reach |
 |---|---|---|
 | `api` | `uvicorn --factory moc.api.main:webhook_app` | `moc_lookup` (SELECT on a five-column view), Valkey, the signing secrets |
+| `console` | `uvicorn --factory moc.api.main:console_app` | `moc_app`, `moc_lookup`, Valkey, the model providers, Qdrant, Meilisearch |
 | `worker-inbound` | `python -m moc.workers.run inbound` | `moc_app`, the model providers, Qdrant, Meilisearch |
 | `worker-outbound` | `python -m moc.workers.run outbound` | `moc_app`, each tenant's vendor credentials |
-| `caddy` | image | ports 80 and 443 |
+| `caddy` | image | ports 80 and 443; serves `console/dist` |
+
+The console's static bundle is served by Caddy from `console/dist`, not by
+Python. **`npm run build` before deploying** — Caddy serves files, it does not
+compile them, and an unbuilt `dist` is a 404 that reads as a routing problem.
 
 **The internet-facing process holds no application database credentials.** Not
 by policy — it has no login that would let it read a conversation, a message, a
@@ -55,6 +60,28 @@ over TCP. Twilio's host is pointed at a stub on loopback through
 `MOC_CONFIG_DIR`; everything else — the signature, the queue, the consumer
 group, the model call, the adapter, the form encoding — is real. It cleans up
 the tenant it seeds.
+
+And for the composed system:
+
+```bash
+docker compose up -d
+uv run python scripts/drive_the_path.py --compose
+```
+
+That one publishes onto the inbound stream and watches the *containerised*
+worker turn it into a queued reply, which exercises what only the composed
+system can get wrong: image contents, service-name resolution for the four
+backing stores, and environment propagation. It does not post to the webhook,
+because the containers read `.env` at start and a throwaway signing secret is
+not something to write into a secrets file to make a driver work. The webhook
+leg is covered by the host-process mode, and by this:
+
+```bash
+curl -skS -o /dev/null -w '%{http_code}\n' -X POST https://localhost/webhooks/twilio/whatsapp -d 'To=x'
+```
+
+`403` — the request reached Caddy, was routed to the webhook process, and the
+signature check refused it.
 
 ---
 
@@ -208,16 +235,42 @@ Two, three and four are fixed and checked by the preflight.
 
 ---
 
-## 5. What is still not proven
+## 5. What the composed system found
+
+`docker compose up` was driven for the first time after the processes existed,
+and found one more of the same kind:
+
+**Caddy crash-looped on an unset variable.** The global block read
+`email {$MOC_TLS_EMAIL}`, and with the variable unset that expands to `email`
+with no argument — a Caddyfile parse error, so the reverse proxy restarted
+forever and every webhook would have 502'd, on a deployment where nobody
+thought to set an *optional* variable. The directive is gone: Let's Encrypt
+accepts an ACME account with no contact address, and the only thing lost is
+expiry notices that Caddy's automatic renewal makes unnecessary.
+
+Verified through the running stack, over HTTPS:
+
+| | |
+|---|---|
+| `GET /` | `200 text/html` — the console bundle |
+| `GET /inbox`, `/settings` | `401` — mounted and authenticated |
+| `POST /webhooks/twilio/whatsapp` unsigned | `403` |
+| `GET /healthz` | `404` — not published |
+| `GET /docs` | `404` |
+
+---
+
+## 6. What is still not proven
 
 - **No message has been sent from a real phone.** Everything above is loopback
   and a stub. §3 is the procedure, not a record.
-- **The console is not deployed.** It builds, it passes its own smoke gate in a
-  real browser, and no process serves it. It needs the same treatment this
-  document gives the webhook: a composition root, a service, and a Caddy route.
-- **Real estate has no worker path.** Inventory turns are a different agent
-  with a different result type, and `worker-inbound` refuses a tenant whose
-  vertical it cannot serve rather than answering them with the education
-  script. A broker's WhatsApp number cannot be connected until that exists.
-- **The image has never run against the real stack.** It builds and its
-  entrypoints import; `docker compose up` has not been driven end to end.
+- **No vendor has ever called this system.** Caddy has never held a public
+  certificate, and no webhook has been registered with Twilio, Telegram or
+  Meta.
+- **The console has no browser session against the deployed API.** Its routes
+  answer `401` without a cookie, which is the assertion; nobody has logged in
+  through Caddy and driven a real handoff.
+- **Real-estate replies carry no provenance.** An inventory turn's figures come
+  from a row and a calculator, and the source pane renders chunk provenance.
+  The reply is recorded with none rather than with an empty trace, which would
+  read as "we looked and found no source".

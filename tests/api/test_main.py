@@ -92,3 +92,70 @@ def test_the_composition_root_is_the_only_place_these_are_built():
     """
     assert inspect.isfunction(main.webhook_app)
     assert "app = webhook_app()" not in SOURCE
+
+
+# ─────────────────────────── the console process ───────────────────────────
+
+
+async def test_every_console_route_refuses_a_request_with_no_session():
+    """The console had never been served, so this had never been asked of the
+    assembled app — only of `build_inbox` with a fake authenticator.
+
+    A router mounted without its dependency is not a 500 here: it is a route
+    that answers, and the tenant it answers for is whoever the frontend says.
+    """
+    import httpx
+
+    app = main.console_app()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as client:
+        for path in ("/inbox", "/settings", "/analytics", "/tenant"):
+            response = await client.get(path)
+            assert response.status_code == 401, f"{path} answered without a session"
+
+        assert (await client.get("/healthz")).status_code == 200
+        assert (await client.get("/docs")).status_code == 404
+
+
+def test_the_console_publishes_replies_rather_than_sending_them():
+    """§6.2's one send path, asserted about the wiring.
+
+    The import-linter contract stops `moc.api.inbox` reaching a channel
+    adapter. That contract is only meaningful if the composition root fills the
+    port with a publisher — an adapter constructed *here* and injected there
+    would satisfy every contract and still be a second send path, with a second
+    token bucket, and two buckets each allowing the full rate is the same as no
+    limit.
+    """
+    builder = next(
+        node
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.FunctionDef) and node.name == "console_app"
+    )
+    named = {node.id for node in ast.walk(builder) if isinstance(node, ast.Name)}
+    assert "ValkeyOutboundPublisher" in named
+    assert not named & {"TwilioWhatsApp", "TelegramBot", "MetaMessenger", "SendGridEmail"}, (
+        "the console constructs a sender; replies must go through the outbound "
+        "worker so the rate limit and the service window apply to them too"
+    )
+
+
+def test_the_two_processes_do_not_share_a_credential_set():
+    """The webhook process's reach is its security value.
+
+    If both apps needed the same environment there would be no reason to run
+    two, and the split would erode to one process on the next convenient day.
+    """
+    import os
+
+    saved = {name: os.environ.pop(name, None) for name in ("MOC_APP_PASSWORD",)}
+    try:
+        assert "MOC_APP_PASSWORD" not in main.missing_environment(), (
+            "the webhook process should not need the application role at all"
+        )
+        assert "MOC_APP_PASSWORD" in main.console_missing_environment()
+    finally:
+        for name, value in saved.items():
+            if value is not None:
+                os.environ[name] = value
