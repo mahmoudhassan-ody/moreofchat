@@ -47,6 +47,9 @@ from moc.channels.base import (
     InboundQueue,
     SecretResolver,
 )
+from moc.channels.meta import UnknownObject, account_refs, verify_challenge
+from moc.channels.meta import parse_inbound as parse_meta
+from moc.channels.meta import verify_signature as verify_meta_signature
 from moc.channels.telegram import NotAMessage, verify_secret
 from moc.channels.telegram import parse_inbound as parse_telegram
 from moc.channels.twilio_wa import parse_inbound, verify_signature
@@ -54,6 +57,11 @@ from moc.config_store import load
 
 _WHATSAPP = "channels/whatsapp"
 _TELEGRAM = "channels/telegram"
+_META = "channels/meta"
+#: Platform-level rather than per tenant: one Meta app serves every page,
+#: so the verify token and the app secret are the platform's.
+_META_VERIFY_REF = "meta/app/verify_token"
+_META_APP_REF = "meta/app/secret"
 _TWILIO_WHATSAPP_PATH = "/webhooks/twilio/whatsapp"
 _TO = "To"
 
@@ -181,6 +189,98 @@ def build_app(
         except Exception:
             await events.release(message.provider_message_id)
             return Response(status_code=_UNAVAILABLE)
+        return Response(status_code=_OK)
+
+    meta = load(_META)
+
+    @app.get(meta["webhook_path"])
+    async def meta_challenge(request: Request) -> Response:
+        """The subscription handshake, once, at setup.
+
+        A separate mechanism from the POST signature and not a weaker version
+        of it: this proves we chose the verify token, and says nothing about
+        any later delivery.
+        """
+        query = request.query_params
+        challenge = verify_challenge(
+            mode=query.get(meta["challenge"]["mode_param"]),
+            token=query.get(meta["challenge"]["token_param"]),
+            challenge=query.get(meta["challenge"]["challenge_param"]),
+            expected_token=secrets.for_ref(_META_VERIFY_REF),
+            config=meta,
+        )
+        if challenge is None:
+            return Response(status_code=_FORBIDDEN)
+        return Response(content=challenge, media_type="text/plain")
+
+    @app.post(meta["webhook_path"])
+    async def meta_update(request: Request) -> Response:
+        """Instagram and Messenger, batched, possibly across tenants.
+
+        One POST can carry entries for several pages, and those pages can
+        belong to different tenants — so every entry is resolved on its own and
+        parsed against its own account. Attributing the batch to whichever
+        account resolved first would be a cross-tenant write arriving as
+        ordinary traffic.
+        """
+        raw_body = await request.body()
+
+        try:
+            refs = account_refs(raw_body=raw_body)
+        except ValueError:
+            return Response(status_code=_BAD_REQUEST)
+        if not refs:
+            return Response(status_code=_BAD_REQUEST)
+
+        accounts = []
+        for ref in refs:
+            for channel in (Channel.messenger, Channel.instagram):
+                found = await registry.resolve(channel=channel, account_ref=ref)
+                if found is not None:
+                    accounts.append(found)
+                    break
+        if not accounts:
+            # No page in this batch belongs to anyone here. Refused before a
+            # signature is checked, because there is no tenant to attribute
+            # the work to and anyone can POST to this path.
+            return Response(status_code=_FORBIDDEN)
+
+        # One app secret for every page on the app — see the adapter's
+        # docstring. Resolution is still per page because that is what says
+        # which tenant; the value that verifies is the app's.
+        if not verify_meta_signature(
+            raw_body=raw_body,
+            signature=request.headers.get(meta["signature_header"]),
+            app_secret=secrets.for_ref(_META_APP_REF),
+            config=meta,
+        ):
+            return Response(status_code=_FORBIDDEN)
+
+        try:
+            messages = [
+                message
+                for account in accounts
+                for message in parse_meta(raw_body=raw_body, account=account, config=meta)
+            ]
+        except UnknownObject:
+            # A product this adapter does not serve. 200 so Meta stops
+            # retrying: nothing here is broken and retrying will not make the
+            # object one we handle.
+            return Response(status_code=_OK)
+        except ValueError:
+            return Response(status_code=_BAD_REQUEST)
+
+        for message in messages:
+            # Per message, not per request. A batch is several customers, and
+            # a claim on the request would let one redelivered message discard
+            # everyone else's in the same POST.
+            if not await events.claim(message.provider_message_id):
+                continue
+            try:
+                await queue.publish(message)
+            except Exception:
+                await events.release(message.provider_message_id)
+                return Response(status_code=_UNAVAILABLE)
         return Response(status_code=_OK)
 
     return app

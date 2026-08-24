@@ -1,0 +1,81 @@
+# Instagram and Messenger — design §6.1, §6.2, demo plan Task 36.
+#
+# **One integration, two channels.** Meta delivers both down the same webhook
+# and distinguishes them by the payload's `object` field: `page` is Messenger,
+# `instagram` is Instagram DM. The message shape is otherwise identical, which
+# is why this is one adapter and not two — and why the outbound worker had to
+# learn to route by channel before this could be written at all.
+#
+# ── Three traps this file exists to name ────────────────────────────────────
+#
+# **Echoes.** Every message the page itself sends comes back down the webhook
+# with `message.is_echo: true`. A bot that does not drop them answers its own
+# reply, which answers that, and so on — a loop that costs a model call per
+# turn and reaches the customer as a wall of messages. It is the first thing
+# anyone integrating Messenger gets wrong.
+#
+# **Batching.** `entry` is a list and each entry's `messaging` is a list, so
+# one POST can carry several customers' messages. Every other adapter here
+# parses one message per request; this one must not, or the second customer in
+# a batch is silently dropped.
+#
+# **Not everything is a message.** Delivery receipts, read receipts, reactions
+# and postbacks arrive on the same webhook with the same envelope. Treating a
+# read receipt as a turn would answer a customer for looking at their phone.
+#
+# ── Verification ────────────────────────────────────────────────────────────
+#
+# Two mechanisms, and they are not the same thing:
+#
+#   - the GET handshake, once, at subscription time: Meta calls with
+#     `hub.mode`, `hub.verify_token` and `hub.challenge`, and expects the
+#     challenge echoed back. The verify token is ours, chosen by us.
+#   - the POST signature, on every delivery: `X-Hub-Signature-256` is an
+#     HMAC-SHA256 over the raw body keyed by the **app secret**.
+#
+# The app secret is per Meta app, not per page — which means it is a
+# platform-level secret shared by every tenant on this app, unlike Twilio's
+# per-account token. Resolution therefore still goes by page id, but the secret
+# that verifies is the app's. Worth knowing: a leak is a leak of everyone's
+# inbound integrity at once.
+
+version: 1
+
+api_base: https://graph.facebook.com/v21.0
+
+signature_header: X-Hub-Signature-256
+# Meta prefixes the hex digest with the algorithm. Config because it is their
+# wire contract, and because a future v3 prefix should be an edit here.
+signature_prefix: "sha256="
+
+# The GET handshake's query parameters, by Meta's names.
+challenge:
+  mode_param: hub.mode
+  token_param: hub.verify_token
+  challenge_param: hub.challenge
+  expected_mode: subscribe
+
+# `object` -> our channel. The whole reason one adapter serves two channels.
+objects:
+  page: messenger
+  instagram: instagram
+
+webhook_path: /webhooks/meta
+
+http:
+  connect_timeout_seconds: 5
+  read_timeout_seconds: 30
+
+# §6.2. Meta's standard messaging window is 24 hours on both channels. Outside
+# it a reply needs a message tag, and an untagged send is rejected — a queue of
+# rejections reads to a tenant as an outage rather than as a policy they hit.
+#
+# Instagram is stricter than Messenger in what it allows outside the window:
+# Messenger has several tags, Instagram effectively has the human-agent one.
+# Both are refused here rather than guessed at, because choosing a tag is a
+# business decision with a per-message cost attached.
+service_window_hours: 24
+
+# `messaging_type` on an in-window reply. RESPONSE is the honest value: this is
+# an answer to something the customer sent.
+messaging_type: RESPONSE

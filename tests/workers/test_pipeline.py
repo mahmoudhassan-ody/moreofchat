@@ -23,6 +23,7 @@ import hmac
 import json
 import uuid
 from base64 import b64encode
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -1141,4 +1142,214 @@ async def test_an_edit_is_acknowledged_and_not_answered(
     # Acknowledged, and nothing enqueued. Asserted on the stream rather than
     # by running a worker: "the worker found nothing" is also what a broken
     # consumer group looks like.
+    assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
+
+
+# ─────────────────────── Instagram and Messenger, end to end ───────────────────────
+
+META_APP_SECRET = "meta-app-secret"  # noqa: S105 - a test fixture
+META_VERIFY = "meta-verify-token"  # noqa: S105 - a test fixture
+PAGE_ID = "1122334455"
+IG_ID = "5544332211"
+FAN = "9988776655"
+
+
+def meta_body(obj: str, page: str, mid: str = "m_1") -> bytes:
+    # A current timestamp, not a frozen one. `received_at` comes from Meta's
+    # own value and feeds §6.2's 24-hour window, so a fixture pinned to a date
+    # in the past makes every reply legitimately out of window — which is the
+    # adapter being right and the test being stale.
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    return json.dumps(
+        {
+            "object": obj,
+            "entry": [
+                {
+                    "id": page,
+                    "time": now_ms // 1000,
+                    "messaging": [
+                        {
+                            "sender": {"id": FAN},
+                            "recipient": {"id": page},
+                            "timestamp": now_ms,
+                            "message": {"mid": mid, "text": "كام رسوم الساعة؟"},
+                        }
+                    ],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    ).encode()
+
+
+def meta_sign(raw: bytes) -> str:
+    return "sha256=" + hmac.new(META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def meta_accounts(engine, account):
+    """The same tenant with a Facebook page and an Instagram account."""
+    from sqlalchemy import text as sql
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from moc.channels.base import Channel, ChannelAccount
+
+    rows = {"messenger": (uuid.uuid4(), PAGE_ID), "instagram": (uuid.uuid4(), IG_ID)}
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        for channel, (row_id, address) in rows.items():
+            await s.execute(
+                sql(
+                    "INSERT INTO channel_accounts "
+                    "(id, tenant_id, channel, address, secret_ref, signing_secret) "
+                    "VALUES (:id, :t, :ch, :addr, 'meta/app/secret', :secret)"
+                ),
+                {"id": row_id, "t": account.tenant_id, "ch": channel,
+                 "addr": address, "secret": META_APP_SECRET},
+            )
+        await s.commit()
+    return {
+        channel: ChannelAccount(
+            id=row_id, tenant_id=account.tenant_id, channel=Channel(channel),
+            account_ref=address, secret_ref="meta/app/secret",
+        )
+        for channel, (row_id, address) in rows.items()
+    }
+
+
+class MetaSecrets:
+    def for_ref(self, secret_ref: str) -> str:
+        return {
+            SECRET_REF: SECRET,
+            "meta/app/secret": META_APP_SECRET,
+            "meta/app/verify_token": META_VERIFY,
+        }[secret_ref]
+
+
+def meta_app(account, meta_accounts, valkey):
+    return build_app(
+        registry=TwoChannelRegistry(account, *meta_accounts.values()),
+        queue=ValkeyInboundQueue(client=valkey, config=QUEUES),
+        events=ValkeyEventLog(client=valkey, config=QUEUES),
+        secrets=MetaSecrets(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("obj", "page", "channel"),
+    [("page", PAGE_ID, "messenger"), ("instagram", IG_ID, "instagram")],
+)
+async def test_a_meta_message_produces_a_sent_reply(
+    valkey, app_engine, account, meta_accounts, obj, page, channel
+):
+    """Task 36's exit criterion, on both surfaces, through one webhook.
+
+    Parametrised rather than duplicated: the whole claim is that one
+    integration serves both, and two copies of this test would let it stop
+    being true in one of them.
+    """
+    from moc.channels.meta import MetaMessenger
+
+    app = meta_app(account, meta_accounts, valkey)
+    raw = meta_body(obj, page, mid=f"m_{channel}")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        response = await http.post(
+            "/webhooks/meta",
+            content=raw,
+            headers={"content-type": "application/json",
+                     "X-Hub-Signature-256": meta_sign(raw)},
+        )
+    assert response.status_code == 200
+
+    inbound = InboundWorker(
+        client=valkey, engine=app_engine, orchestrator=orchestrator(),
+        script=SCRIPT, config=QUEUES,
+    )
+    assert await inbound.run_once() == 1
+
+    sent = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"message_id": "m_out", "recipient_id": FAN})
+
+    bot = MetaMessenger(
+        page_id=page, access_token="tok", transport=httpx.MockTransport(capture)
+    )
+    outbound = OutboundWorker(
+        client=valkey, providers={channel: bot}, config=QUEUES
+    )
+    assert await outbound.run_once() == 1
+    await bot.aclose()
+
+    assert len(sent) == 1
+    assert sent[0]["recipient"] == {"id": FAN}
+    assert sent[0]["message"]["text"], "the customer got words, not an empty message"
+
+
+async def test_the_subscription_handshake_answers_the_challenge(
+    valkey, account, meta_accounts
+):
+    app = meta_app(account, meta_accounts, valkey)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        good = await http.get(
+            "/webhooks/meta",
+            params={"hub.mode": "subscribe", "hub.verify_token": META_VERIFY,
+                    "hub.challenge": "1158201444"},
+        )
+        bad = await http.get(
+            "/webhooks/meta",
+            params={"hub.mode": "subscribe", "hub.verify_token": "guess",
+                    "hub.challenge": "1158201444"},
+        )
+
+    assert (good.status_code, good.text) == (200, "1158201444")
+    assert bad.status_code == 403
+
+
+async def test_an_unsigned_meta_delivery_is_refused(valkey, account, meta_accounts):
+    app = meta_app(account, meta_accounts, valkey)
+    raw = meta_body("page", PAGE_ID)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        unsigned = await http.post(
+            "/webhooks/meta", content=raw, headers={"content-type": "application/json"}
+        )
+        forged = await http.post(
+            "/webhooks/meta",
+            content=raw,
+            headers={"content-type": "application/json",
+                     "X-Hub-Signature-256": "sha256=" + "0" * 64},
+        )
+
+    assert (unsigned.status_code, forged.status_code) == (403, 403)
+    assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
+
+
+async def test_an_echo_reaches_no_queue(valkey, account, meta_accounts):
+    """The loop, at the webhook. An echo enqueued is a turn the bot answers,
+    and the answer echoes."""
+    app = meta_app(account, meta_accounts, valkey)
+    payload = json.loads(meta_body("page", PAGE_ID))
+    payload["entry"][0]["messaging"][0]["message"]["is_echo"] = True
+    raw = json.dumps(payload).encode()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://moc.example"
+    ) as http:
+        response = await http.post(
+            "/webhooks/meta",
+            content=raw,
+            headers={"content-type": "application/json",
+                     "X-Hub-Signature-256": meta_sign(raw)},
+        )
+
+    assert response.status_code == 200
     assert await valkey.xlen(QUEUES["inbound"]["stream"]) == 0
