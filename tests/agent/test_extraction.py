@@ -381,6 +381,29 @@ def test_the_prompt_distinguishes_a_correction_from_a_choice():
     assert "list" in text.lower(), "a choice returns both values, which is a list"
 
 
+def test_the_prompt_says_a_named_value_outranks_a_held_one():
+    """Task 42b. The rule read "held slots persist unless corrected", and the
+    only worked example of a correction was an explicit negation. A customer
+    naming a unit in another compound corrects nothing out loud, so the model
+    returned the price and no compound, and the merged state kept the old
+    place. The live assertion is in tests/evals/test_inventory_live.py; this
+    one is here so the rule cannot be deleted without a red test in CI.
+    """
+    text = PROMPT.read_text(encoding="utf-8")
+    assert "نور سيتي" in text, "the worked example is a plain naming, not a negation"
+    assert "٤٠٪ مقدم" in text, "and its opposite — a message that names no place"
+
+
+def test_the_prompt_says_replacing_a_value_is_not_clearing_it():
+    """The same test caught this: `مش التجمع، الشيخ زايد` returned `city` in
+    both `slots` and `clear_slots`, which `_cleared` refuses outright — so the
+    prompt's own worked example was a failed turn.
+    """
+    text = PROMPT.read_text(encoding="utf-8")
+    assert "مش التجمع، الشيخ زايد" in text
+    assert "clear_slots` empty" in text or "`clear_slots`\n  empty" in text
+
+
 def test_only_intents_the_engine_can_route_are_offered():
     """An intent the script has no node for routes to the fallback, so
     offering it produces a clarification the customer cannot resolve."""

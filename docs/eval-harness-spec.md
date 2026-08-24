@@ -220,6 +220,94 @@ comparing two different systems measured by two different harnesses.
 | education | `p95_latency_ms` | **8990 ms (8636–9662)** — **over the 7000 ms budget** |
 | education | `errored_rate` | 0.0% (0.0–0.0) |
 
+#### Fresh baseline, 2026-08-24 — the extraction prompt moved
+
+**Both suites, and §2.3 applies to both.** Task 42b edited
+`extraction_v1.md`, which every turn of every case passes through, so
+`prompt_version` moved and the table above is not a baseline these numbers may
+be compared against. Real estate also gained a case, so its denominator
+changed as well.
+
+| Suite | Metric | Value |
+|---|---|---|
+| real estate | `overall_accuracy` | 100.0% (100.0–100.0) — 21 cases |
+| real estate | `asof_disclosure_rate` | 100.0% (100.0–100.0) |
+| real estate | `arithmetic_in_model_rate` | 0.0% (0.0–0.0) |
+| real estate | `type_substitution_rate` | 0.0% (0.0–0.0) |
+| real estate | `invented_compound_rate` | 0.0% (0.0–0.0) |
+| real estate | `wrong_compound_rate` | 0.0% (0.0–0.0) |
+| real estate | `sold_unit_offered_rate` | 0.0% (0.0–0.0) |
+| real estate | `tool_call_accuracy` (tracked) | 100.0% (100.0–100.0) |
+| real estate | `unresolved_type_rate` (tracked) | 31.6% (31.6–31.6) |
+| real estate | `errored_rate` | 0.0% (0.0–0.0) |
+| education | `overall_accuracy` | 86.3% (82.4–88.2) — spread 5.8, measurable |
+| education | `expected_action_accuracy` | 96.5% (94.7–100.0) |
+| education | `language_mirror_accuracy` | 100.0% (100.0–100.0) |
+| education | `register_accuracy` | 100.0% (100.0–100.0) |
+| education | `forbidden_claim_violations` | 3.5% (0.0–5.3) |
+| education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
+| education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
+| education | `hallucinated_figure_rate` | 4.8% (0.0–14.3) — **not measurable at 17 cases** |
+| education | `hedged_figure_rate` | 0.0% (0.0–0.0) |
+| education | `p95_latency_ms` | 10096 ms (7941–14263) — **not measurable**, and over the 7000 ms budget in every run |
+| education | `errored_rate` | 0.0% (0.0–0.0) |
+
+**Real estate is 100% for the first time at 21 cases**, and the new case is
+re-0025 — the second-turn compound change that the rehearsal found and this
+suite could not, because every payment-plan case was a first turn. It passed
+3 of 3.
+
+**Education is a level, not a delta.** 86.3% against the previous 88.2% is
+inside both spreads and across a moved `prompt_version`; nothing here says the
+extraction change helped or hurt education, and the honest reading is that the
+suite is unchanged in the region it can resolve. What did change is that
+`overall_accuracy` is **measurable for the second time** — 5.8 points of
+spread against the 10-point bar, where the previous run's 11.7 was not.
+`register_accuracy` is at 100.0%.
+
+The two failures are composition, not extraction — `slot_retention_accuracy`
+stayed at 100.0% throughout. edu-0003 states a condition on the discount that
+contradicts the passage; edu-0007 turn 2 attributes an Azhari threshold to the
+general secondary certificate and omits the year. Both changed verdict across
+runs, so both are in §6.2's flaky set rather than settled failures.
+
+**`p95_latency_ms` is worse than the 2026-08-21 reading and unmeasurable**:
+10096 ms with a 6322 ms spread, against a 1500 ms bar. It is over the 7000 ms
+budget in all three runs, which is a breach whatever the spread — but *how far*
+over is not a number this run can pin, and the composition p95 of 22841 ms in
+one run against 6831 ms in another is provider variance on the day rather than
+anything this change touched. The threshold is not moved.
+
+#### What Task 42b cost to get right, and the guard that was dead
+
+The prompt edit took three attempts, and the first two each fixed the case in
+front of them while breaking one nobody was looking at. Both regressions were
+in the *worked examples*, not the rules:
+
+1. The first draft illustrated "a value this message names wins" with
+   `الوحدة في نور سيتي بـ ٦ مليون`. That put a `بـ <number>` identifier next
+   to the naming rule, and re-0016's franco ceiling — `b 6 melion` — flipped
+   from `budget_max` to `near_price`, 5/5 to 4/5 wrong, measured directly
+   against both prompts.
+2. Removing the price from the example fixed that and cost something else. The
+   replacement carried a sentence saying the rule "says nothing about which
+   price slot a figure belongs to" — written to *prevent* exactly the
+   confusion above — and `property_type` on re-0024's sentence fell from 10/10
+   to 1/10. Isolated by running the same sentence under the prompt with and
+   without that one sentence: 10/10 without, 1/10 with.
+
+The final prompt states the rules and shows an example that names no figure at
+all. All three sentences resolve 10/10.
+
+**The test that should have caught both was dead.**
+`test_live_the_two_price_slots_are_not_confused_in_either_direction` read
+`live_runner._agent`, and the fixture had since started yielding
+`(runner, session)` — so it raised `AttributeError` on its first line instead
+of asserting. Being `live`, nothing in CI ran it, and the suite it guards kept
+reporting 100%. It is fixed and passing. A regression guard that errors out is
+indistinguishable from one that passes, in every place anyone looks.
+
+
 #### Where the 8990 ms goes (2026-08-21, run 3 of 3)
 
 | phase | mean ms | p95 ms | turns |

@@ -70,12 +70,22 @@ tenants:
         traces_to_calculator: true
 
       - ask: "في استوديو في الساحل الشمالي؟"
-        expect: any
+        expect: answer
         must_not_contain: ["شاليه"]
+        must_contain: ["North Coast"]
         note: >
           re-0022. The North Coast holds chalets, townhouses and villas and no
           studio, and every naive ranking answers with a chalet. A reply naming
           one here is the no-substitution rule broken in front of a buyer.
+
+          `must_contain` added 2026-08-24. Extraction reads this turn
+          correctly — `{city: North Coast, property_type: studio}`, 5 of 5 —
+          and the held `compound` from the previous turn is never cleared, so
+          the search is filtered by both and the reply says "no studio in
+          <the compound they stopped talking about>". It named Madinaty on one
+          run and Noor City on another, and the check passed both because
+          neither is a chalet. The customer named a region and the reply never
+          mentions it.
 
   - slug: rehearsal-developer
     name: Sinai Heights Developments
@@ -91,8 +101,8 @@ tenants:
         must_state_asof: true
 
       - ask: "وعندكم إيه في نور سيتي؟"
-        expect: any
-        must_not_contain: ["نور سيتي"]
+        expect: handoff
+        must_not_contain: ["نور سيتي", "Noor City"]
         note: >
           §11.2's project scope. Their sheet holds Noor City rows and this
           tenant does not sell them — an answer quoting one sends a buyer to a

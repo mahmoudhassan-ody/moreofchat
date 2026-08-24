@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from moc.agent.extraction import LlmSlotExtractor
 from moc.agent.script_engine import ScriptEngine
+from moc.agent.state import ConversationState
 from moc.config_store import load
 from moc.evals.inventory_runner import (
     InventoryCaseRunner,
@@ -214,7 +215,12 @@ async def test_live_the_two_price_slots_are_not_confused_in_either_direction(
     Measured rather than assumed: if the model cannot hold this at temperature
     0 the honest outcome is a number in the report, not another prompt edit.
     """
-    extractor = live_runner._agent._extractor
+    # `live_runner` yields (runner, session). This read `live_runner._agent`
+    # and had been raising AttributeError since the session was added — the
+    # test never asserted anything, and being `live` nothing in CI noticed.
+    # Found by Task 42b, whose first prompt edit broke exactly this and was
+    # caught by hand instead.
+    extractor = live_runner[0]._agent._extractor
     times = default_runs()
     results: dict[str, list[dict]] = {CEILING: [], IDENTIFIER: []}
 
@@ -241,3 +247,92 @@ async def test_live_the_two_price_slots_are_not_confused_in_either_direction(
     for slots in results[IDENTIFIER]:
         assert slots.get("near_price") == 6_500_000, "a quoted unit price is near_price"
         assert "budget_max" not in slots, "and never the ceiling"
+
+
+HELD = {"compound": "Madinaty", "property_type": "apartment"}
+DOWN_PAYMENT = "وبـ ٤٠٪ مقدم؟"
+CORRECTION = "مش التجمع، الشيخ زايد"
+
+
+def _holding(**slots) -> ConversationState:
+    return ScriptEngine.from_config(SCRIPT).start().with_slots(slots)
+
+
+async def test_live_naming_a_unit_in_another_compound_changes_the_compound(
+    live_runner, capsys
+):
+    """A customer changing their mind — the tenth rehearsal turn, N runs.
+
+    Turn one browses Madinaty. Turn two names a unit in Noor City. The
+    extractor is shown the held slots and told not to contradict them, and it
+    returned the price with no compound: everything downstream was then
+    correct about the wrong unit, at the wrong price, with a payment plan that
+    audits clean. No fix below extraction can recover a value the model did
+    not return, which is why this is asserted against the real one.
+    """
+    extractor = live_runner[0]._agent._extractor
+    times = default_runs()
+    seen: list[dict] = []
+
+    for _ in range(times):
+        turn = await extractor.extract(text=IDENTIFIER, state=_holding(**HELD))
+        seen.append(dict(_holding(**HELD).with_slots(turn.slots, turn.cleared).slots))
+
+    with capsys.disabled():
+        print(f"\n{'=' * 68}")
+        print(f"  CHANGING YOUR MIND — held {HELD}, {times} runs")
+        print(f"  {IDENTIFIER}")
+        for index, slots in enumerate(seen, 1):
+            print(f"    run {index}: {slots}")
+        print(f"{'=' * 68}")
+
+    for slots in seen:
+        assert slots.get("compound") == "Noor City", "the compound this message names"
+        assert slots.get("near_price") == 6_500_000, "and the price it quotes"
+
+
+async def test_live_an_explicit_correction_still_works(live_runner, capsys):
+    """The case the prompt already carried, so the fix does not trade one for it."""
+    extractor = live_runner[0]._agent._extractor
+    times = default_runs()
+    seen: list[dict] = []
+
+    for _ in range(times):
+        state = _holding(city="New Cairo", property_type="apartment")
+        turn = await extractor.extract(text=CORRECTION, state=state)
+        seen.append(dict(state.with_slots(turn.slots, turn.cleared).slots))
+
+    with capsys.disabled():
+        print(f"\n  EXPLICIT CORRECTION — {CORRECTION}")
+        for index, slots in enumerate(seen, 1):
+            print(f"    run {index}: {slots}")
+
+    for slots in seen:
+        assert slots.get("city") == "Sheikh Zayed", "the second value, not both"
+        assert slots.get("property_type") == "apartment", "and nothing else moved"
+
+
+async def test_live_a_message_that_names_no_place_still_keeps_the_held_one(
+    live_runner, capsys
+):
+    """Why held slots exist at all. "And at 40% down?" names no place.
+
+    The failure mode of over-correcting the test above: a prompt that makes
+    every message restate the location turns a follow-up into a fresh search.
+    """
+    extractor = live_runner[0]._agent._extractor
+    times = default_runs()
+    seen: list[dict] = []
+
+    for _ in range(times):
+        turn = await extractor.extract(text=DOWN_PAYMENT, state=_holding(**HELD))
+        seen.append(dict(_holding(**HELD).with_slots(turn.slots, turn.cleared).slots))
+
+    with capsys.disabled():
+        print(f"\n  NO PLACE NAMED — {DOWN_PAYMENT}")
+        for index, slots in enumerate(seen, 1):
+            print(f"    run {index}: {slots}")
+
+    for slots in seen:
+        assert slots.get("compound") == "Madinaty", "the held compound survives"
+        assert slots.get("property_type") == "apartment", "and so does the rest"

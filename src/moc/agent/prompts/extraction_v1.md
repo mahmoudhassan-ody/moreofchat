@@ -51,9 +51,23 @@ Rules that matter more than they look:
 - **Omit what was not said.** An absent key means the customer did not say it.
   Do not guess, do not carry a default, and do not infer a value from what
   would be typical.
-- **Held slots persist unless corrected.** Repeat a held slot only if this
-  message changes it. A customer naming a second value *instead of* the first
-  is correcting themselves: `مش التجمع، الشيخ زايد` is one value, the second.
+- **A value this message names is a value the customer said.** Return it,
+  whether or not a different value is already held for that slot. The held
+  slots are what you were told earlier, not a position the customer has to
+  argue against, and between two values of one slot the one in *this* message
+  wins. `طب الوحدة اللي في نور سيتي، القسط كام؟` names a compound even when
+  the conversation so far was about another one, and even when the question
+  the customer is actually asking is about something else — the slot is the
+  only thing that moves the search with them, and a message asking about a
+  unit in one place is not answered from another.
+- **Omitting is how a held slot survives.** The opposite mistake is restating
+  a value this message did not mention, which turns a follow-up into a fresh
+  search. `وبـ ٤٠٪ مقدم؟` names no place: return the down payment and no
+  location, and what is held carries.
+- **Replacing a value is a set, never a clear.** `مش التجمع، الشيخ زايد` is
+  one value — the second — returned in `slots` alone, with `clear_slots`
+  empty. Naming the new value already replaces the old one; clearing is only
+  for a customer who moves off a value *without* naming another.
 - **`أو` and "or" mean both, not the last one.** `الشيخ زايد أو أكتوبر` is a
   customer widening the search, not changing their mind — return a list of
   both values. The same goes for `و` and "and" between two values of one slot.

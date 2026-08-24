@@ -286,10 +286,7 @@ ones before the run that counts.
 
 ---
 
-### Task 42b: A customer cannot change their mind
-
-Found by the rehearsal and **not fixed** — it needs a graded artefact changed
-and an eval case to hold it.
+### Task 42b: A customer cannot change their mind — DONE 2026-08-24
 
 `extraction_v1.md` shows the model the slots already held. On the second turn
 of "I want an apartment in Madinaty" → "the unit in Noor City at six and a
@@ -320,6 +317,137 @@ measured change rather than an edit.
 
 **Acceptance:** the rehearsal's broker section passes without the expectation
 being relaxed.
+
+**Done.** The broker section passes: the second turn now extracts
+`{compound: Noor City, property_type: apartment, near_price: 6500000}` and the
+reply is the Noor City instalment schedule from the calculator. re-0025 is the
+case, as a second turn, and it passes 3 of 3. Fresh baselines for both suites
+are in the harness spec (§2.4, 2026-08-24): real estate 100.0% on 21 cases,
+education 86.3% (82.4–88.2), measurable.
+
+**The prompt edit took three attempts and both failed ones were worked
+examples, not rules.** The first illustrated the naming rule with
+`الوحدة في نور سيتي بـ ٦ مليون`, and re-0016's franco ceiling `b 6 melion`
+flipped from `budget_max` to `near_price`. The second replaced it with a
+sentence disclaiming any price-slot meaning, and `property_type` on re-0024's
+sentence fell from 10/10 to 1/10. The final example names no figure at all.
+Every step was measured against both prompts rather than reasoned about, which
+is the only reason either was caught —
+
+**— because the test that should have caught them was dead.**
+`test_live_the_two_price_slots_are_not_confused_in_either_direction` read
+`live_runner._agent` after the fixture started yielding `(runner, session)`,
+so it raised `AttributeError` before its first assertion. `live` tests do not
+run in CI, so nothing reported it. Fixed and passing.
+
+---
+
+### Task 42c: project scope is not enforced, it was an accident
+
+**Introduced-by-exposure in 42b, and the underlying gap is older.** The
+rehearsal's developer turn — `وعندكم إيه في نور سيتي؟` asked of a tenant whose
+`project` is Madinaty — now answers *"عندنا apartment في Madinaty بسعر
+5,800,000"*. A cross-project substitution, which is the one thing Task 38's
+vertical exists to prevent.
+
+The mechanism, measured 5 of 5 under each prompt:
+
+- A project-scoped tenant's catalogue holds one compound, so the extraction
+  vocabulary offers one compound. Asked about another, the model must return a
+  listed value, and the only listed value is Madinaty.
+- Before 42b it returned `Noor City` anyway — breaking the prompt's own "use
+  the exact value from the list" rule — which raised `ExtractionFailed`, which
+  Task 42 turned into a scripted handoff. The right behaviour, produced by the
+  model disobeying an instruction.
+- 42b's prompt is followed more closely, the disobedience stopped, and with it
+  the only thing standing between a buyer and another developer's compound.
+
+So this is not a regression in the sense of correct-then-broken: the guarantee
+was never implemented. It was a safety net under an accident, and the accident
+was load-bearing.
+
+**Recommended fix — vocabulary scope is not search scope.** Give a
+project-scoped tenant the *full* compound vocabulary for extraction while the
+search stays filtered to the project. The model then names Noor City
+correctly, and the runner compares the extracted compound against
+`tenants.project` and hands off with the scripted "we are the developer of
+Madinaty" reply. Deterministic, and it does not depend on any model behaviour.
+
+**Tests first:**
+
+```python
+async def test_a_compound_outside_the_project_hands_off()
+async def test_the_project_s_own_compound_still_answers()
+async def test_the_search_is_still_filtered_to_the_project()
+    # Widening the vocabulary must not widen what can be quoted.
+```
+
+**Acceptance:** the rehearsal's developer turn passes `expect: handoff`
+without the expectation being relaxed.
+
+---
+
+### Task 42d: a held compound survives a message naming another region
+
+**Pre-existing, unchanged by 42b, and it fails in front of a buyer.** The
+broker's third turn asks `في استوديو في الساحل الشمالي؟` and is answered
+*"مفيش studio في Noor City دلوقتي. عندنا studio في ZED East"*. The customer
+named the North Coast; the reply names neither the North Coast nor anything on
+it — ZED East is New Cairo.
+
+**Extraction is not at fault.** It returns `{city: North Coast,
+property_type: studio}`, 5 of 5, under both prompts. The held `compound` from
+two turns earlier is never cleared, `with_slots` merges it forward, and the
+search filters on compound *and* city — an empty intersection, reported as
+"no studio in <the compound they stopped talking about>".
+
+This is 42b's family and a different member of it: not a value replaced by
+another value of the same slot, but a value made **inconsistent** by a value of
+a different slot. `clear_slots` is the mechanism and nothing invokes it here,
+because the customer did not say "somewhere else" — they said somewhere.
+
+**Recommended fix — below extraction, not in the prompt.** A compound belongs
+to exactly one city in the catalogue. When a turn sets `city` and the held
+`compound` is not in it, the compound is stale and must be dropped in the
+merge. Deterministic, reads from the catalogue, and needs no model behaviour.
+Deciding it in the prompt would ask the model to know which compounds are on
+the North Coast, which is the one thing the vocabulary design forbids.
+
+**Tests first:**
+
+```python
+async def test_naming_a_city_drops_a_held_compound_elsewhere()
+async def test_naming_a_city_keeps_a_held_compound_inside_it()
+async def test_a_turn_that_names_no_city_keeps_the_compound()
+```
+
+**Acceptance:** the rehearsal's broker third turn names the North Coast, and
+still names no chalet.
+
+---
+
+### The rehearsal's own checks were not asserting
+
+Both findings above passed a 10/10 rehearsal before the checks were tightened,
+and one of them had been passing since Task 42.
+
+**`expect:` was parsed and never read.** Every turn in `rehearsal.yaml`
+declares `answer`, `handoff` or `any`, and `judge()` looked only at
+`must_not_contain`, `every_figure_traced`, `traces_to_calculator` and
+`must_state_asof`. "10/10 turns held their expectations" was reporting on four
+content flags and calling it the script. It now reads `handoffs` for the
+thread — not the reply text, since "a colleague will follow up" is a sentence
+a composed answer can also contain.
+
+**`must_contain` did not exist.** The forbidden-claim check can only say what a
+reply must not be. The broker's coast turn forbade `شاليه` and the reply
+contained no chalet, so it passed while never mentioning the region the
+customer asked about. A check that only forbids cannot catch an answer to a
+different question.
+
+With both in place the rehearsal reports **8/10**, and the two failures are
+42c and 42d. The number went down because the checks went up; nothing about
+the system got worse between the two runs.
 
 ---
 

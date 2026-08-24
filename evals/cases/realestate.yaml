@@ -911,3 +911,91 @@
     Celian is deliberately unremarkable: three units, all available, two
     types, no sold or reserved rows. Nothing about availability or
     substitution confounds what this case measures.
+
+- id: re-0025
+  vertical: realestate
+  source: synthetic
+  category: multi_turn_slots
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "عايز شقة في مدينتي"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {compound: "Madinaty", property_type: apartment}
+      expected_facts:
+        - id: f1
+          claim: "an available Madinaty apartment, at the catalogue's price"
+          required: true
+      forbidden_claims:
+        - "a price not present in the catalogue"
+      expected_slots: {compound: "Madinaty", property_type: apartment}
+
+    - user: "الوحدة في نور سيتي بـ ٦ مليون و نص، القسط كام؟"
+      expected_action: answer
+      expected_register: msa
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: payment_plan_calculator
+          args_contain: {unit_id: "NOOR-CIT-002-02"}
+      expected_computation:
+        tool: payment_plan_calculator
+        inputs: {unit_id: "NOOR-CIT-002-02"}
+        must_match_fixture: true
+      expected_facts:
+        - id: f1
+          claim: "the down payment as returned by the calculator"
+          required: true
+        - id: f2
+          claim: "the regular instalment as returned by the calculator"
+          required: true
+        - id: f3
+          claim: "the instalment frequency and the number of years"
+          required: true
+      forbidden_claims:
+        - "anything about a Madinaty unit — the customer has moved off it"
+        - "that the unit is cash-only or the project complete — that is Madinaty's"
+        - "a price of 5,800,000, which belongs to the unit browsed in turn 1"
+        - "any figure not present in the calculator output"
+      expected_slots:
+        compound: "Noor City"
+        property_type: apartment
+        near_price: 6500000
+  gold_chunks: []
+  notes: >
+    re-0005 turn 1 is this exact sentence as a FIRST turn, and it passes. The
+    only difference here is what precedes it, and that difference is the whole
+    case: a customer is allowed to change their mind.
+
+    Found by the demo rehearsal, not by this suite, because every payment-plan
+    case was a first turn. The extractor is shown the slots already held and
+    told not to contradict them, and it returned `near_price` with no
+    `compound` — so the merged state still read Madinaty. Everything below
+    extraction was then correct about the wrong unit: MADINATY-001-01 has
+    `payment_plan: null` and `project_status: Completed`, so the reply was
+    "this unit is cash only, the project is finished, 5,800,000" — fluent,
+    grounded, as_of disclosed, every figure traceable to a real row. A reply
+    that audits clean and answers a question nobody asked.
+
+    `expected_slots` is the assertion that matters and it is an equality
+    check: `property_type` inherits from turn 1 while `compound` is replaced,
+    which is exactly the distinction the extractor was getting wrong. The
+    forbidden claims name the specific wrong answer rather than the shape of
+    one, because the wrong answer here is otherwise indistinguishable from a
+    right one.
+
+    Fixed in extraction_v1.md (Task 42b): "a value this message names is a
+    value the customer said" replaces "held slots persist unless corrected",
+    which had only an explicit negation as its worked example. Writing that
+    rule also fixed a second thing the same test caught — `مش التجمع، الشيخ
+    زايد` was returning `city` in BOTH `slots` and `clear_slots`, which the
+    extractor refuses outright, so the prompt's own worked example was a
+    failed turn. Replacing a value is a set, never a clear.

@@ -338,16 +338,59 @@ async def provenance_for(tenant_id: uuid.UUID, customer: str) -> dict | None:
     return row
 
 
-def judge(turn: dict, reply: str, provenance: dict | None) -> list[str]:
+async def handed_off_for(tenant_id: uuid.UUID, customer: str) -> bool:
+    """Whether this thread is now a human's. Read from `handoffs` rather than
+    from the reply text, because "a colleague will follow up" is a sentence a
+    composed answer can also contain."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from moc.config import settings
+    from moc.tenancy.context import tenant_session
+
+    engine = create_async_engine(settings.app_database_url())
+    async with tenant_session(engine, tenant_id) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM handoffs h "
+                    "JOIN conversations c ON c.id = h.conversation_id "
+                    "WHERE c.sender_ref = :ref LIMIT 1"
+                ),
+                {"ref": customer},
+            )
+        ).scalar_one_or_none()
+    await engine.dispose()
+    return row is not None
+
+
+def judge(
+    turn: dict, reply: str, provenance: dict | None, handed_off: bool
+) -> list[str]:
     """What went wrong with this turn, in the terms the script asked for."""
     failures: list[str] = []
 
     if not reply:
         return ["no reply reached the customer"]
 
+    # `expect:` was parsed and never read. Every turn in the script declared an
+    # action and none of them was checked, so "10/10 turns held their
+    # expectations" was reporting on four content flags and calling it the
+    # script. A handoff that answers instead, or an answer that quietly hands
+    # off, both read as passing.
+    expect = turn.get("expect", "any")
+    if expect == "handoff" and not handed_off:
+        failures.append("expected a handoff and the bot answered")
+    if expect == "answer" and handed_off:
+        failures.append("expected an answer and the bot handed off")
+
     for forbidden in turn.get("must_not_contain", []):
         if forbidden in reply:
             failures.append(f"the reply contains {forbidden!r}")
+
+    for required in turn.get("must_contain", []):
+        if required not in reply:
+            failures.append(f"the reply never names {required!r}")
 
     figures = (provenance or {}).get("figures", [])
     if turn.get("every_figure_traced"):
@@ -469,7 +512,12 @@ def main() -> int:
                 provenance = asyncio.run(
                     provenance_for(ids[tenant["slug"]], tenant["customer"])
                 )
-                result.failures += judge(turn, result.reply, provenance)
+                handed_off = asyncio.run(
+                    handed_off_for(ids[tenant["slug"]], tenant["customer"])
+                )
+                result.failures += judge(
+                    turn, result.reply, provenance, handed_off
+                )
                 results.append(result)
 
                 mark = "ok  " if not result.failures else "FAIL"
