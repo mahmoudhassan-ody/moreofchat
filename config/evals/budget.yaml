@@ -1,0 +1,25 @@
+# What one invocation of a suite is allowed to spend — §19, and the reason it
+# is config rather than a constant.
+#
+# **Written after an account was exhausted by a graded run.** Nineteen cases
+# over three runs on 2026-08-25, and nothing between "start the suite" and the
+# provider saying no. The run's cost was derivable the whole time — the ledger
+# knows what a turn costs and the suite knows how many turns it is about to
+# take — and nothing multiplied the two.
+#
+# This is a per-invocation ceiling, not a monthly budget. Neither provider
+# publishes remaining balance, so a monthly figure could only ever be guessed
+# at from this side; what is knowable is what the next command is about to
+# spend, and that is the number worth refusing on.
+#
+# Checked against the **high** end of the estimate rather than the mean. A
+# ceiling that lets a run start on its average and overshoot on its spread
+# fires after the money is gone, and the observed spread between a turn that
+# writes a prompt cache and one that reuses it is more than 1.5x.
+version: 1
+
+# Roughly ten times the measured cost of a graded 19-case suite, which lands
+# near $0.50. Generous on purpose: this is a backstop against a run nobody
+# costed, not a budget anyone should be managing to. A suite that grows past
+# it should raise it deliberately and notice that it did.
+ceiling_usd: 5.00

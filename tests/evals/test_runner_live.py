@@ -17,6 +17,7 @@ would report failures that measure the missing connector rather than quality.
 import collections
 import copy
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -230,7 +231,9 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
     router = Router(config=_composition_routing(), providers=providers)
     # Before a single case runs, and only when grading. Two completions of four
     # tokens each against a suite that costs dollars.
-    await _refuse_unless_the_primaries_are_serving(router)
+    substituted = await _budget_and_primaries(
+        router, cases=len(load_cases(CASES)), runs=default_runs()
+    ) if _grading() else []
     retriever = FusionRetriever(
         lexical=lexical,
         dense=dense,
@@ -251,6 +254,7 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         script=SCRIPT_ID,
     )
 
+    started_at = datetime.now(UTC)
     cases = load_cases(CASES)
     times = default_runs()
     grade = _grading()
@@ -465,6 +469,23 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
 
     assert len(runs) == times
     assert all(len(outcomes) == len(cases) for outcomes in runs)
+    # Before this database goes away. `moc_test` is dropped and recreated
+    # every session, so a run's ledger rows die with the run that wrote them —
+    # which is why the spend report could account for live traffic and nothing
+    # else while graded runs were exhausting the account.
+    from moc.evals.spend import collect, record
+
+    async with tenant_session(app_engine, tenant.id) as session:
+        spend = await collect(session)
+    run_id = await record(
+        spend=spend, suite="education", graded=grade, runs=times,
+        cases=len(cases), turns=sum(len(c.turns) for c in cases) * times,
+        started_at=started_at, substituted=substituted or None,
+    )
+    with capsys.disabled():
+        print(f"\n  this run cost {spend.render()}")
+        print(f"  recorded as eval_runs {run_id}")
+
     assert spreads["overall_accuracy"].attempts == times
 
 
@@ -522,6 +543,77 @@ GRADE = "MOC_GRADE"
 
 def _grading() -> bool:
     return os.environ.get(GRADE, "") not in ("", "0", "false", "no")
+
+
+#: Set when a run is knowingly served by something other than its primaries —
+#: the only honest way to measure anything while a provider is exhausted. The
+#: run still happens; the `eval_runs` row records what answered, so the number
+#: can never be quoted later as the incumbent's.
+ALLOW_SUBSTITUTED = "MOC_ALLOW_SUBSTITUTED"
+
+
+async def _turn_costs() -> list[float]:
+    """What a turn has actually cost, from the durable ledger.
+
+    Live traffic, not eval runs: eval spend lands in `eval_runs` and is a
+    per-run total rather than a per-turn one. A turn is a turn either way, and
+    this is the only per-turn price anything records.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from moc.config import settings
+
+    engine = create_async_engine(settings.database_url)
+    try:
+        async with AsyncSession(engine) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT created_at, sum(coalesce(provider_cost_usd, 0)) "
+                        "FROM usage_ledger GROUP BY created_at"
+                    )
+                )
+            ).all()
+    finally:
+        await engine.dispose()
+    return [float(cost) for _, cost in rows if cost]
+
+
+async def _budget_and_primaries(router, *, cases: int, runs: int) -> list[str]:
+    """Cost the run, refuse if it is too big or would measure the wrong model,
+    and print the estimate either way.
+
+    Both checks live here because both answer the same question — should this
+    command run — and splitting them would mean two places to bypass.
+
+    Returns the substituted tasks, so the run's own record can carry them.
+    """
+    from moc.evals.headroom import (
+        NoHeadroom,
+        ceiling_usd,
+        check_primaries,
+        projected_cost,
+        within_budget,
+    )
+
+    estimate = projected_cost(turn_costs=await _turn_costs(), turns=cases * runs)
+    print(
+        f"\n  projected: {estimate.render()}  ceiling ${ceiling_usd():,.2f}"
+    )
+    within_budget(estimate, ceiling_usd=ceiling_usd())
+
+    try:
+        await check_primaries(router=router, routing=ROUTING)
+    except NoHeadroom as exc:
+        if os.environ.get(ALLOW_SUBSTITUTED, "") in ("", "0", "false", "no"):
+            raise
+        print(f"  ⚠ {ALLOW_SUBSTITUTED} set — running anyway, and recording it")
+        detail = str(exc).split("— ", 1)[-1]
+        for part in detail.split("; "):
+            print(f"      {part}")
+        return detail.split("; ")
+    return []
 
 
 async def _refuse_unless_the_primaries_are_serving(router) -> None:

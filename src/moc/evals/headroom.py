@@ -87,6 +87,45 @@ def projected_cost(*, turn_costs: list[float], turns: int) -> Estimate:
     )
 
 
+#: The logical config key. Named once rather than spelled at each use, so the
+#: error message and the loader cannot disagree about which file is meant.
+_BUDGET = "evals/budget"
+
+
+def ceiling_usd() -> float:
+    """What one invocation may spend. §19: it changes with whose budget pays."""
+    from moc.config_store import load
+
+    return float(load(_BUDGET)["ceiling_usd"])
+
+
+def within_budget(estimate: Estimate, *, ceiling_usd: float) -> None:
+    """Raise unless the run's **worst case** fits under the ceiling.
+
+    The high end rather than the mean, because a ceiling that admits a run on
+    its average and overshoots on its spread fires after the money is gone.
+
+    An uncosted run is refused rather than waved through. `unmeasured is not
+    zero` — a run nobody can price is not a free one, and treating it as one is
+    how the ledger came to hold no record of the spending that mattered.
+    """
+    if estimate.high is None:
+        raise NoHeadroom(
+            f"this run's cost is not measured — {estimate.render()}; "
+            f"nothing to compare against the ${ceiling_usd:,.2f} ceiling"
+        )
+    if estimate.high > ceiling_usd:
+        raise NoHeadroom(
+            f"this run could cost ${estimate.high:,.2f}, over the "
+            # The logical key, not the path. `test_config_store_is_the_only_
+            # reader_of_the_config_directory` scans for the directory by name
+            # and cannot tell a message from a read — and the key is what
+            # survives §19's move of this tier into the database anyway.
+            f"${ceiling_usd:,.2f} ceiling in the {_BUDGET!r} config "
+            f"({estimate.render()})"
+        )
+
+
 async def check_primaries(*, router: Any, routing: dict[str, Any]) -> None:
     """Raise unless every task's *primary* is the thing answering.
 
@@ -133,4 +172,11 @@ async def check_primaries(*, router: Any, routing: dict[str, Any]) -> None:
         )
 
 
-__all__ = ["Estimate", "NoHeadroom", "check_primaries", "projected_cost"]
+__all__ = [
+    "Estimate",
+    "NoHeadroom",
+    "ceiling_usd",
+    "check_primaries",
+    "projected_cost",
+    "within_budget",
+]

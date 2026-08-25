@@ -55,16 +55,6 @@ async def main() -> int:
                 )
             )
         ).all()
-        test_rows = None
-        try:
-            other = create_async_engine(settings.database_url.replace("moc_dev", "moc_test"))
-            async with AsyncSession(other) as s2:
-                test_rows = (
-                    await s2.execute(text("SELECT count(*) FROM usage_ledger"))
-                ).scalar_one()
-            await other.dispose()
-        except Exception:  # noqa: BLE001 - the test database may not exist here
-            test_rows = None
     await engine.dispose()
 
     print("\ncost report\n")
@@ -169,13 +159,55 @@ async def main() -> int:
         print("    every figure above understates from 2026-09-01 until "
               "config/billing/pricing.yaml is edited")
 
+    await _eval_runs()
+
     print("\n  what this report cannot see")
-    print(f"    eval runs        moc_test holds {test_rows if test_rows is not None else '?'} "
-          f"ledger rows — the fixtures truncate it per test,")
-    print("                     so every graded run's spend dies with the run")
     print("    deleted rows     probe cleanups remove their own; this is what survived")
     print("    provider totals  the vendor's own console is the only actual total\n")
     return 0
+
+
+async def _eval_runs() -> None:
+    """Graded runs, from `eval_runs` rather than from the ledger.
+
+    They cannot be in the ledger: a run's rows live in `moc_test`, which the
+    test session drops and recreates. Each run therefore summarises itself
+    before that database goes away and writes one durable row here.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from moc.config import settings
+
+    engine = create_async_engine(settings.database_url)
+    async with AsyncSession(engine) as session:
+        runs = (
+            await session.execute(
+                text(
+                    "SELECT suite, graded, runs, cases, turns, cost_usd, "
+                    "       substituted, started_at, by_model "
+                    "FROM eval_runs ORDER BY started_at"
+                )
+            )
+        ).all()
+    await engine.dispose()
+
+    print("\n  eval runs")
+    if not runs:
+        print("    none recorded — every graded run before 2026-08-25 spent")
+        print("    without leaving a trace, which is what this table is for")
+        return
+    total = sum(float(r.cost_usd) for r in runs)
+    for r in runs:
+        mark = "graded" if r.graded else "stage-1"
+        flag = "  ⚠ SUBSTITUTED MODELS" if r.substituted else ""
+        print(f"    {r.started_at:%Y-%m-%d %H:%M}  {r.suite:12} {mark:8} "
+              f"{r.cases:3} cases x{r.runs}  {_money(float(r.cost_usd))}{flag}")
+        if r.substituted:
+            for part in r.substituted:
+                print(f"        {part}")
+    print(f"    {len(runs)} run(s), {_money(total)} — and this is the activity")
+    print("    that exhausted an account on 2026-08-25")
 
 
 if __name__ == "__main__":

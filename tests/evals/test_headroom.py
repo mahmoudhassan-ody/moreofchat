@@ -129,3 +129,42 @@ def test_the_projection_renders_its_own_sample_count():
     so travels with the number."""
     rendered = projected_cost(turn_costs=[0.0055, 0.0093], turns=57).render()
     assert "n=2" in rendered
+
+
+# ─────────────── a ceiling per invocation, not per month ───────────────
+
+
+def test_a_run_inside_the_ceiling_is_allowed():
+    from moc.evals.headroom import within_budget
+
+    estimate = projected_cost(turn_costs=[0.0055, 0.0093], turns=57)
+    within_budget(estimate, ceiling_usd=5.00)  # does not raise
+
+
+def test_a_run_over_the_ceiling_is_refused_on_its_worst_case():
+    """The high end, not the mean. A ceiling that lets a run start on its
+    average and blow past on its spread is a ceiling that fires after the
+    money is gone."""
+    from moc.evals.headroom import NoHeadroom, within_budget
+
+    estimate = projected_cost(turn_costs=[0.0055, 0.0093], turns=5000)
+    assert estimate.low < 40 < estimate.high, "the ceiling must sit inside the spread"
+    with pytest.raises(NoHeadroom, match="ceiling"):
+        within_budget(estimate, ceiling_usd=40.00)
+
+
+def test_an_uncosted_run_is_refused_rather_than_waved_through():
+    """`unmeasured is not zero`. A run nobody can price must not be treated as
+    a free one — which is exactly how a $0.00 default would read."""
+    from moc.evals.headroom import NoHeadroom, within_budget
+
+    with pytest.raises(NoHeadroom, match="not measured"):
+        within_budget(projected_cost(turn_costs=[], turns=57), ceiling_usd=5.00)
+
+
+def test_the_ceiling_is_configuration():
+    """§19: a number that changes with circumstances is config. This one
+    changes with whose budget is paying."""
+    from moc.evals.headroom import ceiling_usd
+
+    assert ceiling_usd() > 0

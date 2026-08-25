@@ -869,6 +869,82 @@ Education's accuracy remains fragile at this suite size. One case is 5.9 points 
 ---
 
 
+### 2.6.1 A graded run needs two working providers
+
+Not a policy — a consequence, and it is worth stating where somebody will look
+for it rather than leaving it to be rediscovered as a stack trace.
+
+§5.2's independence rule is structural: `Judge` passes
+`exclude_provider=answer_provider`, because "prefer the other one" is a
+preference that failover satisfies. So the judge cannot share a provider with
+whatever composed the answer.
+
+With one provider exhausted, composition falls to the failover — correctly, a
+customer's turn still gets answered — and the judge then has nowhere to go. On
+2026-08-25 that surfaced as `AllProvidersUnavailable: no provider available
+for eval_grading` partway through a run.
+
+**That is the system refusing to produce a compromised measurement**, and it is
+the right refusal. What it means in practice:
+
+- a **graded** run requires both providers healthy, and the headroom check
+  (§2.6.2) refuses before spending rather than after;
+- a **stage-1** run needs only one, and is what remains available during an
+  outage or a spend cap;
+- a graded baseline is therefore not something an exhausted account can
+  produce at all, no matter how the budget is arranged.
+
+### 2.6.2 Costing a run before starting it
+
+Two checks, one place, both answering "should this command run":
+
+- **which provider answers.** One four-token completion per completion task,
+  refusing when the responder is not the routing table's primary. A run served
+  by failover completes and reports numbers under the incumbent's name; §2.3
+  pins `prompt_version` and `config_hash` precisely so a run stays comparable,
+  and a substituted model defeats both without touching either.
+- **what it will cost.** Turns × the observed per-turn price from the ledger,
+  refused against a ceiling in the `evals/budget` config. Checked on the
+  **high** end: a ceiling that admits a run on its average and overshoots on
+  its spread fires after the money is gone.
+
+An uncosted run is refused rather than waved through, on §2.4's rule —
+unmeasured is not zero, and a `$0.00` default reads as a free run.
+
+`MOC_ALLOW_SUBSTITUTED=1` runs anyway and records what answered, which is the
+only honest way to measure anything while a provider is down. The `eval_runs`
+row derives that from the models actually used rather than from whether the
+check fired, because the first version took it from the check — which only
+runs when grading — and a stage-1 run on failover recorded nothing while its
+own `by_model` plainly showed OpenAI.
+
+### 2.6.3 What a run costs, measured
+
+`usage_ledger` had never seen an eval run. They execute against `moc_test`,
+which `tests/conftest.py` drops and recreates every session, and the fixtures
+truncate the ledger between tests on top of that. Both are right on their own
+terms and together they meant the instrument built to answer "what does this
+cost" was blind to the activity doing most of the spending — about seven
+dollars over three weeks, ending in an exhausted account.
+
+Each run now summarises its own ledger before that database goes away and
+writes one durable row to `eval_runs`. Tokens are stored beside the money,
+because prices change and a run recorded only in dollars cannot be repriced.
+
+**First measured run, 2026-08-25** — education, 19 cases × 3, stage-1, on
+failover models:
+
+| Model | Calls | Input | Output | USD |
+|---|---|---|---|---|
+| gpt-5.6-sol (composition) | 39 | 25,885 | 1,547 | $0.1420 |
+| gpt-5.6-luna (extraction, audit) | 93 | 55,314 | 3,855 | $0.0174 |
+| text-embedding-3-large | 75 | 1,758 | 0 | $0.0002 |
+| **total** | **207** | | | **$0.1596** |
+
+Composition is 89% of it. **This is not the incumbent's cost** — every model
+here is a failover, and the row says so. A graded run adds the judge and cannot
+be measured at all until both providers are healthy (§2.6.1).
+
 ### 2.7 What each gate does not see
 
 Every metric in §2.1 and §2.2 answers one question well. None of them answers
