@@ -184,3 +184,126 @@ def test_the_indicator_contains_no_raise_at_all():
         "fail the turn"
     )
     assert "raise_for_status" not in inspect.getsource(TwilioTypingIndicator)
+
+
+# ─────────────────── Telegram, and the five-second clock ───────────────────
+#
+# The demo goes out on Telegram and the covering behaviour was WhatsApp-only:
+# `typing_for` returned None for every other channel, so a 6.7-second turn —
+# measured on the live host — landed as 6.7 seconds of nothing.
+#
+# Telegram's `sendChatAction` is cheaper to wire than Twilio's was: the bot
+# token the sender already holds, one POST, no SID. It is also weaker in the
+# one way that matters, and that is what most of these tests are about — the
+# status clears after five seconds, so a turn longer than that outlives its own
+# indicator and goes quiet exactly when the wait starts to feel wrong.
+
+TELEGRAM = load("channels/telegram")
+CHAT_ID = "658277167"
+BOT_TOKEN = "8529717564:not-a-real-token"  # noqa: S105 - a test fixture
+
+
+def telegram_indicator(handler, config=None):
+    from moc.channels.telegram import TelegramTypingIndicator
+
+    return TelegramTypingIndicator(
+        token=BOT_TOKEN,
+        config=config or TELEGRAM,
+        transport=httpx.MockTransport(handler),
+    )
+
+
+async def test_the_action_is_sent_to_the_chat_not_the_message():
+    """Telegram addresses a chat; Twilio addresses a message. The port carries
+    both because the two vendors identify the recipient differently, and
+    passing only one would make this adapter address nobody."""
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    ok = await telegram_indicator(handler).typing(
+        message_id="12345", sender_ref=CHAT_ID
+    )
+    assert ok is True
+    url, body = seen[0]
+    assert body["chat_id"] == CHAT_ID
+    assert body["action"] == "typing"
+    assert "12345" not in json.dumps(body), "the message id addresses nothing here"
+
+
+async def test_the_token_never_appears_in_the_returned_value_or_an_exception():
+    """The Bot API puts the token in the path, which is why this adapter
+    exists in the same module as the sender that says so. A failure returns
+    False and carries nothing."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+
+    assert await telegram_indicator(handler).typing(
+        message_id="1", sender_ref=CHAT_ID
+    ) is False
+
+
+async def test_a_refusal_a_timeout_and_no_route_are_all_false():
+    """Same rule as Twilio's: every failure is False, never an exception."""
+    def refuses(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"ok": False, "description": "chat not found"})
+
+    def times_out(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    def no_route(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route", request=request)
+
+    for handler in (refuses, times_out, no_route):
+        assert await telegram_indicator(handler).typing(
+            message_id="1", sender_ref=CHAT_ID
+        ) is False
+
+
+async def test_an_absent_chat_id_sends_nothing():
+    """No recipient, no call. A POST with an empty chat_id is a 400 the vendor
+    has to answer and a round trip on the turn path for nothing."""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    assert await telegram_indicator(handler).typing(
+        message_id="1", sender_ref=""
+    ) is False
+    assert calls == []
+
+
+def test_the_resend_interval_is_inside_telegrams_five_second_clock():
+    """The arithmetic, made visible the way the WhatsApp block makes its own.
+
+    Telegram clears the status after five seconds. A turn measured at 6.7s on
+    the live host outlives one call, so the interval has to be strictly under
+    the clearing time — equal to it is a race the customer loses.
+    """
+    settings = TELEGRAM["typing_indicator"]
+    assert settings["clears_after_seconds"] == 5
+    assert 0 < settings["resend_every_seconds"] < settings["clears_after_seconds"]
+
+
+def test_the_telegram_indicator_contains_no_raise_at_all():
+    """Same rule and the same reason as `TwilioTypingIndicator`: `typing`
+    returning False on every failure is easy to write and easy to erode, and
+    one `raise` added later for a case that "should never happen" turns a
+    courtesy on the turn path into something that can fail a turn."""
+    import ast
+    import inspect
+
+    from moc.channels.telegram import TelegramTypingIndicator
+
+    source = inspect.getsource(TelegramTypingIndicator)
+    tree = ast.parse(source)
+    raises = [node for node in ast.walk(tree) if isinstance(node, ast.Raise)]
+    assert raises == [], (
+        "the indicator raises; a courtesy on the turn path must not be able to "
+        "fail the turn"
+    )
+    assert "raise_for_status" not in source

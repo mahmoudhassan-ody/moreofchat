@@ -147,9 +147,10 @@ class SqlSenderRegistry:
     async def typing_for(self, *, tenant_id: str, channel: str) -> Any:
         """That tenant's typing indicator, or None where the channel has none.
 
-        Only WhatsApp has one today. Returning None rather than raising is the
-        point: the worker treats an absent indicator and a failed one
-        identically, because both mean "no hint" and neither is worth a turn.
+        WhatsApp and Telegram have one; the rest return None. Returning None
+        rather than raising is the point: the worker treats an absent
+        indicator and a failed one identically, because both mean "no hint"
+        and neither is worth a turn.
 
         Cached separately from the sender: it is a different host, a different
         API version and a different client, and sharing one would mean the
@@ -158,12 +159,25 @@ class SqlSenderRegistry:
         key = (str(tenant_id), channel, _TYPING)
         if key in self._cache:
             return self._cache[key]
-        if channel != Channel.whatsapp:
+        if channel not in (Channel.whatsapp, Channel.telegram):
             return None
 
         row = await self._account(tenant_id=tenant_id, channel=channel)
         if row is None:
             return None
+
+        if channel == Channel.telegram:
+            from moc.channels.telegram import TelegramTypingIndicator
+
+            # The bot token, the same one the sender uses. No second
+            # credential, which is why this channel got an indicator for the
+            # cost of a config block.
+            indicator: Any = TelegramTypingIndicator(
+                token=self._secrets.for_ref(row.secret_ref + _TOKEN),
+                transport=self._transport,
+            )
+            self._cache[key] = indicator
+            return indicator
 
         from moc.channels.twilio_wa import TwilioTypingIndicator
 

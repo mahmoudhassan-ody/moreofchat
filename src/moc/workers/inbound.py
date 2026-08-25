@@ -15,7 +15,9 @@ would mean a Twilio 429 fails a turn that was otherwise complete, and the retry
 would re-run the model.
 """
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -237,22 +239,26 @@ class InboundWorker:
             # After the handoff check and before the model call. Both halves
             # matter: a bot that says it is typing while a human has the thread
             # is lying, and an indicator sent after the reply covers nothing.
-            await self._show_typing(message)
-
-            result = await served.runner.handle(
-                session=session,
-                state=state,
-                text=message.text or "",
-                channel=str(message.channel),
-                # The engine resolved above, not the one the orchestrator was
-                # built with. Which script runs is a property of the turn:
-                # tenant scripts are versioned and a conversation is pinned to
-                # the version it started on, so a process-lifetime engine would
-                # raise on every in-flight conversation the moment a tenant
-                # published.
-                engine=engine,
-                retriever=retriever,
-            )
+            #
+            # A context manager rather than a call because some vendors clear
+            # the status before a turn ends — see `_typing`. Entered at the
+            # same point the single call was made from, so the reasoning above
+            # is unchanged.
+            async with self._typing(message):
+                result = await served.runner.handle(
+                    session=session,
+                    state=state,
+                    text=message.text or "",
+                    channel=str(message.channel),
+                    # The engine resolved above, not the one the orchestrator was
+                    # built with. Which script runs is a property of the turn:
+                    # tenant scripts are versioned and a conversation is pinned to
+                    # the version it started on, so a process-lifetime engine would
+                    # raise on every in-flight conversation the moment a tenant
+                    # published.
+                    engine=engine,
+                    retriever=retriever,
+                )
             # The person behind the address (§9). Resolved before the upsert
             # so a first message arrives with its contact already attached —
             # a conversation that exists for a while without one is a thread
@@ -311,7 +317,65 @@ class InboundWorker:
 
         await self._enqueue_reply(message, result.reply)
 
-    async def _show_typing(self, message: InboundMessage) -> None:
+    @asynccontextmanager
+    async def _typing(self, message: InboundMessage) -> AsyncIterator[None]:
+        """"Seen, typing" for as long as the turn takes.
+
+        One call is enough where the vendor's status outlasts a turn — Twilio
+        clears after 25 seconds and declares `resend_every_seconds = None`.
+        Telegram clears after five, and a turn measured at 6723 ms on the live
+        host outlives it: the indicator vanishes at the point the wait starts
+        to feel wrong, which reads as the bot having given up and is worse
+        than never showing one.
+
+        So the interval is the adapter's to declare and the repeating is the
+        worker's to do. Cancelled when the turn ends, both because a loop
+        nothing stops is a task per turn forever and because an indicator
+        still claiming the bot is typing after the answer went out is a lie
+        with a timestamp on it.
+
+        Every failure is swallowed here as well as in the adapter, and the
+        loop's more so: it runs *beside* a turn in flight, so an exception
+        escaping it is the one thing that could turn a courtesy into a lost
+        answer.
+        """
+        indicator = await self._first_typing(message)
+        if indicator is None:
+            yield
+            return
+
+        interval = getattr(indicator, "resend_every_seconds", None)
+        if not interval:
+            yield
+            return
+
+        async def keep_showing() -> None:
+            while True:
+                await asyncio.sleep(interval)
+                # Swallowed and *not* returned from: one bad round trip is
+                # not a reason to go quiet for the rest of a turn that is
+                # still running. Unlogged for the same reason the first call
+                # is — a courtesy failing on every turn would fill the log
+                # with the one line nobody can act on, and the preflight is
+                # what asks whether the indicator works.
+                with suppress(Exception):
+                    await indicator.typing(
+                        message_id=message.provider_message_id,
+                        sender_ref=message.sender_ref,
+                    )
+
+        task = asyncio.create_task(keep_showing())
+        try:
+            yield
+        finally:
+            task.cancel()
+            # Awaited, so the task is actually finished before the turn moves
+            # on — a cancel that is never collected is a warning at
+            # interpreter shutdown and a task the loop still holds.
+            with suppress(asyncio.CancelledError):
+                await task
+
+    async def _first_typing(self, message: InboundMessage) -> Any:
         """"Seen, typing", and never anything more than that.
 
         Every failure is swallowed, including ones nobody predicted. This is a
@@ -325,15 +389,19 @@ class InboundWorker:
         the preflight's check exists to ask out loud.
         """
         if self._indicators is None:
-            return
+            return None
         try:
             indicator = await self._indicators.typing_for(
                 tenant_id=message.tenant_id, channel=str(message.channel)
             )
             if indicator is not None:
-                await indicator.typing(message_id=message.provider_message_id)
+                await indicator.typing(
+                    message_id=message.provider_message_id,
+                    sender_ref=message.sender_ref,
+                )
+            return indicator
         except Exception:  # noqa: BLE001 - see the docstring
-            return
+            return None
 
     async def _enqueue_reply(self, message: InboundMessage, reply: str) -> None:
         """Hand the words to the sender.

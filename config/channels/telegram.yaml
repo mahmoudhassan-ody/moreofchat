@@ -59,3 +59,33 @@ service_window_hours: null
 # Telegram to parse markdown would make an underscore in an email address turn
 # half a reply italic — while a number with punctuation stuck to it becomes
 # invisible to the grounding gate.
+
+# ── "Seen, typing" — §2.5, and weaker than Twilio's in the way that matters ──
+#
+# The demo goes out on this channel and the covering behaviour was WhatsApp
+# only, so a turn measured at 6723 ms on the live host landed as 6.7 seconds
+# of nothing. `sendChatAction` is the cheapest indicator this project has: the
+# bot token the sender already holds, one POST, no second credential.
+#
+# **The status clears after five seconds** — Telegram's number, not ours, and
+# short enough to matter. A turn longer than that outlives its own indicator
+# and goes quiet at exactly the point the wait starts to feel wrong, which is
+# worse than never showing one: it reads as the bot having given up. So the
+# worker re-sends while the turn runs, and `resend_every_seconds` is strictly
+# inside the clearing time, asserted by a test. One second of margin, because
+# the round trip itself takes some of the interval.
+typing_indicator:
+  enabled: true
+  # `{token}` is filled by the adapter, never logged, never in a returned
+  # error — the same rule the sender's module docstring sets out for every
+  # Bot API path.
+  path: /bot{token}/sendChatAction
+  # Telegram's own value for this field, not our channel name.
+  action: typing
+  clears_after_seconds: 5
+  resend_every_seconds: 4
+  http:
+    connect_timeout_seconds: 3
+    # Short on purpose, and shorter than the resend interval: a courtesy that
+    # takes longer than the gap between two of them would queue behind itself.
+    read_timeout_seconds: 3

@@ -240,6 +240,37 @@ clock they share. `intake.requery` appears only on turns that resumed a node
 column: one slow reply is one sample, and the useful question is what the
 distribution looks like over a demo's worth of turns.
 
+### 3.6 "Seen, typing", per channel
+
+The indicator does not shorten a turn, it covers one. WhatsApp and Telegram
+have one; email and the Meta channels do not, and `typing_for` returns None
+for those rather than raising — an absent indicator and a failed one are both
+"no hint", and neither is worth a turn.
+
+| Channel | Clears after | Re-sent |
+|---|---|---|
+| WhatsApp (Twilio) | 25 s | no — one call covers any measured turn |
+| Telegram | **5 s** | yes, every 4 s while the turn runs |
+
+Telegram's five seconds is shorter than a measured turn, so a single call goes
+quiet partway through the wait — which reads as the bot having given up and is
+worse than never showing one. The worker re-sends on the interval the adapter
+declares, and cancels when the turn ends: a loop nothing stops is a task per
+turn forever, and an indicator still claiming the bot is typing after the
+answer went out is a lie with a timestamp on it.
+
+Preflight asks both vendors whether the credential works on that endpoint,
+because both adapters swallow their own failures by design — a broken
+indicator is silent, and this is the one place that reads the status code:
+
+```
+ok  the telegram typing indicator authenticates: 400 (not an auth refusal)
+```
+
+`400` is the right answer. It means the token authenticated and the deliberately
+impossible chat id was rejected. `401` is the failure, and the symptom without
+this check is nothing at all.
+
 ---
 
 ## 4. What the first real run found

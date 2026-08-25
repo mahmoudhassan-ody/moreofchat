@@ -257,6 +257,89 @@ class TelegramBot:
         await self._client.aclose()
 
 
+class TelegramTypingIndicator:
+    """"Seen, typing" on the turn path — §2.5, and the demo's own channel.
+
+    The cheapest indicator this project has: the bot token the sender already
+    holds, one POST, no second credential. It is also the weakest, and the
+    weakness is the reason most of its tests exist.
+
+    **The status clears after five seconds.** Twilio's lasts twenty-five,
+    which covers any turn, so `TwilioTypingIndicator.typing` says outright
+    that one call is enough. Five does not: a turn measured at 6723 ms on the
+    live host outlives its own indicator and goes quiet at the point the wait
+    starts to feel wrong — which reads as the bot having given up, and is
+    worse than never showing one. Re-sending is the worker's job, on the
+    interval this adapter declares.
+
+    **Nothing here raises.** Every failure — a refusal, a timeout, no route,
+    an empty chat id — is False. It runs beside a turn in flight, so an
+    exception escaping it is the one thing that turns a courtesy into a lost
+    answer. Asserted structurally, for the same reason the Twilio one is.
+
+    **The token is in the path**, as it is for every Bot API call, so the same
+    rule the module docstring sets out applies here: no vendor error escapes
+    carrying a URL, and a failure returns False carrying nothing at all.
+    """
+
+    name = "telegram_typing"
+
+    def __init__(
+        self,
+        *,
+        token: str,
+        config: dict[str, Any] | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        whole = config or _config()
+        settings = whole["typing_indicator"]
+        self._settings = settings
+        self._enabled = bool(settings["enabled"])
+        #: What the worker reads to decide whether one call covers the turn.
+        #: Declared here rather than assumed there, because it is a property
+        #: of the vendor: Twilio's indicator needs no re-send and says so by
+        #: leaving this None.
+        self.resend_every_seconds: float | None = settings["resend_every_seconds"]
+        http = settings["http"]
+        self._path = settings["path"].format(token=token)
+        self._client = httpx.AsyncClient(
+            # The host is the channel's, not the indicator's: one Bot API,
+            # one base. Only the path and the timeouts are this call's own.
+            base_url=whole["api_base"],
+            timeout=httpx.Timeout(
+                connect=http["connect_timeout_seconds"],
+                read=http["read_timeout_seconds"],
+                write=http["read_timeout_seconds"],
+                pool=http["connect_timeout_seconds"],
+            ),
+            transport=transport,
+        )
+
+    async def typing(self, *, message_id: str, sender_ref: str) -> bool:
+        """Show the indicator in the chat `sender_ref` names.
+
+        Both identifiers travel because the two vendors address different
+        things — Twilio answers a message, Telegram writes to a chat — and an
+        adapter that took only one would be addressing nobody on the other
+        channel. `message_id` is unused here and that is not an oversight.
+        """
+        if not self._enabled or not sender_ref:
+            return False
+        try:
+            response = await self._client.post(
+                self._path,
+                json={"chat_id": sender_ref, "action": self._settings["action"]},
+            )
+        except httpx.HTTPError:
+            # Never the exception itself: httpx attaches the request, and the
+            # request carries the token in its path.
+            return False
+        return response.is_success
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 def _reason(response: httpx.Response) -> str:
     """The vendor's `description`, or the status code if it sent none.
 
@@ -277,6 +360,7 @@ def _config() -> dict[str, Any]:
 
 
 __all__ = [
+    "TelegramTypingIndicator",
     "NotAMessage",
     "TelegramBot",
     "TelegramRefused",

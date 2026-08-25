@@ -1990,8 +1990,12 @@ class RecordingIndicators:
     async def typing_for(self, *, tenant_id, channel: str):
         return self
 
-    async def typing(self, *, message_id: str) -> bool:
-        self.asked.append((message_id, "typing"))
+    #: None means "one call covers a whole turn" — Twilio's 25-second clock.
+    #: A number means the vendor clears it sooner and the worker must re-send.
+    resend_every_seconds = None
+
+    async def typing(self, *, message_id: str, sender_ref: str) -> bool:
+        self.asked.append((message_id, sender_ref))
         self.order.append("typing")
         return self.works
 
@@ -2038,8 +2042,10 @@ async def test_the_customer_sees_typing_before_the_turn_runs(valkey, app_engine,
     assert order == ["typing", "turn"], (
         "the indicator did not precede the turn; it exists to cover the wait"
     )
-    assert indicators.asked == [(message.provider_message_id, "typing")], (
-        "the indicator must name the inbound message — Twilio keys it on the SID"
+    assert indicators.asked == [(message.provider_message_id, message.sender_ref)], (
+        "both identifiers must travel: Twilio keys the indicator on the inbound "
+        "SID and Telegram writes to a chat, and an adapter handed only one of "
+        "them addresses nobody on the other channel"
     )
 
 
@@ -2318,3 +2324,180 @@ async def test_the_inbound_stream_stops_growing_at_its_cap(valkey):
     assert length < 400, "nothing trimmed — the stream grows without bound"
     assert length <= 250, f"trimmed, but nowhere near the cap of 50: {length}"
     await valkey.delete(stream)
+
+
+# ───────── an indicator that clears before the turn ends — Telegram ─────────
+
+
+class ClearingIndicators(RecordingIndicators):
+    """A vendor whose status expires while the turn is still running.
+
+    Telegram's clears after five seconds and a turn measured on the live host
+    took 6.7, so a single call goes quiet at exactly the point the wait starts
+    to feel wrong. The interval here is tiny so the test does not sleep for
+    real seconds; what it asserts is that re-sending happens at all and stops
+    when the turn does.
+    """
+
+    resend_every_seconds = 0.02
+
+
+class SlowOrchestrator:
+    """A turn that outlives one indicator."""
+
+    def __init__(self, *, seconds: float) -> None:
+        self._inner = orchestrator()
+        self._seconds = seconds
+
+    async def handle(self, **kwargs):
+        import asyncio
+
+        await asyncio.sleep(self._seconds)
+        return await self._inner.handle(**kwargs)
+
+
+async def _run_turn(valkey, app_engine, account, *, indicators, orchestrator_):
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
+    await InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator_,
+        script=SCRIPT,
+        config=QUEUES,
+        indicators=indicators,
+    ).run_once()
+
+
+async def test_an_indicator_that_expires_is_re_sent_for_the_length_of_the_turn(
+    valkey, app_engine, account
+):
+    indicators = ClearingIndicators(order=[])
+    await _run_turn(
+        valkey, app_engine, account,
+        indicators=indicators, orchestrator_=SlowOrchestrator(seconds=0.25),
+    )
+    assert len(indicators.asked) > 1, (
+        "sent once for a turn that outlives the vendor's own clock — the "
+        "customer watches it go quiet mid-wait"
+    )
+
+
+async def test_the_re_sending_stops_when_the_turn_does(valkey, app_engine, account):
+    """A loop nothing cancels is a task per turn, forever, on a box with
+    3.3 GB of RAM — and an indicator still claiming the bot is typing after
+    the answer has been sent."""
+    import asyncio
+
+    indicators = ClearingIndicators(order=[])
+    await _run_turn(
+        valkey, app_engine, account,
+        indicators=indicators, orchestrator_=SlowOrchestrator(seconds=0.1),
+    )
+    settled = len(indicators.asked)
+    await asyncio.sleep(0.15)
+    assert len(indicators.asked) == settled, "still typing after the turn ended"
+
+
+async def test_a_vendor_whose_indicator_outlasts_the_turn_is_called_once(
+    valkey, app_engine, account
+):
+    """The negative control, and the reason `resend_every_seconds` is declared
+    by the adapter rather than assumed by the worker. Twilio's 25-second clock
+    covers any turn, so re-sending would be a second round trip for nothing."""
+    indicators = RecordingIndicators(order=[])
+    await _run_turn(
+        valkey, app_engine, account,
+        indicators=indicators, orchestrator_=SlowOrchestrator(seconds=0.15),
+    )
+    assert len(indicators.asked) == 1
+
+
+async def test_a_re_send_that_fails_does_not_fail_the_turn(valkey, app_engine, account):
+    """Same rule as the first call. The loop runs beside a turn in flight, so
+    an exception escaping it is the one thing that could turn a courtesy into
+    a lost answer."""
+    class Exploding(ClearingIndicators):
+        async def typing(self, *, message_id: str, sender_ref: str) -> bool:
+            self.asked.append((message_id, sender_ref))
+            raise RuntimeError("the vendor went away mid-turn")
+
+    indicators = Exploding(order=[])
+    await _run_turn(
+        valkey, app_engine, account,
+        indicators=indicators, orchestrator_=SlowOrchestrator(seconds=0.2),
+    )
+    from moc.agent.handoff import MessageLog
+    from moc.tenancy.context import tenant_session
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        contact_id = (
+            await session.execute(
+                sql_text("SELECT contact_id FROM conversations WHERE sender_ref = :s"),
+                {"s": CUSTOMER},
+            )
+        ).scalar_one()
+        thread = await MessageLog(session=session).history_for_contact(
+            contact_id=contact_id
+        )
+    assert any(m.author == "bot" for m in thread), "the turn lost its answer"
+
+
+async def test_the_registry_builds_a_telegram_indicator_from_the_bot_token(
+    app_engine, telegram_account
+):
+    """The wiring, not the adapter.
+
+    Reverting `typing_for` to WhatsApp-only left every channel test green:
+    the adapter was covered and the one path that reaches it was not. That is
+    the same shape as the timings column existing with nothing writing to it,
+    and it is why this asserts through the registry rather than by
+    constructing the indicator directly.
+    """
+    from moc.channels.base import Channel
+    from moc.channels.senders import SqlSenderRegistry
+    from moc.channels.telegram import TelegramTypingIndicator
+
+    class BotSecrets:
+        """Only the bot token, deliberately. Twilio's indicator needs a second
+        credential and this one does not, and a double that answered every
+        reference would hide the difference."""
+
+        def for_ref(self, secret_ref: str) -> str:
+            return {"telegram/sinai/bot/token": "8529717564:not-a-real-token"}[
+                secret_ref
+            ]
+
+    registry = SqlSenderRegistry(
+        engine=app_engine, secrets=BotSecrets(), transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"ok": True, "result": True})
+        )
+    )
+    indicator = await registry.typing_for(
+        tenant_id=str(telegram_account.tenant_id), channel=str(Channel.telegram)
+    )
+    assert isinstance(indicator, TelegramTypingIndicator)
+    # Declared, because the worker reads it to decide whether to re-send, and
+    # a Telegram indicator that claimed Twilio's 25-second clock would go
+    # quiet mid-turn with nothing to notice.
+    assert indicator.resend_every_seconds
+    await registry.aclose()
+
+
+async def test_a_channel_with_no_indicator_still_returns_none(
+    app_engine, account
+):
+    """Email has no typing indicator and never will. None rather than a raise
+    is what lets the worker treat "this vendor has none" and "this one failed"
+    identically — both are "no hint", and neither is worth a turn."""
+    from moc.channels.senders import SqlSenderRegistry
+
+    registry = SqlSenderRegistry(engine=app_engine, secrets=FakeSecrets())
+    assert await registry.typing_for(
+        tenant_id=str(account.tenant_id), channel="email"
+    ) is None
+    await registry.aclose()

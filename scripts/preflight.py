@@ -369,6 +369,83 @@ async def typing_indicator() -> None:
     )
 
 
+async def telegram_typing_indicator() -> None:
+    """Does the bot token work on `sendChatAction`?
+
+    Same question as the Twilio check above and the same reason for asking it
+    out loud: the adapter swallows every failure by design, so a permanently
+    broken indicator is silent, and the channel this one covers is the one the
+    demo goes out on.
+
+    Cheaper to answer than Twilio's — no second credential, and a bad token is
+    a clean 401. Asked against a chat id that cannot exist:
+
+      - 401 — the token is wrong, and every indicator silently does nothing;
+      - 400 `chat not found` — authenticated, and the id was rejected, which
+        is the answer we wanted.
+
+    Built here rather than through `TelegramTypingIndicator` because that class
+    reports a bool on purpose: the turn must not care why an indicator failed.
+    This is the one place that does.
+    """
+    import httpx
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from moc.channels.accounts import EnvSecretResolver
+    from moc.config import settings
+    from moc.config_store import load
+
+    config = load("channels/telegram")
+    indicator = config["typing_indicator"]
+    if not indicator["enabled"]:
+        print(f"{_SKIP}telegram typing indicator: switched off in config")
+        return
+
+    engine = create_async_engine(settings.database_url)
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT secret_ref FROM channel_accounts "
+                    "WHERE channel = 'telegram' LIMIT 1"
+                )
+            )
+        ).one_or_none()
+    await engine.dispose()
+    if row is None:
+        print(f"{_SKIP}telegram typing indicator: no Telegram account to test with")
+        return
+
+    try:
+        token = EnvSecretResolver().for_ref(row.secret_ref + "/token")
+    except KeyError:
+        print(f"{_SKIP}telegram typing indicator: bot token not on this host")
+        return
+
+    async with httpx.AsyncClient(base_url=config["api_base"], timeout=10) as client:
+        try:
+            response = await client.post(
+                indicator["path"].format(token=token),
+                # Negative, which no real chat id is. A well-formed id that
+                # cannot resolve cannot show an indicator to anybody.
+                json={"chat_id": -1, "action": indicator["action"]},
+            )
+        except httpx.HTTPError as exc:
+            check(
+                "the telegram typing endpoint is reachable", False, str(exc)[:120]
+            )
+            return
+
+    check(
+        "the telegram typing indicator authenticates",
+        response.status_code != 401,
+        "401 — the bot token does not work on sendChatAction, and every "
+        "indicator will silently do nothing",
+        note=f"{response.status_code} (not an auth refusal)",
+    )
+
+
 async def main() -> int:
     print("\npreflight\n")
     env_file_has_no_duplicate_keys()
@@ -378,6 +455,7 @@ async def main() -> int:
     await search_backends()
     await channel_secrets()
     await typing_indicator()
+    await telegram_typing_indicator()
 
     print()
     if failures:

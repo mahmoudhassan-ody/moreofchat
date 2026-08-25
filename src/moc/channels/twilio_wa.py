@@ -367,11 +367,22 @@ class TwilioTypingIndicator:
             transport=transport,
         )
 
-    async def typing(self, *, message_id: str) -> bool:
+    #: None because one call covers a whole turn — Twilio clears the indicator
+    #: on delivery or after 25 seconds, and no measured turn comes near that.
+    #: Telegram's clears after five and declares an interval instead.
+    resend_every_seconds: float | None = None
+
+    async def typing(self, *, message_id: str, sender_ref: str = "") -> bool:
         """Show the indicator for the turn answering `message_id`.
 
         One call covers a whole turn: Twilio clears it on delivery or after
         `clears_after_seconds`, and §2.5's p95 turn is well inside that.
+
+        `sender_ref` is accepted and unused. Twilio addresses the message it
+        is a reply to; Telegram addresses a chat. The port carries both rather
+        than the union of two signatures, because a worker that had to ask
+        which channel it was holding before it could call this would be the
+        thing this seam exists to avoid.
         """
         if not self._enabled or not message_id:
             return False
