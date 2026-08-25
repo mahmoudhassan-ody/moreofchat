@@ -1247,6 +1247,16 @@ async def test_the_query_embedding_reaches_the_ledger(two_tenants, app_engine):
             )
         ).all()
 
+    # A bare count is safe *here* and it is worth saying why, because the same
+    # line is not safe two hundred lines down. `two_tenants` truncates
+    # `usage_ledger` at setup and is function-scoped, so this test starts from
+    # an empty ledger. `turn_session` does not truncate — it builds on the
+    # session-scoped `session` fixture, whose rollback does not remove what an
+    # earlier test committed — which is why `test_both_retrievals_are_metered`
+    # asserts a delta instead. Checked by sabotage on 2026-08-25: this one
+    # fails when embedding metering is removed and passes alone, grouped and
+    # in file order. The invariant it leans on is pinned in
+    # tests/tenancy/test_rls_coverage.py.
     assert len(rows) == 1, "the query embedding was not metered"
     assert rows[0].input_tokens > 0, "a row with no tokens cannot be priced"
 

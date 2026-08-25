@@ -130,3 +130,37 @@ async def test_every_policy_uses_the_nullif_guarded_predicate(session, predicate
         "policies that are not the predicate CLAUDE.md pins. Each of these "
         f"filters something other than what every other table filters: {wrong}"
     )
+
+
+async def test_the_truncation_list_matches_the_catalogue(session):
+    """`TENANT_SCOPED_TABLES` in conftest is what every fixture empties between
+    tests, and unlike the two assertions above it is hand-maintained.
+
+    A tenant-scoped table missing from it does not fail either. It leaves rows
+    behind, and the next test that counts them reads its own writes plus
+    somebody else's — which passes in file order and fails alone, or the other
+    way round, depending on which test wrote first. That is the shape found in
+    `test_both_retrievals_are_metered` (Task 42f): `assert rows == 2` passed
+    when the file ran in order and failed when the test ran by itself.
+
+    Three ledger-count assertions across three files are correct today *only*
+    because `usage_ledger` is on that list — tests/agent/test_orchestrator.py,
+    tests/evals/test_runner_inventory.py and tests/tenancy/test_settings.py.
+    None of them says so, and none of them would notice.
+
+    Same argument as the two tests above, one layer out: ask the catalogue, so
+    a table added next month is covered because it exists.
+    """
+    from tests.conftest import TENANT_SCOPED_TABLES
+
+    catalogue = set(await _scoped_tables(session))
+    listed = set(TENANT_SCOPED_TABLES)
+    assert catalogue - listed == set(), (
+        f"tenant-scoped and never truncated between tests: "
+        f"{sorted(catalogue - listed)} — any count assertion on these is "
+        f"order-dependent, and will pass or fail on which test ran first"
+    )
+    assert listed - catalogue == set(), (
+        f"truncated but not tenant-scoped: {sorted(listed - catalogue)} — "
+        f"either the table lost its tenant_id or the name is stale"
+    )
