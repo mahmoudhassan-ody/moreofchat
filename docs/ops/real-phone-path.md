@@ -214,6 +214,32 @@ What each failure looks like:
 | Entry in `moc:inbound:dead` | The turn failed. The reason is on the dead-letter entry, not in the logs. |
 | Reply composed, nothing delivered | The outbound credential, or a tenant with no `channel_accounts` row for that channel. |
 
+### 3.5 Where the time went
+
+`messages.timings` carries the phase breakdown for every bot reply — the same
+one the eval harness reports, written by the worker since migration 0018.
+Before that it was computed on every turn and discarded, so "the demo felt
+slow" had no answer on the host.
+
+```sql
+SELECT jsonb_pretty(timings) FROM messages
+WHERE author = 'bot' ORDER BY created_at DESC LIMIT 1;
+```
+
+```
+{"total": 6723.5, "intake": 1101.6, "composition": 3473.4,
+ "audit": 2113.5, "intake.extraction": 1101.4, "intake.retrieval": 204.7}
+```
+
+`intake` is one counted phase with two dotted details — extraction and
+retrieval run concurrently, so summing their durations would exceed the wall
+clock they share. `intake.requery` appears only on turns that resumed a node
+(Task 42f), and its absence is not a zero.
+
+**A single turn is not a p95.** §2.4's rule applies to anything read from this
+column: one slow reply is one sample, and the useful question is what the
+distribution looks like over a demo's worth of turns.
+
 ---
 
 ## 4. What the first real run found

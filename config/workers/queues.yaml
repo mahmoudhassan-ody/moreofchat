@@ -11,6 +11,26 @@
 
 version: 1
 
+# ── Why the streams are capped ───────────────────────────────────────────────
+#
+# `XACK` moves a consumer group's cursor. It does not delete anything, so a
+# stream nothing trims grows for the life of the deployment — and the symptom
+# is not an error. Found on the live host after the first real vendor traffic:
+# inbound held four entries for two messages, the extras being acknowledged
+# rows from the previous day's rehearsal, with `pending 0` and `dead 0`
+# reporting a healthy queue sitting on top of an unbounded one. This box has
+# 3.3 GB of RAM.
+#
+# `maxlen` is approximate at the call site (`~` in Redis terms): exact trimming
+# walks the radix tree on every write, approximate trimming drops whole nodes
+# and settles near the bound. The bound is what matters here; the exact length
+# is not a number anything should depend on.
+#
+# The main streams hold work in flight and a short tail of history worth
+# reading after an incident. The dead-letter streams are read by a human, and
+# five thousand unread failures is not a backlog anyone is working through.
+
+
 inbound:
   stream: moc:inbound
   group: agent
@@ -24,7 +44,9 @@ inbound:
   # is a bug that more attempts will not fix. Retrying forever turns one
   # poisoned message into a worker that never processes anything else.
   max_attempts: 5
+  maxlen: 50000
   dead_letter_stream: moc:inbound:dead
+  dead_letter_maxlen: 5000
 
 outbound:
   stream: moc:outbound
@@ -32,7 +54,9 @@ outbound:
   batch_size: 8
   block_ms: 5000
   max_attempts: 5
+  maxlen: 50000
   dead_letter_stream: moc:outbound:dead
+  dead_letter_maxlen: 5000
 
 # Webhook idempotency (§6.2). Vendors retry for hours; a week of memory costs
 # almost nothing and covers a redelivery after an incident, which is precisely

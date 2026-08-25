@@ -488,7 +488,9 @@ async def test_outbound_dead_letters_after_the_configured_attempts(valkey):
         tenant_id=str(uuid4()), channel=Channel.whatsapp, to=CUSTOMER, text="أهلا"
     )
     await ValkeyInboundQueue(client=valkey, config=QUEUES).publish_raw(
-        QUEUES["outbound"]["stream"], job.to_json()
+        QUEUES["outbound"]["stream"],
+        job.to_json(),
+        maxlen=QUEUES["outbound"]["maxlen"],
     )
 
     worker = OutboundWorker(
@@ -2143,3 +2145,176 @@ async def test_a_dead_letter_says_where_it_died_and_not_only_what_it_raised(valk
     frames = dead[0][1]["traceback"]
     assert "test_pipeline.py" in frames, "the row does not say where it died"
     assert "raise TerminalFailure" in frames
+
+
+# ─────────── §2.5 needs an instrument in production, not only in the harness ───────────
+
+
+async def test_a_real_turn_stores_its_own_phase_breakdown(valkey, app_engine, account):
+    """The wiring, not the column.
+
+    Written after a first pass tested `MessageLog.append(timings=...)` and
+    nothing else: disabling the worker's argument entirely left that test
+    green, which is the same defect one level up — the instrument existed and
+    the path to it did not.
+    """
+    from moc.agent.handoff import MessageLog
+    from moc.tenancy.context import tenant_session
+
+    queue = ValkeyInboundQueue(client=valkey, config=QUEUES)
+    events = ValkeyEventLog(client=valkey, config=QUEUES)
+    app = build_app(
+        registry=Registry(account), queue=queue, events=events, secrets=FakeSecrets()
+    )
+    await deliver(app, form())
+    await InboundWorker(
+        client=valkey,
+        engine=app_engine,
+        orchestrator=orchestrator(),
+        script=SCRIPT,
+        config=QUEUES,
+    ).run_once()
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        contact_id = (
+            await session.execute(
+                sql_text("SELECT contact_id FROM conversations WHERE sender_ref = :s"),
+                {"s": CUSTOMER},
+            )
+        ).scalar_one()
+        thread = await MessageLog(session=session).history_for_contact(
+            contact_id=contact_id
+        )
+
+    bot = next(m for m in thread if m.author == "bot")
+    assert bot.timings, "the reply carries no breakdown — §2.5 has no instrument"
+    assert bot.timings["total"] > 0
+    assert "intake" in bot.timings, "the phases, not just the total"
+    customer = next(m for m in thread if m.author == "customer")
+    assert customer.timings is None, "an inbound message is not a turn"
+
+
+async def test_a_bot_reply_records_where_its_time_went(app_engine, account):
+    """`timings` was produced by every turn and read only by the eval runner.
+
+    The two real Telegram messages on 2026-08-25 took 5.430s and 5.017s, and
+    nothing on the host could say which phase either second belonged to.
+    §2.5's budget is a product claim about what a customer waits through, so
+    the instrument has to exist where the customer is — "the demo felt slow"
+    is otherwise unanswerable.
+    """
+    from moc.agent.conversations import ConversationStore
+    from moc.agent.handoff import ContactStore, MessageLog
+    from moc.agent.state import ConversationState
+    from moc.tenancy.context import tenant_session
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        contact_id = await ContactStore(session=session).resolve(contact_ref="+20100")
+        conversation_id = await ConversationStore(
+            session=session, engine=app_engine
+        ).save(
+            channel="telegram",
+            sender_ref="+20100",
+            channel_account_id=account.id,
+            last_inbound_at=datetime.now(UTC),
+            state=ConversationState(script_id="s", script_version=1),
+            contact_id=contact_id,
+        )
+        written = await MessageLog(session=session).append(
+            conversation_id=conversation_id,
+            channel="telegram",
+            author="bot",
+            body="رد",
+            timings={"total": 5430.1, "intake": 1640.0, "composition": 2090.4},
+        )
+
+    assert written.timings == {
+        "total": 5430.1,
+        "intake": 1640.0,
+        "composition": 2090.4,
+    }
+
+
+async def test_a_customer_turn_records_no_timings(app_engine, account):
+    """None rather than `{}`. An inbound message is not a turn and has no
+    phases, and a zero-phase breakdown would read as a turn that took no
+    measurable time — the same distinction §2.4 draws between "measured zero"
+    and "not measured"."""
+    from moc.agent.conversations import ConversationStore
+    from moc.agent.handoff import ContactStore, MessageLog
+    from moc.agent.state import ConversationState
+    from moc.tenancy.context import tenant_session
+
+    async with tenant_session(app_engine, account.tenant_id) as session:
+        contact_id = await ContactStore(session=session).resolve(contact_ref="+20101")
+        conversation_id = await ConversationStore(
+            session=session, engine=app_engine
+        ).save(
+            channel="telegram",
+            sender_ref="+20101",
+            channel_account_id=account.id,
+            last_inbound_at=datetime.now(UTC),
+            state=ConversationState(script_id="s", script_version=1),
+            contact_id=contact_id,
+        )
+        written = await MessageLog(session=session).append(
+            conversation_id=conversation_id,
+            channel="telegram",
+            author="customer",
+            body="سؤال",
+        )
+
+    assert written.timings is None
+
+
+# ─────────────── the streams are capped — a queue is not a log ───────────────
+
+
+def test_every_xadd_caps_the_stream():
+    """A stream nothing trims grows forever.
+
+    Found on the live host after the first real messages: inbound held four
+    entries for two messages, the extras being acknowledged rows from the
+    2026-08-24 rehearsal. Redis keeps entries after `XACK` — acknowledgement
+    moves the group cursor, it does not delete anything — so "pending 0, dead
+    0" is a healthy queue sitting on top of an unbounded one.
+
+    Asserted over the source rather than by behaviour, because the failure of
+    a new `xadd` is not that it breaks. It works, and the memory it costs
+    arrives weeks later on a box with 3.3 GB of RAM.
+    """
+    import ast
+    from pathlib import Path
+
+    offenders = []
+    for path in sorted(Path("src/moc").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "xadd"):
+                continue
+            if not any(kw.arg == "maxlen" for kw in node.keywords):
+                offenders.append(f"{path}:{node.lineno}")
+    assert offenders == [], f"xadd with no MAXLEN: {offenders}"
+
+
+async def test_the_inbound_stream_stops_growing_at_its_cap(valkey):
+    """The cap is `approximate`, so Redis trims on node boundaries and the
+    length settles near the bound rather than exactly on it. Asserted as a
+    bound with headroom, because pinning the exact length would be asserting
+    Redis's radix-tree node size."""
+    from moc.channels.valkey import ValkeyInboundQueue
+
+    config = {**QUEUES, "inbound": {**QUEUES["inbound"], "maxlen": 50}}
+    queue = ValkeyInboundQueue(client=valkey, config=config)
+    stream = config["inbound"]["stream"]
+    await valkey.delete(stream)
+    for i in range(400):
+        await queue.publish_raw(stream, f'{{"n": {i}}}', maxlen=50)
+
+    length = await valkey.xlen(stream)
+    assert length < 400, "nothing trimmed — the stream grows without bound"
+    assert length <= 250, f"trimmed, but nowhere near the cap of 50: {length}"
+    await valkey.delete(stream)

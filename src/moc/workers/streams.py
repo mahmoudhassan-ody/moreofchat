@@ -55,6 +55,7 @@ class StreamConsumer:
         block_ms: int,
         max_attempts: int,
         dead_letter_stream: str,
+        dead_letter_maxlen: int,
     ) -> None:
         self._client = client
         self._stream = stream
@@ -64,6 +65,7 @@ class StreamConsumer:
         self._block_ms = block_ms
         self._max_attempts = max_attempts
         self._dead_letter = dead_letter_stream
+        self._dead_letter_maxlen = dead_letter_maxlen
         self._group_ready = False
 
     async def _ensure_group(self) -> None:
@@ -175,6 +177,11 @@ class StreamConsumer:
                 "entry_id": entry_id,
                 "traceback": frames,
             },
+            # Capped like the work streams, and lower. These are read by a
+            # person, and five thousand unread failures is not a backlog
+            # anyone is working through.
+            maxlen=self._dead_letter_maxlen,
+            approximate=True,
         )
         await self._client.xack(self._stream, self._group, entry_id)
 
@@ -191,6 +198,7 @@ def consumer_from_config(
         block_ms=section["block_ms"],
         max_attempts=section["max_attempts"],
         dead_letter_stream=section["dead_letter_stream"],
+        dead_letter_maxlen=section["dead_letter_maxlen"],
     )
 
 

@@ -112,19 +112,31 @@ class ValkeyInboundQueue:
     def __init__(self, *, client: Any, config: dict[str, Any]) -> None:
         self._client = client
         self._stream = config["inbound"]["stream"]
+        self._maxlen = config["inbound"]["maxlen"]
 
     async def publish(self, message: InboundMessage) -> None:
-        await self._client.xadd(self._stream, {_PAYLOAD: _encode(message)})
+        await self._client.xadd(
+            self._stream,
+            {_PAYLOAD: _encode(message)},
+            maxlen=self._maxlen,
+            approximate=True,
+        )
 
-    async def publish_raw(self, stream: str, payload: str) -> None:
+    async def publish_raw(self, stream: str, payload: str, *, maxlen: int) -> None:
         """Put an already-encoded payload on any stream.
 
         Used by the inbound worker to hand a reply to the sender, and by tests
         to seed one. Kept explicit rather than overloading `publish`, so a
         caller cannot accidentally publish an outbound job onto the inbound
         stream and have it decode as a customer message.
+
+        `maxlen` is required rather than defaulted to this queue's own cap:
+        the stream is the caller's choice, so its bound is too, and a default
+        here would silently apply the inbound cap to whatever it was handed.
         """
-        await self._client.xadd(stream, {_PAYLOAD: payload})
+        await self._client.xadd(
+            stream, {_PAYLOAD: payload}, maxlen=maxlen, approximate=True
+        )
 
 
 class ValkeyEventLog:
@@ -179,11 +191,18 @@ class ValkeyOutboundPublisher:
     def __init__(self, *, client: Any, config: dict[str, Any] | None = None) -> None:
         from moc.config_store import load
 
+        queues = config or load(_QUEUES)
         self._client = client
-        self._stream = (config or load(_QUEUES))["outbound"]["stream"]
+        self._stream = queues["outbound"]["stream"]
+        self._maxlen = queues["outbound"]["maxlen"]
 
     async def publish(self, job: Any) -> None:
-        await self._client.xadd(self._stream, {_PAYLOAD: job.to_json()})
+        await self._client.xadd(
+            self._stream,
+            {_PAYLOAD: job.to_json()},
+            maxlen=self._maxlen,
+            approximate=True,
+        )
 
 
 class ValkeyInboxEvents:

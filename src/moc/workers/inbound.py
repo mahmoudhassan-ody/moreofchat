@@ -143,6 +143,7 @@ class InboundWorker:
         #: never the turn's — see `_show_typing`.
         self._indicators = indicators
         self._outbound_stream = config["outbound"]["stream"]
+        self._outbound_maxlen = config["outbound"]["maxlen"]
         self._consumer = consumer_from_config(
             client=client, section=config["inbound"], consumer=consumer
         )
@@ -296,6 +297,15 @@ class InboundWorker:
                     # all would record None rather than an empty trace, which
                     # would read as "we looked and found no source".
                     provenance=getattr(result, "provenance", None),
+                    # Where the seconds went. Produced by every turn
+                    # since the phase clock existed and read only by
+                    # the eval runner, so the one place a customer
+                    # actually waits had no instrument — two real
+                    # Telegram turns took 5.4s and 5.0s and nothing on
+                    # the host could say which phase either second
+                    # belonged to. `getattr` for the same reason as
+                    # provenance: two turn types, no common base.
+                    timings=dict(getattr(result, "timings", None) or {}) or None,
                 )
             await session.commit()
 
@@ -350,7 +360,12 @@ class InboundWorker:
             # email, none of them attached to the question.
             thread_ref=message.thread_ref,
         )
-        await self._client.xadd(self._outbound_stream, {"payload": job.to_json()})
+        await self._client.xadd(
+            self._outbound_stream,
+            {"payload": job.to_json()},
+            maxlen=self._outbound_maxlen,
+            approximate=True,
+        )
 
 
 __all__ = ["InboundWorker"]

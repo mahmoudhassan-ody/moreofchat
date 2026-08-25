@@ -135,6 +135,13 @@ class Message:
     #: can read backwards.
     seq: int
     provenance: dict[str, Any] | None = None
+    #: Where this turn's milliseconds went, phase by phase — the same
+    #: breakdown `moc.evals.runner` reports, kept in production because §2.5's
+    #: budget is a claim about what a customer waits through and the harness
+    #: is not where customers wait. None on a customer turn, which is not a
+    #: turn and has no phases, and on any row written before migration 0018.
+    #: Distinct from `{}`, which would say a turn ran and measured nothing.
+    timings: dict[str, float] | None = None
 
 
 def _handoff(row: Any) -> Handoff:
@@ -302,10 +309,13 @@ class ContactStore:
 
 
 _APPEND = text("""
-INSERT INTO messages (id, tenant_id, conversation_id, channel, author, body, provenance)
-SELECT :id, c.tenant_id, c.id, :channel, :author, :body, cast(:provenance as jsonb)
+INSERT INTO messages
+  (id, tenant_id, conversation_id, channel, author, body, provenance, timings)
+SELECT :id, c.tenant_id, c.id, :channel, :author, :body,
+       cast(:provenance as jsonb), cast(:timings as jsonb)
 FROM conversations c WHERE c.id = :conversation_id
-RETURNING id, conversation_id, channel, author, body, created_at, seq, provenance
+RETURNING id, conversation_id, channel, author, body, created_at, seq,
+          provenance, timings
 """)
 
 #: The one handoff that suspends the bot, if there is one. `<> 'returned'`
@@ -323,7 +333,7 @@ WHERE h.conversation_id = :conversation_id AND h.status <> 'returned'
 #: history instead of two.
 _HISTORY = text("""
 SELECT m.id, m.conversation_id, m.channel, m.author, m.body, m.created_at, m.seq,
-       m.provenance
+       m.provenance, m.timings
 FROM messages m JOIN conversations c ON c.id = m.conversation_id
 WHERE c.contact_id = :contact_id
 ORDER BY m.seq
@@ -331,7 +341,7 @@ ORDER BY m.seq
 
 _UNPROCESSED = text("""
 SELECT m.id, m.conversation_id, m.channel, m.author, m.body, m.created_at, m.seq,
-       m.provenance
+       m.provenance, m.timings
 FROM messages m
 WHERE m.conversation_id = :conversation_id
   AND m.author = 'customer'
@@ -356,6 +366,7 @@ class MessageLog:
         author: str,
         body: str | None,
         provenance: dict[str, Any] | None = None,
+        timings: dict[str, float] | None = None,
     ) -> Message:
         """Append one message, optionally with where its figures came from.
 
@@ -376,6 +387,10 @@ class MessageLog:
                     "author": author,
                     "body": body,
                     "provenance": json.dumps(provenance) if provenance else None,
+                    # Same `if x else None` as provenance, and the same
+                    # reason: an empty dict means "timed, and every phase
+                    # took zero", which no turn does. NULL means not timed.
+                    "timings": json.dumps(timings) if timings else None,
                 },
             )
         ).one()
