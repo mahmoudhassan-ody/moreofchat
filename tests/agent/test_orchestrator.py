@@ -1452,3 +1452,128 @@ async def test_a_slot_outside_the_vocabulary_answers_rather_than_raising(turn_se
         "this is the working behaviour for a question outside the catalogue, "
         "not a degraded version of a working turn"
     )
+
+
+# ────── a resumed turn retrieves on more than the fragment — Task 42f ──────
+#
+# `وفي القنطرة؟` routes to `admission_thresholds` correctly (42e), holds every
+# slot correctly, and was answered about study duration. The query is
+# `redaction.text` and nothing else, *by construction*: retrieval runs
+# concurrently with extraction, so it cannot see this turn's slots, and on a
+# resumed turn the topic is not in the message at all.
+#
+# Option two of the three costed in the plan: keep the concurrent search for
+# the common case, and pay a second round trip only on the turns that need it.
+# Before `advance`, because `grounded` and `confidence` are read off retrieval
+# and feed the decision — re-retrieving after it would leave the decision made
+# on passages the reply never sees.
+
+THRESHOLDS_NODE = "admission_thresholds"
+
+
+def held(**slots) -> ConversationState:
+    return replace(start_state(), node=THRESHOLDS_NODE, slots=dict(slots))
+
+
+async def test_a_first_turn_still_retrieves_once_and_concurrently(turn_session):
+    """The latency path, and the reason this is not "always serialise".
+
+    A first turn carries its own topic, so nothing is missing and no second
+    call is made. §2.5's budget is the tightest gate in the suite and this
+    change must not touch the common case.
+    """
+    orchestrator, *_, retriever = build()
+    await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المصاريف كام للهندسة؟",
+        channel=CHANNEL,
+    )
+    assert len(retriever.seen) == 1
+    assert retriever.seen == ["المصاريف كام للهندسة؟"]
+
+
+async def test_a_resumed_turn_retrieves_on_more_than_the_message(turn_session):
+    """edu-0018 turn 2. A bare value that changes a held slot."""
+    orchestrator, *_, retriever = build(
+        intent=None, slots={"branch": "qantara"}
+    )
+    await orchestrator.handle(
+        session=turn_session,
+        state=held(branch="arish", certificate="arab_equivalent", faculty="dentistry"),
+        text="وفي القنطرة؟",
+        channel=CHANNEL,
+    )
+    assert len(retriever.seen) == 2, "the fragment was never re-queried"
+    assert retriever.seen[0] == "وفي القنطرة؟", "the concurrent search is unchanged"
+    assert retriever.seen[1] != "وفي القنطرة؟", "the second one carries the topic"
+
+
+async def test_the_second_query_carries_both_the_topic_and_what_this_turn_named(
+    turn_session,
+):
+    """The topic comes from the node the turn resumed; the value the customer
+    just named is in the message, and dropping it would retrieve the right
+    subject for the wrong branch."""
+    orchestrator, *_, retriever = build(intent=None, slots={"branch": "qantara"})
+    await orchestrator.handle(
+        session=turn_session,
+        state=held(branch="arish", certificate="arab_equivalent", faculty="dentistry"),
+        text="وفي القنطرة؟",
+        channel=CHANNEL,
+    )
+    second = retriever.seen[1]
+    assert "الحد الأدنى للقبول" in second, "the node's own description of itself"
+    assert "وفي القنطرة؟" in second, "and the branch the customer just named"
+
+
+async def test_a_turn_that_does_not_resume_is_not_re_queried(turn_session):
+    """A turn carrying an intent names its own topic. Re-querying it would pay
+    the second round trip on every turn, which is the option this one is not."""
+    orchestrator, *_, retriever = build(intent="fees", slots={"faculty": "dentistry"})
+    await orchestrator.handle(
+        session=turn_session, state=held(faculty="engineering"),
+        text="وطب الأسنان؟", channel=CHANNEL,
+    )
+    assert len(retriever.seen) == 1
+
+
+async def test_both_retrievals_are_metered(turn_session):
+    """Two embedding calls happened, so two rows. Metering only the surviving
+    retrieval would understate embedding spend on exactly the turns that cost
+    twice — and `embedding_call` already spent a migration writing nothing.
+    """
+    async def embedding_rows() -> int:
+        # A delta, not a count. `turn_session` builds on the session-scoped
+        # `session` fixture, so rows from an earlier test in the same run are
+        # visible here — a bare `== 2` passed before this change was written
+        # when the file ran in order, and failed when the test ran alone.
+        return (
+            await turn_session.execute(
+                sql("SELECT count(*) FROM usage_ledger WHERE kind = 'embedding_call'")
+            )
+        ).scalar_one()
+
+    orchestrator, *_ = build(intent=None, slots={"branch": "qantara"})
+    before = await embedding_rows()
+    await orchestrator.handle(
+        session=turn_session,
+        state=held(branch="arish", certificate="arab_equivalent", faculty="dentistry"),
+        text="وفي القنطرة؟",
+        channel=CHANNEL,
+    )
+    assert await embedding_rows() - before == 2, (
+        "the discarded retrieval's embedding call was free to nobody"
+    )
+
+
+async def test_the_decision_is_made_on_the_re_queried_passages(turn_session):
+    """Not a detail of ordering. `grounded` and `confidence` are read off
+    retrieval and feed `advance`, so re-querying after the decision would route
+    the turn on passages the reply never sees."""
+    import inspect
+
+    from moc.agent import orchestrator as module
+
+    source = inspect.getsource(module.Orchestrator.handle)
+    requery = source.index("resumes(")
+    decide = source.index("script.advance(")
+    assert requery < decide, "the second retrieval must precede the decision"

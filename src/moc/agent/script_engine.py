@@ -123,7 +123,7 @@ class ScriptEngine:
         self._require_pinned_version(state)
         # Read against the state as it stood when the question was asked, so
         # "did this turn answer it?" is decided before the answer is merged in.
-        resumed = self._resumed(state, turn)
+        resumed = self.resumes(state, turn)
         # Cleared before the node is chosen, so `requires_any_slot` and the
         # connector both see the state the customer actually left behind.
         state = state.with_slots(turn.slots, turn.cleared + self._stale(state, turn))
@@ -209,7 +209,21 @@ class ScriptEngine:
             grounding_required=node.get("grounding") == "required",
         )
 
-    def _resumed(self, state: ConversationState, turn: TurnInput) -> str | None:
+    def topic_of(self, node_name: str) -> str:
+        """How the script describes a node, in the script's own words.
+
+        Written for the extractor's intent list and reused here: it is the one
+        place a node says what it is *about*, in both languages, maintained by
+        whoever maintains the flow. A second description written for retrieval
+        would be a second thing to keep in step with the first.
+
+        Empty when the node declares none, which is how the caller decides not
+        to re-query rather than querying on nothing.
+        """
+        node = self._script["nodes"].get(node_name) or {}
+        return " ".join((node.get("describe") or "").split())
+
+    def resumes(self, state: ConversationState, turn: TurnInput) -> str | None:
         """The node that asked, when this turn is the answer to it.
 
         edu-0007 turn 2 is the case: the clarification asked which branch, the

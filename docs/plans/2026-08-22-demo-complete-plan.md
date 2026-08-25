@@ -589,7 +589,7 @@ different thing now, one layer down: Task 42f.
 
 ---
 
-### Task 42f: a resumed turn retrieves on the fragment
+### Task 42f: a resumed turn retrieves on the fragment — DONE 2026-08-25
 
 **Uncovered by 42e, and it is the same conflation one layer further down.**
 
@@ -648,6 +648,46 @@ async def test_the_query_carries_the_slot_this_turn_named()
 
 **Acceptance:** edu-0018 passes without its expectations being relaxed, and
 `p95_latency_ms` is measured on the same run rather than assumed unchanged.
+
+**Done — option two.** A resumed turn is re-queried with the node's own
+`describe` in front of the message; every other turn keeps the concurrent
+search untouched. `ScriptEngine.resumes` and `topic_of` are public because the
+orchestrator has to ask both before it can decide, and the re-query happens
+**before** `advance` — `grounded` and `confidence` are read off retrieval and
+feed the decision, so re-querying after it would route the turn on passages
+the reply never sees. Asserted directly, over the source's own statement
+order.
+
+The topic comes from `describe` rather than a second description written for
+retrieval: it is the one place a node says what it is about, in both
+languages, maintained by whoever maintains the flow. The message stays in the
+query — the topic alone retrieves the right subject for the branch the
+customer just left, which is this week's failure in yet another layer.
+
+**Both retrievals are metered.** Two embedding calls happened, so two rows.
+Writing only the surviving one would understate spend on exactly the turns
+that cost twice, and `embedding_call` already spent a migration writing
+nothing.
+
+**§2.5, before and after.** `p95_latency_ms` went 6724 ms (5926–7873) to
+7271 ms (5717–8832) — both unmeasurable, spreads of 1947 and 3115 ms, and
+overlapping almost entirely. The phase breakdown answers what the p95 cannot,
+because the new work has its own phase: **`intake.requery`, 181 ms mean,
+190 ms p95, on 2 of 21 turns** — about 17 ms amortised, against an
+`intake.extraction` mean of 1639 ms in the same run. That is the argument for
+option two over serialising always: serialising puts 1639 ms in front of 21
+retrievals rather than 181 ms in front of 2.
+
+`overall_accuracy` 85.2% → 90.7%, a 5.5-point delta against a 5.5-point
+spread, so §2.4 says it is not a result. The case detail says what the mean
+cannot: edu-0018 fail → pass is 5.6 points of an 18-case suite by itself, and
+nothing else moved. Rehearsal 10/10.
+
+**A test-isolation bug found on the way.** `assert rows == 2` on the ledger
+passed before the change when the file ran in order and failed when the test
+ran alone: `turn_session` builds on the session-scoped `session` fixture, so
+rows from earlier tests are visible. The assertion is a delta now. Worth
+knowing that any count-based ledger assertion in that file is order-dependent.
 
 **And a metric that cannot see this.** `retrieval_recall_at_5` reads 100.0% on
 the run where turn 2 retrieved nothing relevant, because recall is scored per

@@ -428,6 +428,60 @@ A per-turn recall would say this. It is not added here because changing a
 metric's denominator mid-plan makes every recorded run incomparable under §2.3,
 and the failure is already visible in the case.
 
+#### Re-baseline, 2026-08-25 — Task 42f, and §2.5 before and after
+
+**edu-0018 passes.** The acceptance 42e did not meet is met here.
+
+| Metric | Before (42e) | After (42f) |
+|---|---|---|
+| `overall_accuracy` | 85.2% (83.3–88.9) | **90.7% (88.9–94.4)** |
+| `expected_action_accuracy` | 95.2% (95.2–95.2) | 95.2% (95.2–95.2) |
+| `forbidden_claim_violations` | 0.0% (0.0–0.0) | 0.0% (0.0–0.0) |
+| `hallucinated_figure_rate` | 3.7% (0.0–5.6) | 3.3% (0.0–5.0) |
+| `register_accuracy` | 96.8% (90.5–100.0) | 96.8% (95.2–100.0) |
+| `p95_latency_ms` | 6724 ms (5926–7873) | 7271 ms (5717–8832) |
+
+**The accuracy delta is 5.5 points and the spread is 5.5 points, so §2.4 says
+it is not a result** — and the case detail says what the mean cannot: edu-0018
+went from fail to pass, which is 5.6 points of an 18-case suite on its own.
+The whole delta is the one case the change was for. Nothing else moved.
+
+##### §2.5, measured properly — the p95 cannot answer this and the phases can
+
+`p95_latency_ms` went 6724 → 7271 ms with spreads of 1947 and 3115 ms. Both
+readings are unmeasurable and they overlap almost entirely. Read literally the
+change cost 547 ms; read honestly it cost an amount this instrument cannot
+resolve, and quoting either end would be picking a number.
+
+The phase breakdown answers it directly, because the new work has its own
+phase:
+
+```
+phase                mean      p95   turns
+total                3733     7264      21
+composition          2090     3145      14
+intake               1640     3484      21
+audit                1418     2486      10
+intake.extraction    1639     3484      21
+intake.retrieval      203      236      21
+intake.requery        181      190       2      ← the whole cost of Task 42f
+```
+
+**181 ms mean, 190 ms p95, on 2 of 21 turns.** Amortised over the suite that is
+about 17 ms per turn, and on the two turns that pay it the cost is one extra
+retrieval — 181 ms against an `intake.extraction` mean of 1639 ms in the same
+run. This is why option two was chosen over serialising always: serialising
+would have put the 1639 ms extraction in front of every one of the 21
+retrievals rather than 181 ms in front of two.
+
+The budget is not breached by this change, and it was already the wrong
+instrument for the question. A phase with its own name and its own turn count
+is a measurement; a p95 over a suite is a weather report.
+
+**Still failing, both known and neither touched here.** edu-0012 remains the
+system defect §2.4 has recorded since 2026-08-21. edu-0007 flakes on stating
+the year, which is `f2` on a chunk whose year appears once.
+
 
 #### Where the 8990 ms goes (2026-08-21, run 3 of 3)
 
@@ -813,6 +867,54 @@ defects rather than the agent's.
 Education's accuracy remains fragile at this suite size. One case is 5.9 points of a 17-case suite, so a two-case swing exceeds the bar on its own; §4.1's 150 cases are what makes that metric readable, not a steadier model. `register_accuracy`, `p95_latency_ms` and `forbidden_claim_violations` fed nothing in any run and are unmeasured, not clean.
 
 ---
+
+
+### 2.7 What each gate does not see
+
+Every metric in §2.1 and §2.2 answers one question well. None of them answers
+"was this reply right", and over three days five separate failures were found
+by a rehearsal, a case, or a person — while every gate covering that area read
+green. They are listed together because the pattern is a property of the design
+rather than five coincidences: **a gate is a predicate over a reply, and most
+of the ways a reply can be wrong are not predicates over a reply.**
+
+| Gate | What it answers | What it cannot see |
+|---|---|---|
+| `hallucinated_figure_rate` | Is every figure traceable to a source? | The **right figure from the wrong row**. re-0025's payment plan quoted 5,800,000 from a real Madinaty unit for a question about Noor City. Nothing was hallucinated; the wrong unit was consulted. |
+| `invented_compound_rate` | Is every compound named one that exists? | The **wrong real compound**. The `locations.yaml` gap resolved `كريك تاون` to Jefaira — a real compound, so the rate stayed at zero while the reply described the wrong property. |
+| `slot_retention_accuracy` | Did held slots survive the turn? | What was **decided** from them. 100.0% on the run where edu-0018 held every slot correctly and routed to the fallback anyway (Task 42e). |
+| `retrieval_recall_at_5` | Did the gold chunk come back? | **Which turn** it came back on. Scored per case, so turn 1 retrieving the gold chunk hides turn 2 retrieving five irrelevant ones (Task 42f). |
+| `type_substitution_rate` | Was a different property type offered? | A substitution on **any other axis**. Task 42c's developer offered a Madinaty apartment for a Noor City question — same type, different project, and the rate cannot be about a project it does not read. |
+| `arithmetic_in_model_rate` | Did the model compute a figure? | A **correct computation on the wrong inputs**. The calculator's output is verbatim in the reply and the unit it was called for was the one held from two turns ago. |
+| `expected_action_accuracy` | Did the turn take the right action? | Whether the action was taken for the **right reason**. A handoff produced by an out-of-vocabulary exception and a handoff produced by a scope rule are the same value (Task 42c). |
+| `errored_rate` | Did the turn raise? | A turn that **died silently**. Before Task 42 an out-of-vocabulary slot killed the turn and the customer got nothing; the suite recorded no error because nothing reached the runner. |
+
+**The shape they share.** Each gate is a statement about the *reply* — its
+figures, its compounds, its action. Every failure in the right-hand column is a
+statement about the *question*: which unit, which branch, which turn, which
+project. A reply can satisfy every property a gate can check and answer
+something nobody asked, and the more gates pass, the more convincing it looks.
+Both real-estate cases written against this pattern — re-0025 and re-0026 —
+pin the specific wrong answer as a forbidden claim rather than trusting a rate,
+because the specific wrong answer is the only thing that distinguishes it.
+
+**What follows for reading a report.**
+
+- **A green board is evidence about the questions asked, not about the
+  system.** Real estate has read 100.0% on every run since 2026-08-24 and two
+  of the five findings above were live in it the whole time.
+- **The failure list is the readable part, the mean is not.** Already §2.4's
+  rule for spreads; it holds twice over here, because a metric can be both
+  settled and blind.
+- **Rehearsal-only findings are a signal about coverage, not a nuisance.** All
+  five arrived from the rehearsal or from a case written the day it was
+  needed. When a defect can only be found by driving the product, the gates
+  are not measuring the product yet.
+
+**This is not an argument for more gates.** Three of the five would have needed
+a gate that reads the customer's question and the retrieved row together, which
+is the judge's job and is why stage 2 exists. It is an argument for what §5.4
+already says: gates block merges, and people read transcripts.
 
 ## 3. Case schema
 

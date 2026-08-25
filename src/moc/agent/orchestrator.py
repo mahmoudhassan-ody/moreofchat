@@ -343,20 +343,53 @@ class Orchestrator:
         # Extraction runs on every turn, where composition runs on about two in
         # three, and it was metered in neither vertical.
         await self._meter(session, channel, getattr(turn, "usage", None))
+        # The engine for THIS turn, needed here rather than below because
+        # whether the turn resumed a node decides whether it is re-queried.
+        script = engine or self._engine
+        searches = [retrieval]
+
+        # **A resumed turn's message is not its question.** `search()` above
+        # runs concurrently with extraction, so its query is `redaction.text`
+        # and nothing else — by construction, not by oversight. On a first turn
+        # the message carries the topic and that is free. On `وفي القنطرة؟`
+        # after an Arish threshold it is two words, and every one of the five
+        # chunks it retrieved was about the Qantara *branch* rather than about
+        # thresholds: the address, the programme list, the internship page,
+        # transport, dorms. The turn routed correctly (Task 42e), held every
+        # slot correctly, and answered about study duration.
+        #
+        # So: re-query, with the node's own description of its topic in front
+        # of the message. Only on resumed turns, which is what makes this
+        # affordable — a turn that names its own topic pays nothing, and §2.5's
+        # budget is the tightest gate in the suite (Task 42f).
+        #
+        # The message stays in the query. The topic alone would retrieve the
+        # right subject for the branch the customer just left, which is the
+        # failure this whole week keeps producing in different layers.
+        resumed = script.resumes(state, turn)
+        topic = script.topic_of(resumed) if resumed else ""
+        if topic:
+            with clock.phase("intake.requery"):
+                retrieval = await search_with.search(
+                    query=f"{topic} {redaction.text}"
+                )
+            searches.append(retrieval)
+
         # `embedding_call` existed as a UsageKind from migration 0004 and
         # nothing wrote one, so embedding spend could only ever be estimated
         # from code paths. Metered here rather than in the retrieval layer:
         # that layer has no session and no tenant, and a write outside this
         # transaction would survive a turn that rolled back.
-        if getattr(retrieval, "embedding_tokens", 0):
-            await record_usage(
-                session,
-                kind=UsageKind.embedding_call,
-                channel=channel,
-                model=retrieval.embedding_model,
-                provider=_EMBEDDING_PROVIDER,
-                input_tokens=retrieval.embedding_tokens,
-            )
+        for performed in searches:
+            if getattr(performed, "embedding_tokens", 0):
+                await record_usage(
+                    session,
+                    kind=UsageKind.embedding_call,
+                    channel=channel,
+                    model=performed.embedding_model,
+                    provider=_EMBEDDING_PROVIDER,
+                    input_tokens=performed.embedding_tokens,
+                )
         # The extractor's own confidence, if it reported one, is discarded
         # here. `grounded` is the §7.5 gate's real input: a script constant
         # counts, because §3.1 lets the script state figures the corpus does
@@ -367,14 +400,12 @@ class Orchestrator:
             grounded=bool(retrieval.passages or retrieval.script_constants),
         )
 
-        # The engine for THIS turn. Tenant scripts are versioned and a
-        # conversation is pinned to the version it started on (Task 33), so
-        # which script runs is a property of the turn rather than of the
-        # process — a single engine held here would raise
-        # `_require_pinned_version` on every in-flight conversation the moment
-        # a tenant published. Falls back to the constructed one, which is what
-        # every test and the config-only path use.
-        script = engine or self._engine
+        # Tenant scripts are versioned and a conversation is pinned to the
+        # version it started on (Task 33), so which script runs is a property
+        # of the turn rather than of the process — a single engine held here
+        # would raise `_require_pinned_version` on every in-flight
+        # conversation the moment a tenant published. Resolved above, where
+        # the re-query needed it.
         decision = script.advance(state, turn)
         # The model's reading wins; the heuristic is the fallback. Franco with
         # no digit substitution — `fe manh fe kantara?` — defeats the pattern
