@@ -221,22 +221,38 @@ class ScriptEngine:
         of reach of the one turn that needed it. The customer answered the
         question and was asked to start over.
 
-        The discriminator is deliberately narrow: this turn filled a slot the
-        held node was *still waiting for*. Continuing on any slot-bearing turn
-        would make a topic change re-run the question the customer just left,
-        and repeating a slot the node already holds answers nothing. Both are
-        read against the pre-merge state, because after the merge every slot
-        looks held.
+        The discriminator is a slot **this node reads** — declared by it,
+        whether or not it already holds a value for it.
+
+        It used to be narrower: a slot the node was *still waiting for*, held
+        slots subtracted. The reasoning was that "repeating a slot the node
+        already holds answers nothing", which is true of a repeat and false of
+        a replacement — and the two are the same shape, a slot name and a
+        value. So `وفي القنطرة؟` after an Arish threshold was answered went to
+        the fallback and asked the customer to pick from a menu: `branch` was
+        held, so it was not pending, so nothing intersected. Found by edu-0018
+        on its first run (Task 42e), and the third place this system assumed a
+        held value could only be restated — after the extraction prompt (42b)
+        and the merge (42d).
+
+        The topic-change worry the old rule was carrying is not carried by
+        this line at all: a turn that names a topic has a non-null intent and
+        returned above. What is left is a bare value, and a bare value for a
+        slot this node does not read still falls back — `fees` knows nothing
+        about branches, so `العريش` is not its business either way.
+
+        Read against the pre-merge state for `state.node`, because the merge
+        does not move the cursor.
         """
         if turn.intent is not None or not turn.slots:
             return None
         node = self._script["nodes"].get(state.node or "")
         if node is None:
             return None
-        pending = (
-            set(node.get("requires_slots") or []) | set(node.get("requires_any_slot") or [])
-        ) - set(state.slots)
-        return state.node if pending & set(turn.slots) else None
+        declared = set(node.get("requires_slots") or []) | set(
+            node.get("requires_any_slot") or []
+        )
+        return state.node if declared & set(turn.slots) else None
 
     # ─────────────────────────── outcomes ───────────────────────────
 

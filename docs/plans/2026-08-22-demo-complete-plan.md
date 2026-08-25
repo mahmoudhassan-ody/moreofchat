@@ -511,7 +511,7 @@ first run, which is what a case written to cover a hole is for.
 
 ---
 
-### Task 42e: a bare slot value cannot change a held slot
+### Task 42e: a bare slot value cannot change a held slot — DONE 2026-08-25
 
 **Found by edu-0018 immediately, and it is the same hole one layer down.**
 
@@ -561,8 +561,101 @@ def test_a_turn_carrying_an_intent_still_routes_by_intent()
 **Acceptance:** edu-0018 passes without its expectations being relaxed, and
 edu-0007 still passes.
 
-**Not attempted here.** The plan's code side was called complete before this
-case was written; it is not, and this is the one item outstanding.
+
+**Done.** `_resumed` now resumes on a slot the node *declares*, held or not,
+instead of only one it was still waiting for. `expected_action_accuracy` went
+from 90.5% (85.7–95.2) to **95.2% with zero spread**, which is the one metric
+that moved outside its previous spread and the one the change was aimed at.
+The rehearsal is 10/10 and real estate holds 100.0% on 22 cases.
+
+**One behaviour changed beyond the case, and it is a trade.** An *exact*
+repeat — the same faculty named twice — used to fall to the fallback and now
+re-answers. Routing could tell a repeat from a replacement by comparing
+values, and deliberately does not: routing would then read slot values and not
+just their names, for an edge case with no evidence either way, and the
+behaviour it preserves is the worse half — an exact repeat used to be answered
+with "ممكن توضّحلي أكتر", a request to clarify a message the system had
+understood perfectly.
+
+**What that costs, recorded rather than solved.** The fallback's clarification
+counted toward `max_consecutive_clarifications`, so a customer repeating
+themselves three times escalated to a human. They now get the same answer three
+times and never escalate. Repetition is a frustration signal and this drops it.
+The escalation belongs to whatever reads frustration, not to a routing rule
+that happened to be catching it — see §16.
+
+**edu-0018 does not pass, so 42e's acceptance is not met.** It fails on a
+different thing now, one layer down: Task 42f.
+
+---
+
+### Task 42f: a resumed turn retrieves on the fragment
+
+**Uncovered by 42e, and it is the same conflation one layer further down.**
+
+`وفي القنطرة؟` now routes to `admission_thresholds` correctly, holds
+`{branch: qantara, certificate: arab_equivalent, faculty: dentistry}`
+correctly, and answers: *"المعلومات المتاحة لدي لا تحدد مدة دراسة كلية طب
+الأسنان في فرع القنطرة"* — about study **duration**, which nobody asked about.
+The judge scored helpfulness 0.
+
+**Mechanism, structural rather than probabilistic.** `Orchestrator.handle`
+runs extraction and retrieval concurrently:
+
+```python
+turn, retrieval = await asyncio.gather(extract(), search())
+...
+return await search_with.search(query=redaction.text)
+```
+
+The query is the raw redacted message and nothing else, *by construction* —
+retrieval starts before extraction finishes, so it cannot see this turn's
+slots. On a first turn the message carries the topic and this is invisible.
+On a resumed turn the message is two words, and the topic lives in the state
+the query cannot reach.
+
+Directly evidenced from the run before 42e, where the same message reached the
+fallback: its five retrieved titles were the Qantara branch address, the
+Qantara programme list, the internship page, transport and dorms. The
+thresholds chunk was not among them, on either side of the routing fix.
+
+**Why this is not a small change.** The `gather` is deliberate — retrieval and
+extraction are the two slowest things in the intake phase and §2.5's budget is
+already the tightest gate in the suite. Enriching the query with *this turn's*
+slots serialises them. Three shapes are worth costing before choosing:
+
+- **Held slots and the held node's topic**, both available *before* extraction,
+  so the `gather` survives. Cheapest. Misses the value the customer just named
+  — the query would say "dentistry thresholds Arish" while they asked about
+  Qantara — which may still retrieve the right chunk, since the chunk holds
+  both branches. Fragile in exactly the way that sentence suggests.
+- **Re-retrieve after extraction when the turn resumed a node**, keeping the
+  concurrent search for the common case and paying a second round trip only on
+  resumed turns. Correct, and it costs one retrieval on the turns that need it.
+- **Serialise always.** Simplest to reason about, and it puts the whole
+  extraction latency in front of every retrieval.
+
+The second looks right and none of them should be picked without measuring
+against §2.5.
+
+**Tests first:**
+
+```python
+async def test_a_resumed_turn_retrieves_on_more_than_the_message()
+async def test_a_first_turn_still_retrieves_concurrently()   # the latency path
+async def test_the_query_carries_the_slot_this_turn_named()
+```
+
+**Acceptance:** edu-0018 passes without its expectations being relaxed, and
+`p95_latency_ms` is measured on the same run rather than assumed unchanged.
+
+**And a metric that cannot see this.** `retrieval_recall_at_5` reads 100.0% on
+the run where turn 2 retrieved nothing relevant, because recall is scored per
+*case* against `gold_chunks` and turn 1 retrieved the gold chunk. Third metric
+in three days found structurally unable to see the failure beside it — after
+`hallucinated_figure_rate` and `slot_retention_accuracy`. Recorded in the
+harness spec; a per-turn recall would say it, and changing a denominator
+mid-plan makes every recorded run incomparable under §2.3.
 
 
 ---

@@ -691,10 +691,31 @@ def test_an_unreadable_turn_still_falls_back_even_mid_clarification(script):
     assert decision.node == "fallback"
 
 
-def test_a_slot_the_node_already_held_does_not_resume_it(script):
-    """Repeating a slot answers nothing. `fees` asked for a faculty, got one,
-    and answered; saying the same faculty again is a new turn about it, not a
-    reply to a question nobody is still asking."""
+def test_a_slot_the_node_already_held_resumes_it_too(script):
+    """**Reversed by Task 42e**, and the reversal is wider than the case that
+    forced it, so it is worth being explicit about what changed.
+
+    This asserted `fallback` on the reasoning that "repeating a slot answers
+    nothing" — `fees` asked for a faculty, got one, answered, and hearing the
+    same faculty again is a new turn rather than a reply. The problem is that
+    a repeat and a *replacement* are the same shape, a slot name and a value,
+    and the rule could not tell them apart: it sent `وفي القنطرة؟` to the
+    fallback along with them.
+
+    Routing could be taught the difference by comparing values, and that is
+    deliberately not what happens. Routing would then read slot *values* and
+    not just their names, which is a new coupling for an edge case with no
+    evidence either way — and the behaviour it preserves is the worse half of
+    the trade: an exact repeat used to be answered with "ممكن توضّحلي أكتر",
+    a request to clarify a message the system had understood perfectly.
+
+    **What it costs.** The fallback's clarification counted toward
+    `max_consecutive_clarifications`, so a customer repeating themselves three
+    times escalated to a human. They now get the same answer three times and
+    never escalate. Repetition is a frustration signal and this drops it. It
+    is recorded rather than solved, because the escalation belongs to whatever
+    reads frustration, not to a routing rule that happened to be catching it.
+    """
     answered = script.advance(
         script.start(), turn(intent="fees", slots={"faculty": "dentistry"})
     )
@@ -703,7 +724,8 @@ def test_a_slot_the_node_already_held_does_not_resume_it(script):
     decision = script.advance(
         answered.state, turn(intent=None, slots={"faculty": "dentistry"})
     )
-    assert decision.node == "fallback"
+    assert decision.node == "fees"
+    assert decision.action is Action.answer
 
 
 # ─────────────── a held slot the customer just moved off of ───────────────
@@ -799,3 +821,82 @@ def test_the_narrowing_relation_is_declared_in_the_script_not_in_code():
         "the engine names a vertical's slots, so the relation lives in two "
         "places and the script is no longer the one that decides"
     )
+
+
+# ─────────── a bare value that CHANGES a held slot — Task 42e ───────────
+#
+# Found by edu-0018 on its first run. `الحد الأدنى للقبول في طب الأسنان في
+# العريش بالمعادلة العربية؟` answers 75%; `وفي القنطرة؟` — a branch and nothing
+# else — returned the fallback disambiguation list instead of the Qantara
+# figure. The customer named the other campus and was asked to pick from a menu.
+#
+# `_resumed` defined resumption as filling a slot the node was still WAITING
+# for, so a slot already held could not resume it. Its docstring said
+# "repeating a slot the node already holds answers nothing" — true of a repeat,
+# false of a replacement, and the two are the same shape at the type level.
+#
+# Third appearance of that conflation: the extraction prompt (42b), the merge
+# (42d), and routing.
+
+THRESHOLDS = "admission_thresholds"
+ARISH = {"branch": "arish", "certificate": "arab_equivalent", "faculty": "dentistry"}
+
+
+def resumed_from(node: str, **slots) -> ConversationState:
+    return ConversationState(
+        script_id=SCRIPT,
+        script_version=ScriptEngine.from_config(SCRIPT).version,
+        node=node,
+        slots=dict(slots),
+    )
+
+
+def test_a_bare_value_replacing_a_held_slot_resumes_the_node(script):
+    """edu-0018 turn 2. Every slot the node needs is held; one of them just
+    changed."""
+    decision = script.advance(
+        resumed_from(THRESHOLDS, **ARISH), turn(slots={"branch": "qantara"})
+    )
+    assert decision.node == THRESHOLDS, (
+        "a customer who named the other campus was sent to the fallback"
+    )
+    assert decision.action is Action.answer
+    assert decision.state.slots["branch"] == "qantara"
+    assert decision.state.slots["faculty"] == "dentistry", "the rest is still held"
+
+
+def test_a_bare_value_filling_a_missing_slot_still_resumes(script):
+    """edu-0007 turn 2, which worked before and must keep working — it is the
+    only reason `_resumed` exists."""
+    decision = script.advance(
+        resumed_from(THRESHOLDS), turn(slots={"branch": "arish"})
+    )
+    assert decision.node == THRESHOLDS
+    assert decision.action is Action.clarify, "two slots are still missing"
+
+
+def test_a_bare_value_for_a_slot_this_node_does_not_read_still_falls_back(script):
+    """The `fees` node needs a faculty and knows nothing about branches. A
+    value it cannot use is not this node's business, held or not."""
+    decision = script.advance(
+        resumed_from("fees", faculty="engineering"), turn(slots={"branch": "arish"})
+    )
+    assert decision.node != "fees"
+
+
+def test_a_turn_carrying_an_intent_still_routes_by_intent(script):
+    """What the docstring's topic-change worry is actually handled by. A turn
+    that names a topic goes to that topic even while sitting on a node whose
+    slots it also happens to name."""
+    decision = script.advance(
+        resumed_from(THRESHOLDS, **ARISH),
+        turn(intent="discounts", slots={"branch": "qantara"}),
+    )
+    assert decision.node == "discounts"
+
+
+def test_a_turn_that_names_no_slot_at_all_does_not_resume(script):
+    """Unreadable input must still fall back, or every message the extractor
+    could not parse would silently re-run the last question."""
+    decision = script.advance(resumed_from(THRESHOLDS, **ARISH), turn(slots={}))
+    assert decision.node != THRESHOLDS

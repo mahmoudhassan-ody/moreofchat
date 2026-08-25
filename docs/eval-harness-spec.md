@@ -385,6 +385,49 @@ suite can retain every slot perfectly and still answer the wrong question, and
 this is the metric that says so while the customer is being asked to pick from
 a list.
 
+#### Re-baseline, 2026-08-25 — Task 42e, and what it uncovered
+
+| Suite | Metric | Value |
+|---|---|---|
+| real estate | `overall_accuracy` | 100.0% (100.0–100.0) — 22 cases, no verdict changes |
+| real estate | every commercial gate | 0.0% (0.0–0.0) |
+| education | `overall_accuracy` | 85.2% (83.3–88.9) — spread 5.6, **measurable** |
+| education | `expected_action_accuracy` | **95.2% (95.2–95.2)** — zero spread |
+| education | `forbidden_claim_violations` | 0.0% (0.0–0.0) |
+| education | `hallucinated_figure_rate` | 3.7% (0.0–5.6) |
+| education | `register_accuracy` | 96.8% (90.5–100.0) |
+| education | `retrieval_recall_at_5` | 100.0% (100.0–100.0) |
+| education | `slot_retention_accuracy` | 100.0% (100.0–100.0) |
+| education | `p95_latency_ms` | 6724 ms (5926–7873) — **not measurable**, 1947 ms of spread |
+
+**`expected_action_accuracy` went from 90.5% (85.7–95.2) to 95.2% with zero
+spread across three runs.** That is 42e: a bare value that changes a held slot
+now routes to the node it belongs to instead of the fallback. It is the one
+number here that moved outside the previous spread, and it is the number the
+change was aimed at.
+
+**edu-0018 still fails, and no longer on the action.** It now answers — and
+answers about the wrong thing. See Task 42f.
+
+#### `retrieval_recall_at_5` is 100.0% on a run whose retrieval failed
+
+edu-0018's turn 2 retrieved five Qantara chunks and none of them the
+thresholds. The metric reads 100.0% because recall is scored per *case*
+against `gold_chunks`, and turn 1 retrieved the gold chunk — so a later turn
+that retrieves nothing relevant is invisible behind an earlier turn that did.
+
+This is the third metric in three days found to be structurally unable to see
+the failure beside it, after `hallucinated_figure_rate` (nothing is
+hallucinated when the wrong real figure is quoted) and `slot_retention_accuracy`
+(every slot retained, wrong routing decision made from them). None of the three
+is wrong about what it measures. Each is being read as covering more than it
+does, which is what `errored_rate: 0.0%` looked like before §2.4 separated
+"measured zero" from "not measured".
+
+A per-turn recall would say this. It is not added here because changing a
+metric's denominator mid-plan makes every recorded run incomparable under §2.3,
+and the failure is already visible in the case.
+
 
 #### Where the 8990 ms goes (2026-08-21, run 3 of 3)
 
