@@ -54,11 +54,76 @@ def build_client(
     )
 
 
+#: Vendor error codes that mean "this account is out of budget", read from the
+#: body's own `type`/`code` field. Preferred over the prose below because a
+#: field is a contract and a sentence is copy: OpenAI can reword
+#: `insufficient_quota`'s message tomorrow and this still holds.
+_QUOTA_CODES = frozenset(
+    {
+        "insufficient_quota",       # OpenAI
+        "billing_hard_limit_reached",  # OpenAI, spend cap rather than balance
+        "quota_exceeded",
+    }
+)
+
+#: **String-matching a vendor's prose, and it will need revisiting when either
+#: of them rewords it.** Stated plainly because it is the weak half of this
+#: rule and reads like the strong half.
+#:
+#: It is here because Anthropic gives us nothing better. Captured from a live
+#: exhausted account on 2026-08-25, the body is `400` with
+#: `error.type: "invalid_request_error"` — the *generic* 400 type, identical to
+#: the one a malformed `max_tokens` produces. There is no quota-specific code
+#: to match, so for that vendor the sentence is not a fallback, it is the only
+#: discriminator there is.
+#:
+#: Kept narrow for that reason. Every phrase here is one no malformed request
+#: would contain, and the tests that assert a real 400 still fails hard are the
+#: thing that notices when that stops being true.
+_QUOTA_PHRASES = (
+    "usage limit",       # Anthropic: "You have reached your specified API usage limits."
+    "credit balance",    # Anthropic: "Your credit balance is too low"
+    "exceeded your current quota",
+    "billing",
+)
+
+
+def _is_out_of_budget(response: httpx.Response) -> bool:
+    """Whether this 4xx is a spend cap rather than a bad request.
+
+    A spend cap is exactly what failover exists for and it arrives wearing the
+    status code of our own bug — Anthropic reports it as 400, not 429. Before
+    this, a configured and healthy failover was never reached: the account hit
+    its limit mid-run on 2026-08-25 and every turn failed hard while OpenAI sat
+    idle.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return False
+    # The field first. It is a contract; the sentence is copy.
+    for key in ("code", "type"):
+        value = error.get(key)
+        if isinstance(value, str) and value in _QUOTA_CODES:
+            return True
+    message = error.get("message")
+    if not isinstance(message, str):
+        return False
+    lowered = message.lower()
+    return any(phrase in lowered for phrase in _QUOTA_PHRASES)
+
+
 def raise_for_status(response: httpx.Response, provider: str) -> None:
     if response.status_code < _CLIENT_ERROR:
         return
     detail = _detail(response)
     if response.status_code == _RATE_LIMITED or response.status_code >= _SERVER_ERROR:
+        raise ProviderUnavailable(f"{provider} returned {response.status_code}: {detail}")
+    if _is_out_of_budget(response):
+        # Not our bug, and the one 4xx a second provider can actually answer.
         raise ProviderUnavailable(f"{provider} returned {response.status_code}: {detail}")
     raise ProviderRequestError(f"{provider} returned {response.status_code}: {detail}")
 

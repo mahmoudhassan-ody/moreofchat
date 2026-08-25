@@ -650,3 +650,114 @@ async def test_an_embedding_response_without_usage_reports_zero_not_a_guess():
         model="m", texts=["a"], dimensions=1
     )
     assert embedding.input_tokens == 0
+
+
+# ────────── a spend cap is not a malformed request — 2026-08-25 ──────────
+#
+# The Anthropic account hit its configured usage limit mid-run and the whole
+# system stopped answering. Failover was configured, OpenAI was healthy, and
+# nothing reached it: the vendor reports quota exhaustion as **400**, and a 400
+# is deliberately `ProviderRequestError` so that a malformed body is not sent
+# twice and hidden behind a fallback.
+#
+# That reasoning is right for a malformed body and wrong for this. A spend cap
+# is precisely the condition failover exists for, and it arrives wearing the
+# status code of our own bug.
+#
+# **These bodies are copied from real responses**, which is the only reason
+# they are trustworthy. The Anthropic one was captured from this account on
+# 2026-08-25 while it was exhausted.
+
+#: Verbatim, 2026-08-25, `request_id` removed. Note `type` — Anthropic reports
+#: this with the *generic* 400 type, so for this vendor the prose is the only
+#: discriminator there is.
+ANTHROPIC_EXHAUSTED = {
+    "type": "error",
+    "error": {
+        "type": "invalid_request_error",
+        "message": (
+            "You have reached your specified API usage limits. "
+            "You will regain access on 2026-09-01 at 00:00 UTC."
+        ),
+    },
+}
+
+#: OpenAI's documented shape. **Not captured from a live exhausted account** —
+#: that account is healthy and deliberately not being exhausted to produce a
+#: fixture. It carries a specific `type` and `code`, which is what makes the
+#: code path preferred over the prose one.
+OPENAI_EXHAUSTED = {
+    "error": {
+        "message": (
+            "You exceeded your current quota, please check your plan and "
+            "billing details."
+        ),
+        "type": "insufficient_quota",
+        "param": None,
+        "code": "insufficient_quota",
+    },
+}
+
+
+async def test_anthropics_usage_limit_is_provider_unavailable():
+    """The real body, and the real status. 400, generic type, prose only."""
+    with pytest.raises(ProviderUnavailable):
+        await anthropic(responder(ANTHROPIC_EXHAUSTED, status=400)).complete(
+            model="m", messages=MESSAGES, system=None, cache_blocks=[], max_tokens=16
+        )
+
+
+async def test_openais_insufficient_quota_is_provider_unavailable():
+    """Matched on `code`/`type`, not on the sentence — which is the point of
+    preferring the field: OpenAI can reword this and the classification holds.
+    """
+    with pytest.raises(ProviderUnavailable):
+        await openai(responder(OPENAI_EXHAUSTED, status=400)).complete(
+            model="m", messages=MESSAGES, system=None, cache_blocks=[], max_tokens=16
+        )
+
+
+async def test_the_openai_code_is_what_matches_not_the_message():
+    """Same code, prose replaced with something that matches no phrase. If this
+    fails, the field lookup is not doing the work and the prose is."""
+    reworded = {
+        "error": {
+            "message": "Payment required for this organisation.",
+            "type": "insufficient_quota",
+            "code": "insufficient_quota",
+        }
+    }
+    with pytest.raises(ProviderUnavailable):
+        await openai(responder(reworded, status=400)).complete(
+            model="m", messages=MESSAGES, system=None, cache_blocks=[], max_tokens=16
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": {"type": "invalid_request_error", "message": "max_tokens: must be >= 1"}},
+        {"error": {"type": "invalid_request_error", "message": "model: unknown model"}},
+        {"error": {"message": "messages.0.content: field required"}},
+    ],
+)
+async def test_an_actual_malformed_request_is_still_our_bug(body):
+    """The narrowing must not swallow the case the original rule was written
+    for. A 400 that is genuinely our fault still fails hard, still does not
+    fail over, and still costs one call rather than two."""
+    with pytest.raises(ProviderRequestError) as exc:
+        await anthropic(responder(body, status=400)).complete(
+            model="m", messages=MESSAGES, system=None, cache_blocks=[], max_tokens=16
+        )
+    assert not isinstance(exc.value, ProviderUnavailable)
+
+
+async def test_a_missing_key_is_still_our_bug():
+    """401 is a credential this host does not have. Failing over to a second
+    provider cannot fix it and would hide which key is wrong."""
+    body = {"error": {"type": "authentication_error", "message": "invalid x-api-key"}}
+    with pytest.raises(ProviderRequestError) as exc:
+        await anthropic(responder(body, status=401)).complete(
+            model="m", messages=MESSAGES, system=None, cache_blocks=[], max_tokens=16
+        )
+    assert not isinstance(exc.value, ProviderUnavailable)

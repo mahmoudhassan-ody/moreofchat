@@ -183,12 +183,23 @@ class AllProvidersUnavailable(ProviderUnavailable):
 
 
 class ProviderRequestError(LLMError):
-    """The provider rejected the request: 4xx that is not a rate limit.
+    """The provider rejected the request: 4xx that is not a rate limit and not
+    a spend cap.
 
     Deliberately *not* a `ProviderUnavailable`, so it never triggers failover
     and never gets retried. A 400 is our bug; sending the same malformed body
     to a second provider hides it behind a fallback and doubles the cost of
     every broken call. A 401 is a missing key, which failover cannot fix either.
+
+    **The exception is a spend cap, and it cost a day to find.** Anthropic
+    reports an exhausted usage limit as `400` with the generic
+    `invalid_request_error` type — indistinguishable by status or by type from
+    a malformed `max_tokens`. On 2026-08-25 the account hit its limit mid-run
+    and every turn failed hard with a configured, healthy OpenAI failover
+    sitting idle: the rule above did exactly what it says, to the one 4xx a
+    second provider can actually answer. `moc.llm.http._is_out_of_budget` is
+    the narrowing, and it is string-matching a vendor's prose where that
+    vendor gives us no code to match.
     """
 
 
