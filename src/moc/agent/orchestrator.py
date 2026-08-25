@@ -54,7 +54,7 @@ from moc.agent.extraction import ExtractionFailed
 from moc.agent.figure_audit import FigureAudit, audit_figures
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
 from moc.agent.provenance import Passage, trace_figures
-from moc.agent.replies import Voice, refusal
+from moc.agent.replies import Voice, node_clarification, refusal
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
 from moc.arabic.script import reply_language
@@ -776,7 +776,14 @@ class Orchestrator:
         if key is _REFUSE:
             return refusal(document["replies"], decision.node, voice)
         if key is _CLARIFY:
-            # Named slots first. A node with missing slots knows exactly what
+            # A node that declares its own clarification wins both of the
+            # below, because for the node that declares one they are both
+            # wrong: `greeting` has no missing slot to name, and the options
+            # would be readings of a question nobody asked.
+            scripted = node_clarification(document["replies"], decision.node, voice)
+            if scripted:
+                return scripted
+            # Named slots next. A node with missing slots knows exactly what
             # it needs, and offering a menu instead would replace an
             # answerable question with a browse.
             asked = _ask_for(document, decision, voice) or _offer(document, titles, voice)

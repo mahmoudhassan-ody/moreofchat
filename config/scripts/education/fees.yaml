@@ -227,6 +227,38 @@ nodes:
   # edu-0009's shape: ask which of several meanings, never guess. Reached by
   # any unrecognised intent, so an unknown message is a clarification rather
   # than an exception on the worker.
+  # A greeting, which is not a question and must not be answered like one.
+  # `مساء الخير` was the first message a real person sent this system and it
+  # reached the fallback, whose option list is the retrieved titles — so the
+  # customer was offered three of the corpus's nearest neighbours as readings
+  # of a question they had not asked.
+  #
+  # An intent rather than a keyword list, because that is where every other
+  # value in this system comes from: the extractor is offered exactly the
+  # intents these nodes declare, so a greeting becomes classifiable by the
+  # model that already read the sentence, in whatever language or franco
+  # spelling it arrived in. A word list would need `مساء الخير`, `صباحك فل`,
+  # `السلام عليكم`, `ezayak` and every variant nobody thought of.
+  #
+  # `clarify` rather than `answer`: nothing is retrieved and nothing is
+  # composed. The reply is scripted, from `clarify_by_node` in agent/replies —
+  # a greeting that went to the model would be a fluent sentence with no source
+  # and no reason to be trusted.
+  #
+  # **`describe` is deliberately tight.** The extractor is told to prefer null
+  # over the nearest intent, and a loose description here would pull real
+  # questions that open politely — "أهلاً، المصاريف كام؟" is a fees question
+  # with a greeting on the front, and it must route to fees.
+  greeting:
+    intents: [greeting]
+    describe: >
+      a greeting or salutation and NOTHING else — أهلا، السلام عليكم، صباح
+      الخير، مساء الخير، hi, hello. Not a message that opens with a greeting
+      and then asks something: that is the intent of what it asks.
+    action: clarify
+    register: masri
+    requires_slots: []
+
   fallback:
     action: clarify
     register: masri

@@ -23,6 +23,31 @@
 version: 1
 
 replies:
+  # A node may say its own clarification instead of the generic one. Opt-in and
+  # keyed by node, exactly like `refuse` below and for the same reason: what to
+  # say when a turn cannot be answered is a property of the node, not of the
+  # system.
+  #
+  # **Written because a greeting reached a phone.** `مساء الخير` extracts to
+  # null intent — correctly; it fits no intent and the prompt says null is a
+  # real answer — routes to the fallback, and the fallback offers the retrieved
+  # titles as readings of the question. On a greeting those titles are whatever
+  # sat nearest in embedding space, so the first thing a prospect typed came
+  # back as "did you mean one of these?" over three unrelated office addresses.
+  #
+  # The option list is right for an ambiguous *question* and wrong here,
+  # because a greeting is not ambiguous — it is not a question. A node with an
+  # entry here bypasses both the missing-slot question and the option list; a
+  # node without one is unaffected, which is why every other node has none.
+  clarify_by_node:
+    # Greet back, then say what this can answer. A bare "أهلاً" puts the work
+    # back on someone who has not been told what to ask for, and the option
+    # list puts three of the corpus's neighbours in front of them instead.
+    greeting:
+      masri: "أهلاً بحضرتك! أقدر أساعدك في المصاريف، الحد الأدنى للقبول، الخصومات، وطرق التقديم. محتاج تعرف إيه؟"
+      msa: "أهلاً بك. يمكنني إفادتك بالمصروفات، والحد الأدنى للقبول، والخصومات، وطرق التقديم. كيف يمكنني مساعدتك؟"
+      english: "Hello! I can help with fees, admission thresholds, discounts and how to apply. What would you like to know?"
+
   # The script's node says this turn is refused. Distinct from `clarify`, which
   # asks the customer to say more — here the question was perfectly clear and
   # the answer is that we will not. Distinct from `handoff` too: a colleague

@@ -1075,3 +1075,66 @@
     owner shape: no studio in the place asked about, a studio in a place named
     specifically. f2 is optional because "we have none there" is already a
     complete answer; naming the alternative is the better one.
+
+- id: re-0027
+  vertical: realestate
+  source: synthetic
+  category: multi_turn_slots
+  grounding_mode: inventory
+  inventory_fixture: broker_demo_2026_08_01
+  tenant_fixture: broker_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "السلام عليكم"
+      expected_action: clarify
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "a greeting returned to the customer"
+          required: true
+        - id: f2
+          claim: "what the assistant can help with, in property terms"
+          required: true
+      forbidden_claims:
+        - "tuition, admission thresholds or anything a university answers"
+        - "any unit, price or compound — nothing was asked"
+        - "a request that the customer explain what they meant"
+      expected_slots: {}
+
+    - user: "عايز شقة في مدينتي"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_asof_disclosure: true
+      expected_tool_calls:
+        - name: inventory_lookup
+          args_contain: {compound: "Madinaty", property_type: apartment}
+      expected_facts:
+        - id: f1
+          claim: "an available Madinaty apartment, at the catalogue's price"
+          required: true
+      forbidden_claims:
+        - "a price not present in the catalogue"
+      expected_slots: {compound: "Madinaty", property_type: apartment}
+  gold_chunks: []
+  notes: >
+    The broker half of edu-0019. A property customer opens with a greeting at
+    least as often as a student does, and this vertical's fallback has no
+    retrieved titles to offer — so instead of a menu it produced the generic
+    "ممكن توضّحلي أكتر". Less wrong and still wrong: it asks somebody who said
+    hello to explain themselves.
+
+    **Turn 1's forbidden claims are the reason this case is not just edu-0019
+    with a different tenant.** `clarify_by_node` is keyed by node and both
+    scripts name the node `greeting`, so one shared entry would greet a
+    property customer with tuition and admission thresholds — the same leak
+    the per-node `refuse` entries exist to prevent, discovered the same way.
+    The script carries its own greeting and the agent prefers it.
+
+    **Turn 2 exists so the greeting is not a conversation-ender.** A scripted
+    reply that routes nowhere could leave the state somewhere the next turn
+    cannot recover from, and the question after "hello" is the one the demo is
+    built on. It asserts the ordinary first-turn behaviour still works when a
+    greeting precedes it.

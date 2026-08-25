@@ -639,3 +639,55 @@
     equivalent thresholds only, and asking for the plain Egyptian secondary
     figure is a separate known defect — see edu-0007's judge notes in the
     2026-08-24 baseline.
+
+- id: edu-0019
+  vertical: education
+  source: real_conversation
+  category: ambiguous
+  tenant_fixture: sinai_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "مساء الخير"
+      expected_action: clarify
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "a greeting returned to the customer"
+          required: true
+        - id: f2
+          claim: "what the assistant can be asked about"
+          required: true
+      forbidden_claims:
+        - "a list of options presented as readings of the customer's question"
+        - "any document title offered as something they might have meant"
+        - "any figure at all — nothing was asked"
+        - "a request that the customer explain what they meant"
+      expected_slots: {}
+  gold_chunks: []
+  notes: >
+    **The first message a real person sent this system**, on 2026-08-25, and
+    the first thing a prospect types. It reached the fallback and came back as
+    "تقصد أنهي واحدة فيهم؟" over three unrelated office addresses.
+
+    Extraction was never at fault: `مساء الخير` returns `intent=null, slots={}`
+    with the language read correctly, 5 of 5, which is exactly what the prompt
+    asks for. The fallback then has no missing slot to name, so it offers the
+    *retrieved titles* — and retrieval on a greeting returns whatever sat
+    nearest in embedding space. Those neighbours were presented to a customer
+    as readings of a question they had not asked.
+
+    The option list is right for an ambiguous question and wrong here, which is
+    why this is a new `greeting` node rather than a change to the fallback:
+    edu-0009 asks `المواعيد إيه؟`, which genuinely has several readings, and
+    the titles are the right answer to it. A greeting is not ambiguous. It is
+    not a question.
+
+    Filed under `ambiguous` because that is the closest category the schema
+    has and inventing one for a single case would be worse. The distinction
+    this case actually draws — no-question versus unclear-question — is
+    between it and edu-0009, and reading them together is the point.
+
+    **Why no suite caught it:** every case in both files opens with a question.
+    That is a property of who wrote them, not of who uses the product.

@@ -30,6 +30,7 @@ from moc.llm.router import Router
 from moc.tenancy.context import tenant_session
 
 SCRIPT = "scripts/education/fees"
+_REPLIES_KEY = "agent/replies"
 CHANNEL = "whatsapp"
 
 # One retrieved passage and one grounded answer built from it. 2026 is a year,
@@ -1587,3 +1588,84 @@ async def test_the_decision_is_made_on_the_re_queried_passages(turn_session):
     requery = source.index("resumes(")
     decide = source.index("script.advance(")
     assert requery < decide, "the second retrieval must precede the decision"
+
+
+# ───────────── a greeting is not an ambiguous question ─────────────
+#
+# `مساء الخير` was the first message a real person sent this system, and it is
+# the first thing a prospect types. It hit the fallback and came back as "did
+# you mean one of these?" over three unrelated office addresses.
+#
+# Extraction is not at fault: it returns `intent=None, slots={}` with the
+# language read correctly, which is exactly what the prompt asks for — a
+# message fitting no intent must return null. The engine then routes null to
+# the fallback, `_ask_for` finds no missing slots because the fallback declares
+# none, and `_offer` falls back to the *retrieved titles*. Retrieval on a
+# greeting returns whatever is nearest in embedding space, and those neighbours
+# are offered to the customer as though they were readings of their question.
+#
+# The option list is right for an ambiguous question and wrong here, because a
+# greeting is not ambiguous — it is not a question at all.
+
+
+async def test_a_greeting_is_answered_with_a_greeting_not_a_menu(turn_session):
+    """Titles are deliberately supplied. The bug is not that retrieval returned
+    nothing — it returned five confident, irrelevant neighbours."""
+    orchestrator, *_ = build(
+        intent="greeting",
+        slots={},
+        titles=("مواعيد عمل فرع القنطرة", "المواصلات", "السكن"),
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="مساء الخير", channel=CHANNEL
+    )
+    assert "مواعيد عمل فرع القنطرة" not in result.reply, (
+        "a greeting was answered with a menu of whatever retrieval matched"
+    )
+    assert result.reply.strip(), "and not with silence either"
+
+
+async def test_the_greeting_reply_offers_what_the_bot_can_do(turn_session):
+    """A greeting wants a greeting *and* an offer. "أهلاً" alone puts the work
+    back on the customer, who has not been told what this can answer."""
+    orchestrator, *_ = build(intent="greeting", slots={}, titles=("x", "y", "z"))
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="مساء الخير", channel=CHANNEL
+    )
+    # Named against the script rather than by length: the first version of
+    # this asserted `len(reply) > 20`, which the option list it was written to
+    # rule out also satisfies.
+    scripted = load(_REPLIES_KEY)["replies"]["clarify_by_node"]["greeting"]["masri"]
+    assert result.reply == scripted
+    assert "المصاريف" in result.reply, "greeted, and told what can be asked"
+
+
+async def test_an_ambiguous_question_still_gets_the_option_list(turn_session):
+    """The regression guard, and the reason this is a new node rather than a
+    change to the fallback. edu-0009 asks `المواعيد إيه؟` — a real question
+    with several readings — and the retrieved titles are exactly the right
+    answer to it."""
+    orchestrator, *_ = build(
+        intent=None, slots={}, titles=("مواعيد التقديم", "مواعيد الدراسة", "مواعيد الامتحانات")
+    )
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
+    )
+    assert "مواعيد التقديم" in result.reply, (
+        "the ambiguous-question path lost its options"
+    )
+
+
+async def test_a_node_with_missing_slots_still_names_them(turn_session):
+    """The other regression guard. A per-node clarification must not outrank
+    naming what is actually missing — §19's fix for edu-0007 was that a node
+    knowing which slot it needs should say so, and a generic sentence is what
+    it replaced."""
+    orchestrator, *_ = build(intent="admission_thresholds", slots={}, titles=())
+    result = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="الحد الأدنى كام؟",
+        channel=CHANNEL,
+    )
+    assert result.action is Action.clarify
+    assert result.reply.strip()
+    assert "أهلا" not in result.reply, "a node that knows what it needs said hello"

@@ -30,7 +30,7 @@ from typing import Any
 
 from moc.agent.extraction import ExtractionFailed
 from moc.agent.provenance import Computation, Row, trace_figures
-from moc.agent.replies import Voice, refusal
+from moc.agent.replies import Voice, node_clarification, refusal
 from moc.agent.state import Action, ConversationState, Register, TurnInput
 from moc.config_store import load
 from moc.retrieval.inventory import UnitQuery
@@ -404,11 +404,14 @@ class InventoryAgent:
         one string the reply needs. None for a broker — `project` is NULL and
         there is nothing to be outside of.
         """
-        project = await self._repository.project()
-        if project is None:
-            return None
+        # The message first, the tenant row second. Reversed, this read the
+        # tenant on every turn to answer a question most turns do not ask —
+        # and a greeting has no repository to read at all.
         named = said.get("compound")
         if named is None:
+            return None
+        project = await self._repository.project()
+        if project is None:
             return None
         # `أو` means both, so a compound slot may hold a list. One value
         # outside the project is enough; the customer named it either way.
@@ -835,6 +838,17 @@ def _non_answer(decision: Any, voice: Voice) -> str:
     replies = load(_REPLIES)["replies"]
     if decision.action is Action.refuse:
         return refusal(replies, decision.node, voice)
+    if decision.action is Action.clarify:
+        # This script's own entry first, then the shared one. A broker's first
+        # contact is a greeting at least as often as a university's, and the
+        # node is named `greeting` in both scripts — so without the vertical's
+        # own wording, somebody asking about property is offered tuition and
+        # admission thresholds.
+        scripted = node_clarification(
+            load(_SCRIPT)["replies"], decision.node, voice
+        ) or node_clarification(replies, decision.node, voice)
+        if scripted:
+            return scripted
     key = "handoff" if decision.action is Action.handoff else "clarify"
     return voice.say(replies[key])
 

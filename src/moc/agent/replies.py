@@ -73,6 +73,30 @@ def scripted(entry: dict[str, Any], register: Register, *, lang: str | None) -> 
 _DEFAULT = "default"
 
 
+def node_clarification(
+    replies: dict[str, Any], node: str | None, voice: Voice
+) -> str | None:
+    """What this node says when it cannot answer, or None to use the general
+    machinery.
+
+    Opt-in, and almost every node opts out. A node that declares nothing here
+    keeps the behaviour that was already right: name the slot it is missing if
+    it knows one, otherwise offer the meanings the question might have had.
+
+    The one node that declares something is `greeting`, and the reason is that
+    both of those are wrong for it. It has no missing slot, and the option
+    list is a reading of a question that was never asked — on `مساء الخير` the
+    options are whatever the corpus happened to sit nearest to, which is how a
+    greeting came back as three office addresses.
+
+    Returns None rather than a default: this is an override, and a node with no
+    entry must not be given one.
+    """
+    entries = replies.get("clarify_by_node") or {}
+    entry = entries.get(node)
+    return voice.say(entry) if entry else None
+
+
 def refusal(replies: dict[str, Any], node: str | None, voice: Voice) -> str:
     """The refusal this node offers instead, not the one another node offers.
 
@@ -117,4 +141,4 @@ class Voice:
         return scripted(entry, self.register, lang=self.lang)
 
 
-__all__ = ["Voice", "refusal", "resolve", "scripted"]
+__all__ = ["Voice", "node_clarification", "refusal", "resolve", "scripted"]

@@ -417,3 +417,61 @@ def test_the_financing_node_names_no_bank_and_no_rate():
     gloss = node["describe"]
     for word in ("%", "bank", "rate"):
         assert word not in gloss.lower() or word == "bank", gloss
+
+
+# ───────── a greeting on the broker's side too — same message, same fix ─────────
+
+
+def test_a_greeting_routes_to_the_greeting_node_not_the_fallback():
+    """A broker's first contact is a greeting at least as often as a
+    university's. The real-estate fallback does not offer retrieved titles —
+    there are none, inventory answers come from rows — so this one produced
+    the generic "ممكن توضّحلي أكتر" instead of a menu. Less wrong and still
+    wrong: it asks a customer who said hello to explain themselves."""
+    from moc.agent.script_engine import ScriptEngine
+    from moc.agent.state import Action, TurnInput
+
+    engine = ScriptEngine.from_config("scripts/realestate/search")
+    decision = engine.advance(engine.start(), TurnInput(intent="greeting", slots={}))
+    assert decision.node == "greeting"
+    assert decision.action is Action.clarify
+
+
+def test_the_broker_greeting_offers_property_help_not_university_help():
+    """`clarify_by_node` is keyed by node and both scripts name the node
+    `greeting`, so a single shared entry would greet a property customer with
+    tuition and admission thresholds. This script carries its own, and the
+    agent prefers it — the same reason `refuse` entries are per node rather
+    than shared, learned the same way (edu-0017 was told about payment plans).
+    """
+    from moc.config_store import load
+
+    block = load("scripts/realestate/search")["replies"]["clarify_by_node"]
+    entry = block["greeting"]["masri"]
+    assert "وحدة" in entry or "الأسعار" in entry, "the broker's greeting is not about property"
+    shared = load("agent/replies")["replies"]["clarify_by_node"]["greeting"]["masri"]
+    assert entry != shared, "the vertical override is the same string as the default"
+    assert "المصاريف" not in entry, "a property customer offered tuition"
+
+
+async def test_the_broker_greeting_is_what_a_greeting_turn_actually_returns():
+    """Through the agent, not the config. The override is two lookups deep and
+    a test reading only the YAML would pass with the agent still preferring the
+    shared entry — the same seam-versus-unit gap that let the Telegram
+    indicator and the timings column ship untested."""
+    from moc.agent.script_engine import ScriptEngine
+    from moc.agent.state import Action, TurnInput
+    from moc.config_store import load
+    from moc.verticals.realestate.agent import InventoryAgent
+
+    class Greeting:
+        async def extract(self, *, text, state):
+            return TurnInput(intent="greeting", slots={})
+
+    engine = ScriptEngine.from_config("scripts/realestate/search")
+    agent = InventoryAgent(repository=None, engine=engine, extractor=Greeting())
+    turn = await agent.handle(state=engine.start(), text="مساء الخير")
+
+    assert turn.action is Action.clarify
+    scripted = load("scripts/realestate/search")["replies"]["clarify_by_node"]
+    assert turn.reply == scripted["greeting"]["masri"]

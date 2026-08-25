@@ -244,6 +244,38 @@ nodes:
     action: handoff
     register: masri
 
+  # A greeting, which is not a question and must not be answered like one.
+  # `مساء الخير` was the first message a real person sent this system and it
+  # reached the fallback, whose option list is the retrieved titles — so the
+  # customer was offered three of the corpus's nearest neighbours as readings
+  # of a question they had not asked.
+  #
+  # An intent rather than a keyword list, because that is where every other
+  # value in this system comes from: the extractor is offered exactly the
+  # intents these nodes declare, so a greeting becomes classifiable by the
+  # model that already read the sentence, in whatever language or franco
+  # spelling it arrived in. A word list would need `مساء الخير`, `صباحك فل`,
+  # `السلام عليكم`, `ezayak` and every variant nobody thought of.
+  #
+  # `clarify` rather than `answer`: nothing is retrieved and nothing is
+  # composed. The reply is scripted, from `clarify_by_node` in agent/replies —
+  # a greeting that went to the model would be a fluent sentence with no source
+  # and no reason to be trusted.
+  #
+  # **`describe` is deliberately tight.** The extractor is told to prefer null
+  # over the nearest intent, and a loose description here would pull real
+  # questions that open politely — "أهلاً، المصاريف كام؟" is a fees question
+  # with a greeting on the front, and it must route to fees.
+  greeting:
+    intents: [greeting]
+    describe: >
+      a greeting or salutation and NOTHING else — أهلا، السلام عليكم، صباح
+      الخير، مساء الخير، hi, hello. Not a message that opens with a greeting
+      and then asks something: that is the intent of what it asks.
+    action: clarify
+    register: masri
+    requires_slots: []
+
   fallback:
     action: clarify
     register: masri
@@ -251,6 +283,17 @@ nodes:
 # Customer-facing wording for the outcomes the connector produces. No figure
 # appears here — prices come from a row, never from a template.
 replies:
+  # This vertical's greeting, overriding the shared one in agent/replies. The
+  # node is named `greeting` in both scripts, so a single shared entry would
+  # offer tuition and admission thresholds to somebody asking about property —
+  # the same class of leak the per-node `refuse` entries exist to prevent, and
+  # the reason those are keyed by node rather than shared.
+  clarify_by_node:
+    greeting:
+      masri: "أهلاً بحضرتك! أقدر أساعدك تلاقي وحدة، وأقولك الأسعار وخطط التقسيط والتسليم. بتدوّر على إيه؟"
+      msa: "أهلاً بك. يمكنني مساعدتك في إيجاد وحدة، وإفادتك بالأسعار وخطط السداد ومواعيد التسليم. عن ماذا تبحث؟"
+      english: "Hello! I can help you find a unit and tell you prices, payment plans and handover dates. What are you looking for?"
+
   # Task 42c. A project-scoped developer asked about a compound they do not
   # sell. Names their own project and nothing else: no unit, no price, and no
   # alternative — the alternative *is* the leak. Not a handoff, because a
