@@ -92,7 +92,13 @@ async def live_runner(engine, app_engine, tenant_tables):
         },
     )
 
+    # The real-estate suite is not judged, so it has no MOC_GRADE switch — but
+    # it is still a baseline, and a baseline attributed to a model that never
+    # ran is worse than none because it is quotable. Same check, unconditional.
+    from moc.evals.headroom import check_primaries
     from moc.verticals.realestate.agent import InventoryAgent
+
+    await check_primaries(router=router, routing=ROUTING)
 
     async with tenant_session(app_engine, tenant_id) as session:
         repository = InventoryRepository(session=session)

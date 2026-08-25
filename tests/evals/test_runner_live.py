@@ -228,6 +228,9 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         "openai": OpenAIDirect(api_key=key("MOC_OPENAI_API_KEY"), http=ROUTING["http"]),
     }
     router = Router(config=_composition_routing(), providers=providers)
+    # Before a single case runs, and only when grading. Two completions of four
+    # tokens each against a suite that costs dollars.
+    await _refuse_unless_the_primaries_are_serving(router)
     retriever = FusionRetriever(
         lexical=lexical,
         dense=dense,
@@ -519,6 +522,25 @@ GRADE = "MOC_GRADE"
 
 def _grading() -> bool:
     return os.environ.get(GRADE, "") not in ("", "0", "false", "no")
+
+
+async def _refuse_unless_the_primaries_are_serving(router) -> None:
+    """A graded run must measure the models it names, or not run.
+
+    Before 2026-08-25 an exhausted provider made this loud: the run errored
+    every case. Then quota exhaustion became `ProviderUnavailable` — correct,
+    a spend cap is what failover is for — and the same run now completes
+    quietly on OpenAI and reports the number under Anthropic's name.
+
+    Only for graded runs. The cheap stage-1 loop is a developer iterating, and
+    a substituted model there is visible in the report's `Composed by` line
+    without costing two extra provider calls on every invocation.
+    """
+    from moc.evals.headroom import check_primaries
+
+    if not _grading():
+        return
+    await check_primaries(router=router, routing=ROUTING)
 
 
 def _composition_routing() -> dict:
