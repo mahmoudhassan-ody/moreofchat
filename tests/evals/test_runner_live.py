@@ -34,8 +34,11 @@ from moc.evals.runner import (
     CaseRunner,
     composition_models,
     detail_run,
+    gate_split,
     metrics,
     phase_breakdown,
+    shows_reply,
+    shows_verdict,
     summarize,
 )
 from moc.llm.anthropic_direct import AnthropicDirect
@@ -343,18 +346,17 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         # figure lifted from a passage and relabelled. How often that fires is
         # what decides whether a runtime claim-citation pass is worth its
         # latency.
-        for name in ("hallucinated_figure", "figure_labelling"):
-            fed = [
-                c
-                for o in detail
-                for t in o.turns
-                for c in t.checks
-                if c.name == name and not c.skipped
-            ]
-            failed = [c for c in fed if not c.passed]
-            print(
-                f"  {name:20} {len(failed)}/{len(fed)} failed, run {shown} of {times}"
-            )
+        #
+        # Every run, not the detail run. `hallucinated_figure_rate` read 3.5%
+        # (0.0-5.6, n=3) against a zero-tolerance gate while this block said
+        # `0/9 failed, run 3 of 3` — accurate, and about the one run that did
+        # not fire it. The failure was in run 1 or 2, its producer was never
+        # named, and nobody could chase it.
+        for name, per_run in gate_split(
+            runs, names=("hallucinated_figure", "figure_labelling")
+        ).items():
+            for index, (failed, fed) in enumerate(per_run, start=1):
+                print(f"  {name:20} {failed}/{fed} failed, run {index} of {times}")
         print(f"{'-' * 68}")
         # Compositions the RUNTIME gate discarded (§19.3). These never reached
         # a customer, so they cannot count against `hallucinated_figure_rate`
@@ -429,13 +431,14 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
             failed = [c.name for t in outcome.turns for c in t.checks if not c.passed]
             note = outcome.error[:60] if outcome.errored else (",".join(failed) or "-")
             print(f"  {mark}  {outcome.case_id:12} {outcome.category:22} {note}")
-            # The reply, for any check that failed. A check name says which
-            # gate moved; only the text says why, and reconstructing it meant
-            # a second full run every time.
+            # The reply, for any check that failed — and for every turn
+            # when MOC_SHOW_PASSES is set. A check name says which gate moved;
+            # only the text says why, and reconstructing it meant a second full
+            # run every time. A case written to prove a fix needs the same
+            # text when the fix holds, which is the case it never printed.
             for turn in outcome.turns:
                 misses = [c for c in turn.checks if not c.passed and not c.skipped]
-                judged = turn.verdict is not None and not turn.verdict.meets_rubric
-                if not misses and not judged:
+                if not shows_reply(turn, show_passes=_show_passes()):
                     continue
                 print(f"        t{turn.turn_index} {turn.action}: {turn.reply[:220]!r}")
                 if turn.action == "clarify":
@@ -449,7 +452,7 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
                 # The judge's own words. A case that passes every
                 # deterministic check and fails here failed on answer
                 # quality, and "the judge said no" is not a finding.
-                if judged:
+                if shows_verdict(turn, show_passes=_show_passes()):
                     v = turn.verdict
                     print(f"          judge scores: {v.scores()}")
                     if v.forbidden_violated:
@@ -544,6 +547,21 @@ GRADE = "MOC_GRADE"
 
 def _grading() -> bool:
     return os.environ.get(GRADE, "") not in ("", "0", "false", "no")
+
+
+#: Print the reply and the judge's verdict for cases that PASSED too, not
+#: only for the ones that failed. Off by default: nineteen passing cases with
+#: replies and verdicts is a wall of Arabic that buries the failures.
+#:
+#: On for any run whose purpose is to show that something works. edu-0019
+#: exists to prove a greeting no longer returns three office addresses, and
+#: the graded baseline reported it as the word `PASS` — the case emits its
+#: evidence when the fix breaks and nothing when it holds.
+SHOW_PASSES = "MOC_SHOW_PASSES"
+
+
+def _show_passes() -> bool:
+    return os.environ.get(SHOW_PASSES, "") not in ("", "0", "false", "no")
 
 
 #: Set when a run is knowingly served by something other than its primaries —

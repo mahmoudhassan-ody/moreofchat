@@ -681,6 +681,78 @@ def detail_run(runs: Sequence[Sequence[CaseOutcome]]) -> tuple[int, Sequence[Cas
     return len(runs), runs[-1]
 
 
+def gate_split(
+    runs: Sequence[Sequence[CaseOutcome]], *, names: Sequence[str]
+) -> dict[str, list[tuple[int, int]]]:
+    """Per gate, `(failed, fed)` for every run — not only the detail run.
+
+    `hallucinated_figure_rate` has two producers. The deterministic one sees
+    every turn that stated a figure; the judge sees the subset that also
+    cleared stage 1, and only it can catch a figure lifted from a passage and
+    relabelled. Which of them fired decides whether a runtime claim-citation
+    pass is worth its latency, so the split has always been printed.
+
+    It was printed for one run. On 2026-08-25 the gate read 3.5% (0.0-5.6,
+    n=3) against a zero tolerance while the split beneath it said `0/9 failed,
+    run 3 of 3` — true, and about the one run that did not fire it. A
+    zero-tolerance gate whose failure cannot be attributed to a run is a gate
+    nobody can act on.
+
+    A gate no run fed is `(0, 0)` rather than absent, for the same reason §2.4
+    distinguishes unmeasured from zero everywhere else.
+    """
+    return {
+        name: [
+            _fed_and_failed(outcomes, name)
+            for outcomes in runs
+        ]
+        for name in names
+    }
+
+
+def _fed_and_failed(outcomes: Sequence[CaseOutcome], name: str) -> tuple[int, int]:
+    fed = [
+        check
+        for outcome in outcomes
+        for turn in outcome.turns
+        for check in turn.checks
+        if check.name == name and not check.skipped
+    ]
+    return (sum(1 for check in fed if not check.passed), len(fed))
+
+
+def shows_reply(turn: TurnOutcome, *, show_passes: bool = False) -> bool:
+    """Whether the report should print this turn's reply.
+
+    A check name says which gate moved; only the text says why. That is why a
+    failing turn has always printed its reply — and why a passing one printing
+    nothing is the wrong default for a case written to *prove* something.
+    edu-0019 exists to show that a greeting no longer returns three office
+    addresses, and a graded run reported it as the word `PASS`: the case emits
+    its evidence when the fix breaks and nothing when it holds.
+
+    Still off by default. Nineteen passing cases with replies and verdicts is a
+    wall of Arabic nobody reads, and the failures would be buried in it.
+    """
+    if show_passes:
+        return True
+    return any(not check.passed and not check.skipped for check in turn.checks) or (
+        turn.verdict is not None and not turn.verdict.meets_rubric
+    )
+
+
+def shows_verdict(turn: TurnOutcome, *, show_passes: bool = False) -> bool:
+    """Whether the report should print the judge's scores and reasoning.
+
+    Never for a turn no judge saw — stage-1 runs are most runs, and an empty
+    verdict block on every turn of one is noise that trains people to skip the
+    section where the real ones live.
+    """
+    if turn.verdict is None:
+        return False
+    return show_passes or shows_reply(turn)
+
+
 def composition_models(outcomes: Sequence[TurnOutcome]) -> Counter[str]:
     """How many turns each model composed, over a whole run.
 

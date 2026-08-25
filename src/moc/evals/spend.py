@@ -89,21 +89,64 @@ def summarise(rows: list[LedgerRow]) -> Spend:
     return Spend(total_usd=total, calls=calls, by_model=dict(by_model))
 
 
-def not_primary(spend: Spend, *, routing: dict[str, Any]) -> list[str]:
-    """Models this run used that no task names as its primary.
+def not_primary(
+    spend: Spend, *, routing: dict[str, Any], graded: bool = False
+) -> list[str]:
+    """Models this run used that it was not supposed to use.
 
     Derived from what actually ran rather than from whether a check fired.
     The first version took this from the headroom check, which only runs when
     grading — so a stage-1 run on failover recorded nothing while `by_model`
     plainly showed OpenAI, and a durable row that needs a second column read to
     be understood is one that gets quoted without it.
+
+    **The judge is not a substitution, and `graded` is what says so.** §5.2
+    forbids a provider from grading its own output, so `Judge.grade` excludes
+    whichever provider composed — with composition on Anthropic the judge is on
+    `eval_grading`'s failover for every turn of every graded run, and its
+    primary grades nothing. Comparing against the primaries alone flagged the
+    one correct graded baseline with "ran on gpt-5.6-sol, which no task names
+    as primary": true of the table, false about the run, and the warning tells
+    the next reader not to quote the only number worth quoting.
+
+    On an *ungraded* run the same model can only be composition on failover,
+    which is a real substitution — hence the flag rather than a blanket
+    exemption. On a graded run composition-on-failover is caught earlier by
+    `check_primaries` and recorded in `substituted` by the caller, so nothing
+    is lost by exempting the one model §5.2 requires.
     """
-    primaries = {
+    allowed = {
         spec["primary"]["model"]
         for spec in routing["tasks"].values()
         if spec.get("primary")
     }
-    return sorted(model for model in spend.by_model if model not in primaries)
+    if graded:
+        judge = _mandated_judge(routing)
+        if judge is not None:
+            allowed.add(judge)
+    return sorted(model for model in spend.by_model if model not in allowed)
+
+
+def _mandated_judge(routing: dict[str, Any]) -> str | None:
+    """The model §5.2 leaves standing for `eval_grading`.
+
+    The first `eval_grading` candidate whose provider did not compose. Read
+    from `answer_composition`'s configured primary rather than from what
+    answered, for the same reason `check_primaries` does: they differ only on a
+    run whose composition was itself substituted, and that is recorded
+    separately.
+    """
+    tasks = routing["tasks"]
+    grading = tasks.get("eval_grading")
+    composition = tasks.get("answer_composition")
+    if not grading or not composition or not composition.get("primary"):
+        return None
+    composer = composition["primary"]["provider"]
+    candidates = [grading["primary"]]
+    if grading.get("failover"):
+        candidates.append(grading["failover"])
+    standing = [c for c in candidates if c["provider"] != composer]
+    return standing[0]["model"] if standing else None
 
 
 async def collect(session: Any) -> Spend:
@@ -155,7 +198,7 @@ async def record(
 
     # Derived here rather than taken on trust: the caller may not have run a
     # headroom check at all, and the row still has to say what answered.
-    used = not_primary(spend, routing=load("llm/routing"))
+    used = not_primary(spend, routing=load("llm/routing"), graded=graded)
     if used and not substituted:
         substituted = [f"ran on {model}, which no task names as primary" for model in used]
 

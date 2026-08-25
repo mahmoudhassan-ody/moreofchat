@@ -30,6 +30,7 @@ from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import ConversationState, TurnInput
 from moc.config_store import load
 from moc.evals import runner as runner_module
+from moc.evals.deterministic import CheckResult
 from moc.evals.judge import JudgeVerdict
 from moc.evals.load import load_cases
 from moc.evals.runner import CaseRunner, metrics, recall_at_k
@@ -1204,3 +1205,196 @@ async def test_an_ungraded_run_still_meters_the_turn_but_not_the_judge(session_t
     ]
     assert models, "the turn itself still calls providers"
     assert "judge-model" not in models
+
+
+# ───────────── the report's blind spots, both of them per-run ─────────────
+
+
+def test_the_gate_split_covers_every_run_not_just_the_detail_run():
+    """`hallucinated_figure_rate` read 3.5% (0.0-5.6, n=3) against a
+    zero-tolerance gate while the split beneath it said `0/9 failed, run 3 of
+    3`. Run 3 was clean; the failure was in run 1 or 2, and the report showed
+    neither — so a gate that must read zero fired and nothing said which of its
+    two producers fired it. A number nobody can attribute to a run is a number
+    nobody can chase.
+    """
+    from moc.evals.runner import CaseOutcome, TurnOutcome, gate_split
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+
+    def run(*passed: bool) -> list[CaseOutcome]:
+        return [
+            CaseOutcome(
+                case_id="a",
+                vertical="education",
+                category="c",
+                turns=(
+                    TurnOutcome(
+                        turn_index=0,
+                        reply="r",
+                        action="answer",
+                        state=state,
+                        checks=tuple(
+                            CheckResult(
+                                name="hallucinated_figure",
+                                metric="hallucinated_figure_rate",
+                                passed=ok,
+                            )
+                            for ok in passed
+                        ),
+                    ),
+                ),
+            )
+        ]
+
+    rows = gate_split(
+        [run(False, True), run(True, True), run(True, True)],
+        names=("hallucinated_figure",),
+    )
+    assert rows["hallucinated_figure"] == [(1, 2), (0, 2), (0, 2)], (
+        "one (failed, fed) pair per run, in run order — the failing run is run 1"
+    )
+
+
+def test_a_gate_no_run_fed_still_appears():
+    """Absent and zero are different, and §2.4 says so everywhere else."""
+    from moc.evals.runner import CaseOutcome, TurnOutcome, gate_split
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    empty = [
+        CaseOutcome(
+            case_id="a",
+            vertical="education",
+            category="c",
+            turns=(TurnOutcome(turn_index=0, reply="r", action="answer", state=state),),
+        )
+    ]
+    rows = gate_split([empty], names=("figure_labelling",))
+    assert rows["figure_labelling"] == [(0, 0)]
+
+
+def test_a_skipped_check_is_not_fed_to_the_gate():
+    from moc.evals.runner import CaseOutcome, TurnOutcome, gate_split
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    outcomes = [
+        CaseOutcome(
+            case_id="a",
+            vertical="education",
+            category="c",
+            turns=(
+                TurnOutcome(
+                    turn_index=0,
+                    reply="r",
+                    action="answer",
+                    state=state,
+                    checks=(
+                        CheckResult(
+                            name="hallucinated_figure",
+                            metric="hallucinated_figure_rate",
+                            passed=False,
+                            skipped=True,
+                        ),
+                    ),
+                ),
+            ),
+        )
+    ]
+    assert gate_split(outcomes and [outcomes], names=("hallucinated_figure",)) == {
+        "hallucinated_figure": [(0, 0)]
+    }
+
+
+def test_a_passing_turn_shows_its_evidence_only_when_asked():
+    """edu-0019 exists to prove the greeting fix, and a graded run reported it
+    as the single word `PASS`. The reply and the judge's verdict print only for
+    a turn that failed — so the case emits its evidence when the fix breaks and
+    nothing when it works, which is backwards for a regression case.
+    """
+    from moc.evals.runner import TurnOutcome, shows_reply, shows_verdict
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    clean = TurnOutcome(
+        turn_index=0,
+        reply="مساء النور",
+        action="clarify",
+        state=state,
+        checks=(CheckResult(name="action", metric="expected_action_accuracy", passed=True),),
+        verdict=_verdict(),
+    )
+
+    assert not shows_reply(clean), "quiet by default — 19 passing cases is a wall of text"
+    assert not shows_verdict(clean)
+    assert shows_reply(clean, show_passes=True)
+    assert shows_verdict(clean, show_passes=True)
+
+
+def test_a_failing_turn_shows_its_evidence_either_way():
+    from moc.evals.runner import TurnOutcome, shows_reply, shows_verdict
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    missed = TurnOutcome(
+        turn_index=0,
+        reply="r",
+        action="answer",
+        state=state,
+        checks=(CheckResult(name="action", metric="expected_action_accuracy", passed=False),),
+        verdict=_verdict(meets_rubric=False),
+    )
+    assert shows_reply(missed) and shows_verdict(missed)
+    assert shows_reply(missed, show_passes=True) and shows_verdict(missed, show_passes=True)
+
+
+def test_a_turn_the_judge_never_saw_has_no_verdict_to_show():
+    """Stage-1 runs are most runs. `show_passes` must not print an empty
+    verdict block for every turn of them."""
+    from moc.evals.runner import TurnOutcome, shows_verdict
+
+    state = ScriptEngine.from_config(SCRIPT).start()
+    ungraded = TurnOutcome(turn_index=0, reply="r", action="answer", state=state)
+    assert not shows_verdict(ungraded, show_passes=True)
+
+
+def test_the_live_report_splits_the_gate_over_every_run():
+    """The seam, not the function. `gate_split` is right in isolation and the
+    original bug was in the wiring: the block read `detail`, one run, while the
+    metric above it aggregated three. A unit test of the helper would have
+    passed on the broken report — the same shape as the three seam-versus-unit
+    gaps this project has already paid for.
+
+    Asserted against the source rather than a run: this block only executes
+    under `-m live`, which costs a dollar and cannot be a gate.
+    """
+    import ast
+
+    source = Path(__file__).parent / "test_runner_live.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "gate_split"
+    ]
+    assert len(calls) == 1, "one split, in the report"
+    first = calls[0].args[0]
+    assert isinstance(first, ast.Name) and first.id == "runs", (
+        "the split must be computed over every run. `detail` is one run, and "
+        "reading it is how a zero-tolerance gate reported 0/9 for the only run "
+        "that did not fire it"
+    )
+
+
+def test_the_live_report_asks_before_hiding_a_passing_case():
+    """`shows_reply` and `shows_verdict` exist to be called from the report.
+    Left unwired they are two green tests and an unchanged wall of `PASS`."""
+    import ast
+
+    source = Path(__file__).parent / "test_runner_live.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert {"shows_reply", "shows_verdict"} <= called

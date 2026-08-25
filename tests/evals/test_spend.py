@@ -93,3 +93,67 @@ def test_a_run_entirely_on_primaries_names_nothing():
     }
     spend = summarise([("claude-sonnet-5", "anthropic", 10, 1, 0, 0, 0.1)])
     assert not_primary(spend, routing=routing) == []
+
+
+# ───────────── §5.2's judge is not a substitution ─────────────
+#
+# `eval_grading` routes to Opus first and never reaches it: §5.2 excludes
+# whichever provider composed, so with composition on Anthropic every judge
+# call in every graded run lands on `gpt-5.6-sol`. Comparing what ran against
+# the set of *primaries* therefore flagged the one correct graded baseline —
+# eval_runs f9b1d26b, 2026-08-25 — with "ran on gpt-5.6-sol, which no task
+# names as primary". True of the primaries table, false about the run, and the
+# warning tells the next reader not to quote the only number worth quoting.
+#
+# The same conflation as `check_primaries` had, in a second place. That one was
+# green about a model the run would not call; this one is red about the model
+# the run is required to call.
+
+JUDGED = {
+    "tasks": {
+        "answer_composition": {
+            "primary": {"provider": "anthropic", "model": "claude-sonnet-5"},
+            "failover": {"provider": "openai", "model": "gpt-5.6-sol"},
+        },
+        "eval_grading": {
+            "primary": {"provider": "anthropic", "model": "claude-opus-5"},
+            "failover": {"provider": "openai", "model": "gpt-5.6-sol"},
+        },
+    }
+}
+
+
+def test_the_judge_5_2_forces_is_not_flagged_as_a_substitution():
+    from moc.evals.spend import not_primary
+
+    spend = summarise(
+        [
+            ("claude-sonnet-5", "anthropic", 10, 1, 0, 0, 0.18),
+            ("gpt-5.6-sol", "openai", 10, 1, 0, 0, 0.61),
+        ]
+    )
+    assert not_primary(spend, routing=JUDGED, graded=True) == []
+
+
+def test_the_same_model_on_an_ungraded_run_still_is():
+    """No judge ran, so `gpt-5.6-sol` can only be composition on failover —
+    which is exactly what the first recorded run was, and it was right to say
+    so. The exemption is the judge's, not the model's."""
+    from moc.evals.spend import not_primary
+
+    spend = summarise([("gpt-5.6-sol", "openai", 10, 1, 0, 0, 0.16)])
+    assert not_primary(spend, routing=JUDGED, graded=False) == ["gpt-5.6-sol"]
+
+
+def test_a_graded_run_still_names_a_model_that_is_neither_primary_nor_judge():
+    """The exemption is one model wide. Extraction on `gpt-5.6-luna` is a
+    substituted baseline whether or not the judge was also running."""
+    from moc.evals.spend import not_primary
+
+    spend = summarise(
+        [
+            ("gpt-5.6-sol", "openai", 10, 1, 0, 0, 0.61),
+            ("gpt-5.6-luna", "openai", 10, 1, 0, 0, 0.02),
+        ]
+    )
+    assert not_primary(spend, routing=JUDGED, graded=True) == ["gpt-5.6-luna"]
