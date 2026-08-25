@@ -99,16 +99,36 @@ never fires, with no error anywhere on this side.
 A    moc.example.com    -> the VPS address
 ```
 
-Set `MOC_DOMAIN` and `MOC_TLS_EMAIL`, bring Caddy up, and confirm the
-certificate before going near a vendor console:
+**`MOC_DOMAIN` defaults to `localhost`, and that default does not fail.**
+`compose.yaml` sets `${MOC_DOMAIN:-localhost}` so a laptop works out of the
+box, and Caddy then issues its *own* certificate from its internal CA — which
+is a working HTTPS endpoint on the host, renewed every twelve hours, that no
+vendor will ever accept. Driven on 2026-08-25: the logs read
+`certificate renewed successfully` with `"issuer":"local"` for 26 hours while
+the system was, from the outside, unreachable. Grep the issuer, not the word
+"certificate".
+
+Set `MOC_DOMAIN` in `.env` — the shell's environment is not enough, compose
+reads the file — bring Caddy up, and confirm before going near a vendor:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' https://$MOC_DOMAIN/webhooks/twilio/whatsapp
+docker compose up -d caddy
+docker compose logs caddy | grep -E 'certificate obtained|issuer'
+curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' -X POST https://$MOC_DOMAIN/webhooks/twilio/whatsapp -d 'To=x'
 ```
 
-`403` is the right answer here. It means the request arrived, TLS verified, and
-the signature check refused an unsigned POST — which is three separate things
-working. A `000`, a timeout or a certificate error is DNS or Caddy, not us.
+Look for `"issuer":"acme-v02.api.letsencrypt.org-directory"`. Caddy solves
+`tls-alpn-01` over 443 when 80 is also open, so both ports must reach the host.
+
+`403 0` is the right answer to the curl. Three separate things working: the
+request arrived, TLS verified against the public root store (`0`), and the
+signature check refused an unsigned POST. A `000`, a timeout or a non-zero
+`ssl_verify_result` is DNS or Caddy, not us.
+
+**The method matters.** These routes are POST-only, so a GET returns `405`
+whatever else is true — it proves TLS and routing but says nothing about the
+signature check. An earlier version of this document used a GET and called
+`403` the expected answer; it is not, and `405` would have read as a fault.
 
 ### 3.2 Connect the number
 
