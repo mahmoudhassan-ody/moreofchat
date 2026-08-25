@@ -128,6 +128,7 @@ class Router:
         system: str | None = None,
         cache_blocks: Sequence[str] = (),
         exclude_provider: str | None = None,
+        max_tokens: int | None = None,
     ) -> Completion:
         """Run `task` against its primary, falling back to its failover.
 
@@ -156,7 +157,13 @@ class Router:
                     f"{task} has no candidate outside provider {exclude_provider!r}"
                 )
 
-        max_tokens = spec["max_tokens"]
+        # The task's ceiling unless this call names a smaller one. A probe
+        # that only needs to learn which provider answered inherited
+        # `eval_grading`'s 2048 with `effort: high` and generated 140 opus
+        # tokens for the word "ok" — 84% of the cost of the whole check.
+        # Per call rather than a second config key: the task's ceiling is
+        # right for the task, and the exception is a property of the caller.
+        max_tokens = spec["max_tokens"] if max_tokens is None else max_tokens
         last_error: Exception | None = None
 
         for index, candidate in enumerate(candidates):

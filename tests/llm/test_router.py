@@ -466,3 +466,35 @@ def test_no_sonnet_5_entry_carries_a_temperature_key(routing):
             candidate = spec.get(role) or {}
             if "sonnet-5" in candidate.get("model", ""):
                 assert "temperature" not in candidate, f"{name}.{role} would 400"
+
+
+async def test_a_caller_can_cap_the_tokens_this_one_call_may_generate(
+    routing, anthropic, openai
+):
+    """`max_tokens` off the spec is a ceiling for the task, not for every use.
+
+    `check_primaries` wants a completion and nothing more — proof of which
+    provider answered — and inherited `eval_grading`'s 2048 with `effort:
+    high`, so a probe of the word "ok" generated 140 opus tokens and cost 84%
+    of the whole check. The cap belongs to the call, because the task's ceiling
+    is right for the task.
+    """
+    router = Router(
+        config=routing, providers={"anthropic": anthropic, "openai": openai}
+    )
+    await router.complete(task=Task.eval_grading, messages=MESSAGES, max_tokens=16)
+    assert anthropic.calls[-1]["max_tokens"] == 16
+
+
+async def test_without_an_override_the_task_ceiling_still_applies(
+    routing, anthropic, openai
+):
+    """The override is opt-in. Every caller that does not ask keeps the spec."""
+    router = Router(
+        config=routing, providers={"anthropic": anthropic, "openai": openai}
+    )
+    await router.complete(task=Task.eval_grading, messages=MESSAGES)
+    assert (
+        anthropic.calls[-1]["max_tokens"]
+        == routing["tasks"]["eval_grading"]["max_tokens"]
+    )

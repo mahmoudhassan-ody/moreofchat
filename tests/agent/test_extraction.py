@@ -47,8 +47,10 @@ class FakeRouter:
 
     Its signature mirrors `Router.complete` exactly rather than accepting
     `**kwargs`. A permissive double hid a real mismatch once: this module
-    passed `max_tokens=`, which `Router.complete` does not take, and every
-    unit test passed while all 17 live cases errored on the first call.
+    passed `max_tokens=`, which `Router.complete` did not then take, and every
+    unit test passed while all 17 live cases errored on the first call. It
+    takes one now — as an optional per-call cap, for probes — which is why the
+    conformance test below is the thing that noticed.
     """
 
     def __init__(self, text: str = '{"intent": null, "slots": {}}') -> None:
@@ -56,7 +58,14 @@ class FakeRouter:
         self.calls: list[dict] = []
 
     async def complete(
-        self, *, task, messages, system=None, cache_blocks=(), exclude_provider=None
+        self,
+        *,
+        task,
+        messages,
+        system=None,
+        cache_blocks=(),
+        exclude_provider=None,
+        max_tokens=None,
     ):
         kwargs = {
             "task": task,
@@ -64,6 +73,7 @@ class FakeRouter:
             "system": system,
             "cache_blocks": cache_blocks,
             "exclude_provider": exclude_provider,
+            "max_tokens": max_tokens,
         }
         self.calls.append(kwargs)
 

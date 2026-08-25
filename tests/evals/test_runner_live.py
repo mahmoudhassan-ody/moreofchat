@@ -229,8 +229,9 @@ async def test_live_the_education_suite_produces_a_report(corpus, app_engine, ca
         "openai": OpenAIDirect(api_key=key("MOC_OPENAI_API_KEY"), http=ROUTING["http"]),
     }
     router = Router(config=_composition_routing(), providers=providers)
-    # Before a single case runs, and only when grading. Two completions of four
-    # tokens each against a suite that costs dollars.
+    # Before a single case runs, and only when grading. Five completions of
+    # sixteen tokens each — one per routed completion task — against a suite
+    # that costs dollars.
     substituted = await _budget_and_primaries(
         router, cases=len(load_cases(CASES)), runs=default_runs()
     ) if _grading() else []

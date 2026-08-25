@@ -18,8 +18,15 @@ comparable, and a silently substituted model defeats both without touching
 either.
 
 So `check_primaries` asks a different question from "is the provider up". It
-asks *which* provider answered, and refuses when that is not the one the
-routing table names as primary. A working failover is not a reason to measure.
+asks *which* provider answered, and refuses when that is not the one the run
+will actually use. A working failover is not a reason to measure.
+
+"The one the run will actually use" is not always the primary. §5.2 forbids a
+provider from grading its own output, so `Judge.grade` excludes whichever
+provider composed — and with composition on Anthropic the judge is on
+`gpt-5.6-sol` for every turn of every graded run, while `eval_grading`'s
+primary is Opus. The first version of this check probed the primary, reported
+it healthy, and described a model the run would not call once.
 
 What this module deliberately does **not** do is ask the vendor how much budget
 is left. Neither provider exposes it, and a check built on a number nobody
@@ -35,8 +42,20 @@ from moc.llm.base import Message, ProviderUnavailable, Role, Task
 
 #: Enough to get a completion and no more. This runs before a suite that costs
 #: dollars, and a check that is itself expensive is one people switch off.
+#:
+#: It was declared and never passed, so every probe inherited its task's
+#: ceiling: `eval_grading` carries 2048 with `effort: high`, and the word "ok"
+#: cost $0.0035 of a $0.0042 check — 84% of it, on the one task whose answer is
+#: thrown away. 16 rather than 4 because both vendors floor `max_tokens` on a
+#: reasoning model, and a probe that 400s reads as an outage.
 _PROBE = "ok"
-_MAX_TOKENS = 4
+_MAX_TOKENS = 16
+
+#: The task whose answering provider §5.2 bars from grading, and the task it
+#: bars it from. Named rather than spelled inline: the coupling between them is
+#: the thing this module kept getting wrong.
+_ANSWERING = "answer_composition"
+_JUDGE = "eval_grading"
 
 
 class NoHeadroom(RuntimeError):
@@ -126,20 +145,49 @@ def within_budget(estimate: Estimate, *, ceiling_usd: float) -> None:
         )
 
 
-async def check_primaries(*, router: Any, routing: dict[str, Any]) -> None:
-    """Raise unless every task's *primary* is the thing answering.
+def _expected(spec: dict[str, Any], *, excluded: str | None) -> dict[str, Any] | None:
+    """Which candidate should answer, given who is not allowed to.
 
-    One cheap completion per task with a primary. The cost of asking is a few
-    tokens; the cost of not asking is a baseline attributed to the wrong model,
-    which is worse than no baseline because it is quotable.
+    For every task but the judge this is simply the primary. For the judge it
+    is the first candidate §5.2 leaves standing — which is not the primary
+    whenever composition runs on Anthropic, i.e. always, in the configuration
+    every baseline so far was measured under.
+    """
+    candidates = [spec["primary"]]
+    if spec.get("failover"):
+        candidates.append(spec["failover"])
+    if excluded is not None:
+        candidates = [c for c in candidates if c["provider"] != excluded]
+    return candidates[0] if candidates else None
+
+
+async def check_primaries(*, router: Any, routing: dict[str, Any]) -> None:
+    """Raise unless every task is answered by the model the run will use.
+
+    One cheap completion per task with a primary, capped at `_MAX_TOKENS` — the
+    cost of asking is a few tokens; the cost of not asking is a baseline
+    attributed to the wrong model, which is worse than no baseline because it
+    is quotable.
+
+    **The judge is not checked against its primary.** `Judge.grade` passes
+    `exclude_provider=<the provider that composed>`, so with composition on
+    Anthropic the judge lands on `gpt-5.6-sol` every single time and Opus never
+    grades a turn. Probing `eval_grading` without that exclusion reported
+    `anthropic/claude-opus-5` serving: true, green, and about a model the run
+    it was gating would not call once.
+
+    The excluded provider is read from `answer_composition`'s configured
+    primary rather than from what just answered. Those differ only when
+    composition is itself substituted — and that is already a refusal on the
+    line above, so the judge's verdict changes nothing.
 
     A `ProviderUnavailable` from the router means no candidate answered at all,
     which is also a refusal — there is nothing to measure either way.
     """
     served: list[str] = []
+    composer = routing["tasks"][_ANSWERING]["primary"]["provider"]
     for name, spec in routing["tasks"].items():
-        primary = spec.get("primary")
-        if not primary:
+        if not spec.get("primary"):
             continue
         if not spec.get("max_tokens"):
             # Not a completion task. `embedding` is routed and has a primary
@@ -151,19 +199,34 @@ async def check_primaries(*, router: Any, routing: dict[str, Any]) -> None:
         except ValueError:
             # A routed task with no `Task` member is not one a suite exercises.
             continue
+        excluded = composer if name == _JUDGE else None
+        expected = _expected(spec, excluded=excluded)
+        if expected is None:
+            served.append(
+                f"{name}: §5.2 bars {composer!r} and nothing else is routed — "
+                f"a graded run structurally needs two healthy providers"
+            )
+            continue
         try:
             completion = await router.complete(
                 task=task,
                 messages=[Message(role=Role.user, content=_PROBE)],
                 system=None,
+                max_tokens=_MAX_TOKENS,
+                exclude_provider=excluded,
             )
         except ProviderUnavailable as exc:
             served.append(f"{name}: nothing answered ({str(exc)[:80]})")
             continue
-        if completion.provider != primary["provider"]:
+        if completion.provider != expected["provider"]:
+            because = (
+                f"§5.2 puts the judge on {expected['provider']}/{expected['model']}"
+                if excluded is not None
+                else f"primary is {expected['provider']}/{expected['model']}"
+            )
             served.append(
                 f"{name}: answered by {completion.provider}/{completion.model}, "
-                f"primary is {primary['provider']}/{primary['model']}"
+                f"{because}"
             )
     if served:
         raise NoHeadroom(
