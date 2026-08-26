@@ -238,6 +238,16 @@ class ScriptEngine:
         The discriminator is a slot **this node reads** — declared by it,
         whether or not it already holds a value for it.
 
+        `optional_slots` is here for the third kind of declaration. The other
+        two gate: `requires_slots` clarifies when one is absent,
+        `requires_any_slot` when all are. A slot that merely *narrows* can do
+        neither — `programs` is answered university-wide by one chunk that
+        names every faculty, so demanding a branch would clarify against a
+        chunk that answers — and before this the node could declare the slot
+        only by breaking the turn that has none. So `ايه الكليات المتاحة` was
+        answered and `فرع العريش` fell to the fallback, which is the same
+        shape as edu-0007 turn 2 one node over.
+
         It used to be narrower: a slot the node was *still waiting for*, held
         slots subtracted. The reasoning was that "repeating a slot the node
         already holds answers nothing", which is true of a repeat and false of
@@ -263,8 +273,10 @@ class ScriptEngine:
         node = self._script["nodes"].get(state.node or "")
         if node is None:
             return None
-        declared = set(node.get("requires_slots") or []) | set(
-            node.get("requires_any_slot") or []
+        declared = (
+            set(node.get("requires_slots") or [])
+            | set(node.get("requires_any_slot") or [])
+            | set(node.get("optional_slots") or [])
         )
         return state.node if declared & set(turn.slots) else None
 

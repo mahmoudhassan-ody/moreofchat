@@ -691,3 +691,133 @@
 
     **Why no suite caught it:** every case in both files opens with a question.
     That is a property of who wrote them, not of who uses the product.
+
+- id: edu-0020
+  vertical: education
+  source: real_conversation
+  category: factual_retrieval
+  tenant_fixture: sinai_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "ايه الكليات المتاحة عندكوا"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the faculties the university offers, named"
+          required: true
+          source_chunk: sinai_faculties_ar
+      forbidden_claims:
+        - "a list of document titles offered as readings of the question"
+        - "a request that the customer say which of several things they meant"
+        - "any faculty the corpus does not name"
+        - "any fee, threshold or figure — none was asked for"
+      expected_slots: {}
+
+    - user: "فرع العريش"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the faculties or programmes available at the Arish branch"
+          required: true
+          source_chunk: sinai_programs_arish_ar
+      forbidden_claims:
+        - "the Qantara programme list"
+        - "a handoff to a human"
+        - "a request that the customer explain what they meant by naming a branch"
+      expected_slots:
+        branch: arish
+  gold_chunks:
+    - sinai_faculties_ar
+    - sinai_programs_arish_ar
+  notes: >
+    **The second real conversation, 2026-08-26, and it produced four defects
+    at once.** This case pins two of them, because they are one cause.
+
+    Turn 1 is a clear question with no ambiguity in it, answered outright by
+    `sinai_faculties_ar`, and it reached the fallback and came back as three
+    document titles. Not retrieval and not the prompt: `_intents` builds the
+    extractor's list from the intents the script's nodes declare, so a topic
+    no node names is a topic the model has no way to return. It returns null,
+    and null is the fallback by construction. Six programme chunks — the
+    university and each branch, in both languages — had been in the corpus
+    since it was written with nothing able to route to them.
+
+    Turn 2 is what the missing node hid. `فرع العريش` carries no intent, so it
+    resumes or it falls back, and `resumes()` keys on the slots a node
+    declares. Both kinds of declaration gate: `requires_slots` clarifies when
+    one is absent, `requires_any_slot` when all are. A branch gates nothing
+    here — turn 1 must answer without one — so the node could name the slot
+    only by breaking turn 1. `optional_slots` is the third kind, and it exists
+    for this shape.
+
+    **The forbidden claim on turn 2 is the handoff.** Every unrouted message
+    re-enters the fallback and increments `consecutive_clarifications`; the
+    fourth one hands the customer to a human. So in the real conversation a
+    customer who answered the bot's own question was escorted off for it, and
+    the escalation counter — which is working exactly as designed — is what
+    made a routing gap look like a policy.
+
+- id: edu-0021
+  vertical: education
+  source: synthetic
+  category: factual_retrieval
+  tenant_fixture: sinai_demo
+  channel: whatsapp
+  input_lang: english
+  turns:
+    - user: "What faculties do you have?"
+      expected_action: answer
+      expected_register: english
+      expected_lang: en
+      expected_facts:
+        - id: f1
+          claim: "the faculties the university offers, named"
+          required: true
+          source_chunk: sinai_faculties_en
+      forbidden_claims:
+        - "a list of document titles offered as readings of the question"
+        - "a request that the customer say which of several things they meant"
+        - "any faculty the corpus does not name"
+        - "any reply written in Arabic"
+      expected_slots: {}
+
+    - user: "and at the Arish branch?"
+      expected_action: answer
+      expected_register: english
+      expected_lang: en
+      expected_facts:
+        - id: f1
+          claim: "the faculties or programmes available at the Arish branch"
+          required: true
+          source_chunk: sinai_programs_arish_en
+      forbidden_claims:
+        - "the Qantara programme list"
+        - "a handoff to a human"
+        - "any reply written in Arabic"
+      expected_slots:
+        branch: arish
+  gold_chunks:
+    - sinai_faculties_en
+    - sinai_programs_arish_en
+  notes: >
+    edu-0020 in English, and **the first English case this suite has ever
+    had.** Nineteen cases, fifteen Masri, two mixed, two franco, none English
+    — while the corpus carries every fact twice and the console offers English
+    as a console language. The one English case in the project is re-0020, in
+    the other vertical, and it is the case that found `Register.english`
+    resolving to Arabic wording.
+
+    So this is not a translation of edu-0020 for symmetry. `language_mirror_
+    accuracy` has read 100% on every education run ever measured, over a
+    population with no English in it — the metric is not wrong, it has never
+    been asked the question.
+
+    Turn 2 is deliberately `and at the Arish branch?` rather than a full
+    sentence: an English follow-up carries as little intent as an Arabic one,
+    and the resume path must not be something that only works in the language
+    the fixtures were written in.

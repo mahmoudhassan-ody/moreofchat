@@ -900,3 +900,64 @@ def test_a_turn_that_names_no_slot_at_all_does_not_resume(script):
     could not parse would silently re-run the last question."""
     decision = script.advance(resumed_from(THRESHOLDS, **ARISH), turn(slots={}))
     assert decision.node != THRESHOLDS
+
+
+# ───────────── a slot that narrows a node without gating it ─────────────
+#
+# Four defects arrived in one real conversation on 2026-08-26. The first was
+# `ايه الكليات المتاحة عندكوا` — a clear question the KB answers in three
+# chunks — falling to the fallback, because no node declared a programmes
+# intent and the extractor is only ever offered the intents nodes declare.
+#
+# Mapping the intent fixes that turn and exposes the next one. The customer's
+# follow-up named a branch, and `resumes()` keys on the slots a node declares:
+# `requires_slots` (all of these, or clarify) and `requires_any_slot` (at least
+# one, or clarify). Both gate. A branch does not gate a faculty list — the
+# university-wide chunk answers without one, and demanding a branch would
+# repeat the `application_fee` mistake of clarifying against a chunk that
+# answers outright — so the node could declare the slot only by breaking the
+# turn that has none.
+
+
+def test_a_node_resumes_on_a_slot_that_only_narrows_it(script):
+    """`فرع العريش` after a faculty list is the answer to a question the node
+    can use, and it carries no intent of its own to say so."""
+    state = script.advance(script.start(), turn(intent="programs")).state
+    assert state.node == "programs"
+    assert script.resumes(state, turn(slots={"branch": "arish"})) == "programs"
+
+
+def test_an_optional_slot_never_asks_for_itself(script):
+    """The whole reason it cannot be `requires_any_slot`. `ما هي كليات جامعة
+    سيناء؟` is answered by one chunk that names every faculty, and a node that
+    demanded a branch first would clarify against a chunk that answers."""
+    decision = script.advance(script.start(), turn(intent="programs"))
+    assert decision.action is Action.answer
+    assert decision.missing_slots == ()
+
+
+def test_a_slot_the_node_does_not_read_still_falls_back(script):
+    """The rule stays narrow. `fees` knows nothing about branches."""
+    asked = turn(intent="fees", slots={"faculty": "dentistry"})
+    state = script.advance(script.start(), asked).state
+    assert script.resumes(state, turn(slots={"student_status": "egyptian"})) is None
+
+
+# ───────────── the intent the KB could answer and no node named ─────────────
+
+
+def test_the_script_routes_a_programmes_question(script):
+    decision = script.advance(script.start(), turn(intent="programs"))
+    assert decision.node == "programs"
+    assert decision.action is Action.answer
+    assert decision.grounding_required, "the faculty list is corpus content, not script text"
+
+
+def test_the_extractor_is_offered_a_programmes_intent():
+    """The root cause, and it is upstream of the engine: `_intents` builds the
+    prompt's list from the nodes, so an unmapped topic is not a topic the model
+    can return. It returns null, and null is the fallback."""
+    from moc.agent.extraction import _intents
+
+    names = " ".join(_intents(SCRIPT))
+    assert "programs" in names, "no node declared it, so the model could not return it"

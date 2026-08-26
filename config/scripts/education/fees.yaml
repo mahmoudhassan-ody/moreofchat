@@ -224,6 +224,43 @@ nodes:
     action: handoff
     register: msa
 
+  # The first message of the second real conversation, on 2026-08-26:
+  # `ايه الكليات المتاحة عندكوا` — a clear question with no ambiguity in it,
+  # answered outright by `sinai_faculties_ar`, and it fell to the fallback and
+  # came back as three document titles.
+  #
+  # Not a retrieval failure and not a prompt failure. `_intents` builds the
+  # extractor's list from the intents these nodes declare, so a topic no node
+  # names is a topic the model cannot return: it returns null, and null is the
+  # fallback by construction. The corpus has carried six programme chunks —
+  # university-wide and one per branch, in both languages — since it was
+  # written, and nothing could route to them.
+  #
+  # masri, with `housing` and `application_methods` rather than with `fees`.
+  # A prospective student asking what is on offer is browsing a catalogue, not
+  # reading a regulation, and §8.2 makes register the node's policy.
+  #
+  # `requires_slots: []` on purpose: the university-wide chunk names every
+  # faculty, and demanding a branch first would repeat exactly what
+  # `application_fee` was split out to stop — clarifying against a chunk that
+  # answers the question as asked.
+  #
+  # `optional_slots` is the third kind of declaration and it gates nothing.
+  # It exists so `resumes()` can see that a branch is this node's business:
+  # the follow-up `فرع العريش` carries no intent, and without the slot being
+  # declared somewhere it lands back on the fallback and burns a clarification.
+  programs:
+    intents: [programs, faculties, majors]
+    describe: >
+      which faculties, programmes or majors exist, at the university or at one
+      branch. الكليات، التخصصات، البرامج المتاحة. Not the cost of one and not
+      how to get into one.
+    action: answer
+    register: masri
+    requires_slots: []
+    optional_slots: [branch]
+    grounding: required
+
   # edu-0009's shape: ask which of several meanings, never guess. Reached by
   # any unrecognised intent, so an unknown message is a clarification rather
   # than an exception on the worker.
