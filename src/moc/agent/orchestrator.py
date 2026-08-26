@@ -491,7 +491,12 @@ class Orchestrator:
     ) -> TurnResult:
         if decision.action is not Action.answer:
             return self._scripted(
-                decision, redaction, retrieval, self._non_answer_key(decision), lang=lang
+                decision,
+                redaction,
+                retrieval,
+                self._non_answer_key(decision),
+                script,
+                lang=lang,
             )
 
         try:
@@ -508,6 +513,7 @@ class Orchestrator:
                 redaction,
                 retrieval,
                 _PROVIDER_UNAVAILABLE,
+                script,
                 degraded=True,
                 provider_unavailable=True,
             )
@@ -517,7 +523,7 @@ class Orchestrator:
             # text leaves stop_reason max_tokens and an empty body. Sending it
             # is sending silence, which a customer reads as being ignored.
             return self._scripted(
-                decision, redaction, retrieval, _PROVIDER_UNAVAILABLE, degraded=True
+                decision, redaction, retrieval, _PROVIDER_UNAVAILABLE, script, degraded=True
             )
 
         grounding = check_numeric_grounding(
@@ -543,6 +549,7 @@ class Orchestrator:
                 redaction,
                 retrieval,
                 _GROUNDING_FAILED,
+                script,
                 degraded=completion.degraded or audit.degraded,
                 grounding=grounding,
                 audit=audit,
@@ -723,6 +730,7 @@ class Orchestrator:
         redaction: Redaction,
         retrieval: Retrieval,
         key: str,
+        script: ScriptEngine,
         *,
         lang: str | None = None,
         degraded: bool = False,
@@ -739,7 +747,7 @@ class Orchestrator:
         """
         failed = key in (_PROVIDER_UNAVAILABLE, _GROUNDING_FAILED)
         reply = self._reply_text(
-                key, decision, redaction.text, lang, titles=tuple(retrieval.titles)
+            key, decision, redaction.text, lang, offers=script.offers()
         )
         return TurnResult(
             reply=reply,
@@ -766,7 +774,7 @@ class Orchestrator:
         message: str,
         lang: str | None = None,
         *,
-        titles: tuple[str, ...] = (),
+        offers: tuple[dict[str, str], ...] = (),
     ) -> str:
         # Register is the node's policy; language mirrors the customer. Both,
         # because passing only the register is F6: it renders cleanly and
@@ -786,7 +794,9 @@ class Orchestrator:
             # Named slots next. A node with missing slots knows exactly what
             # it needs, and offering a menu instead would replace an
             # answerable question with a browse.
-            asked = _ask_for(document, decision, voice) or _offer(document, titles, voice)
+            asked = _ask_for(document, decision, voice) or _capabilities(
+                document, offers, voice
+            )
             if asked:
                 return asked
         return voice.say(document["replies"][key])
@@ -819,29 +829,44 @@ def _ask_for(document: dict, decision: Decision, voice: Voice) -> str | None:
     return voice.say(plural["template"]).replace("{items}", joined)
 
 
-def _offer(document: dict, titles: tuple[str, ...], voice: Voice) -> str | None:
-    """Name the meanings the question might have had, or say nothing.
+def _capabilities(
+    document: dict, offers: tuple[dict[str, str], ...], voice: Voice
+) -> str | None:
+    """Say what this script covers, or say nothing and let the generic reply
+    stand.
 
-    edu-0009. The fallback node has no missing slots — the message routed
-    nowhere, which is a different problem from an incomplete question — so
-    `_ask_for` cannot reach it and the generic "ممكن توضّحلي أكتر" was all it
-    could say, to a customer who had already asked clearly.
+    **This replaced the retrieved titles, and the titles were never readings.**
+    edu-0009's `المواعيد إيه؟` was described as ambiguous between branch hours,
+    bus times and a deadline, and the fallback's job was to offer those. What
+    it retrieves from the corpus is the three `locations` chunks — `ماهو عنوان
+    ومواعيد عمل فرع العريش؟` and its two siblings. One topic, three branches,
+    and no node named it. Those are the same three office addresses `مساء
+    الخير` came back with, and the same list a customer asking which faculties
+    exist was shown.
 
-    The options are the retrieved titles, unedited and in whatever language the
-    tenant wrote them; only the sentence around them mirrors the customer. That
-    keeps the clarification grounded in the same sense a reply is — an option
-    the KB cannot answer is never offered, because it was never retrieved — and
-    leaves no per-tenant list to drift out of date.
+    Three separate failures in one list:
+
+    - **Unpickable.** A document title is not something the extractor can
+      classify, so choosing one fell to the fallback again and spent a
+      clarification. At four consecutive the engine hands off, so a customer
+      who answered the bot's own question was escorted to a human for it.
+    - **Not the customer's language.** The titles were the corpus's own words
+      and this corpus carries every fact twice; `titles()` deduped on the title
+      string, which never collapses a bilingual pair.
+    - **No evidence behind it.** Retrieval returns its top-k for any message,
+      so the list was equally well-formed for a greeting, a clear question and
+      an ambiguous one. Its presence said nothing about ambiguity, which is
+      exactly why it fired on all three.
+
+    The offers come from the script's own nodes, authored per language and
+    each routing to the node that named it. Nothing is truncated: how long the
+    list is, is the script author's decision, made in the script.
     """
-    options = document["clarify_options"]
-    offered = list(titles)[: options["max"]]
-    if len(offered) < options["min"]:
-        # A list of one is a guess with a question mark on it, not a choice.
+    if not offers:
         return None
-    bullet = options["bullet"]
-    return voice.say(options["template"]).replace(
-        "{items}", "\n".join(f"{bullet}{title}" for title in offered)
-    )
+    block = document["capabilities"]
+    joined = voice.say(block["join"]).join(voice.say(offer) for offer in offers)
+    return voice.say(block["template"]).replace("{items}", joined)
 
 
 __all__ = ["Extractor", "Orchestrator", "Retrieval", "Retriever", "TurnResult"]

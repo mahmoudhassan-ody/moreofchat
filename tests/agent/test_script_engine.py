@@ -961,3 +961,55 @@ def test_the_extractor_is_offered_a_programmes_intent():
 
     names = " ".join(_intents(SCRIPT))
     assert "programs" in names, "no node declared it, so the model could not return it"
+
+
+# ───────────── what the script covers, in the script's own words ─────────────
+#
+# The fallback offered the *retrieved titles* as readings of the question. On
+# the two real conversations this system has had, those titles were the three
+# `locations` chunks — `ماهو عنوان ومواعيد عمل فرع العريش؟` and its two
+# siblings. Three office addresses, offered once to a customer who said
+# `مساء الخير` and once to a customer who asked which faculties exist.
+#
+# They were never readings of anything. They were one topic, three branches,
+# and no node covered it — so picking one led back to the same fallback. The
+# list could not be picked from, could not be relied on to be in the
+# customer's language, and carried no information about whether the question
+# was ambiguous at all: retrieval returns its top-k whatever you ask it.
+
+
+def test_the_script_offers_what_its_own_nodes_cover(script):
+    labels = script.offers()
+    assert labels, "a script with no offers has nothing to say when it cannot route"
+    masri = [entry["masri"] for entry in labels]
+    assert "مصاريف الدراسة" in masri
+    assert all(isinstance(entry.get("english"), str) and entry["english"] for entry in labels)
+
+
+def test_every_offered_topic_is_one_the_extractor_can_return(script):
+    """The structural fix for the second defect. A document title is not a
+    thing the model can classify, so picking one fell to the fallback again
+    and burned a clarification; at four consecutive the engine hands off. An
+    offer that is a node's own topic routes to that node by construction."""
+    nodes = script.nodes_offering()
+    assert nodes, "nothing offered"
+    for name in nodes:
+        assert script.intents_of(name), (
+            f"{name!r} is offered to the customer and declares no intent — "
+            f"picking it cannot route anywhere"
+        )
+
+
+@pytest.mark.parametrize("name", [SCRIPT, REALESTATE])
+def test_every_answering_node_decides_whether_it_is_offered(name):
+    """Otherwise the list decays the way the intent list did: `programs` sat
+    unroutable for as long as the corpus carried programme chunks, and nothing
+    said so.
+
+    Both scripts, because the guard is about the shape of a node rather than
+    about education — and `offer: null` satisfies it, so a topic that does not
+    belong on a customer-facing list is a decision written next to a reason
+    rather than a key nobody added.
+    """
+    missing = ScriptEngine.from_config(name).answering_nodes_without_an_offer()
+    assert missing == (), f"answer nodes with no offer decision at all: {missing}"

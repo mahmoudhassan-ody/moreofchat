@@ -116,6 +116,10 @@ nodes:
   # re-0023 is the positive case whose absence hid the error.
   inventory_lookup:
     intents: [inventory_lookup, search_units, availability]
+    offer:
+      masri: "الوحدات المتاحة وأسعارها"
+      msa: "الوحدات المتاحة وأسعارها"
+      english: "available units and their prices"
     describe: >
       what units are available — by compound, city, type, bedrooms or budget. Browsing counts: "what have you got in X?". عايز شقة، في فيلا، عندكم إيه.
     action: answer
@@ -152,6 +156,9 @@ nodes:
   # property of the catalogue, not of a unit.
   staleness:
     intents: [price_validity, staleness, still_valid]
+    # Not headlined: how current the data is qualifies every answer above
+    # rather than being a thing a buyer opens with.
+    offer: null
     describe: >
       whether a price or an offer still stands. السعر لسه ساري، لسه بنفس السعر، ده سعر النهاردة.
     action: answer
@@ -169,6 +176,10 @@ nodes:
   # with one arbitrary studio.
   delivery_date:
     intents: [delivery_date, handover]
+    offer:
+      masri: "مواعيد التسليم"
+      msa: "مواعيد التسليم"
+      english: "handover dates"
     describe: >
       when a unit is handed over. التسليم امتى، الاستلام، موعد التسليم.
     action: answer
@@ -184,6 +195,10 @@ nodes:
   # statement, and the figures come from the calculator rather than the model.
   payment_plan:
     intents: [payment_plan, instalments, calculator]
+    offer:
+      masri: "خطط التقسيط والمقدم"
+      msa: "خطط السداد والمقدم"
+      english: "payment plans and the down payment"
     describe: >
       instalments, down payment, or whether a specific unit can be paid over time. قسط، تقسيط، مقدم.
     action: answer

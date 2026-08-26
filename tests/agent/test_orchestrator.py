@@ -809,38 +809,65 @@ async def test_the_fallback_is_load_bearing_when_extraction_reports_nothing(
         channel=CHANNEL,
     )
     assert result.action is Action.clarify
-    assert result.reply == Voice(result.register, "ar").say(
-        load("agent/replies")["replies"]["clarify"]
+    # The whole point is which language it came back in, so compare against the
+    # Arabic rendering of the reply this turn actually takes rather than
+    # against a fixed string — the fallback's wording changed underneath this
+    # test once already.
+    from moc.agent.script_engine import ScriptEngine
+
+    voice = Voice(result.register, "ar")
+    block = load("agent/replies")["capabilities"]
+    items = voice.say(block["join"]).join(
+        voice.say(offer) for offer in ScriptEngine.from_config(SCRIPT).offers()
+    )
+    assert result.reply == voice.say(block["template"]).replace("{items}", items)
+
+
+# ───────── the fallback says what the script covers, not what matched ─────────
+#
+# edu-0009 was written as the ambiguous-question case: `المواعيد إيه؟` could be
+# branch hours, bus times or an application deadline, and the fallback's job
+# was to offer those readings back. The reply before it was "ممكن توضّحلي أكتر"
+# and the judge scored it helpfulness 1 for asking a customer who had already
+# asked clearly to ask again.
+#
+# **The titles were never readings.** What that message retrieves from this
+# corpus is the three `locations` chunks — `ماهو عنوان ومواعيد عمل فرع العريش؟`
+# and its two siblings. One topic, three branches, and no node named it. They
+# are the same three office addresses `مساء الخير` came back with, and the same
+# list a customer asking which faculties exist was shown on 2026-08-26.
+#
+# So the list failed three ways at once, and only the third was ever noticed:
+# it could not be picked from (a title is not a thing the extractor can
+# classify, so choosing one returned to the fallback and spent a clarification,
+# and the fourth consecutive one hands off); it could not be trusted to be in
+# the customer's language (the corpus carries every fact twice and `titles()`
+# deduped on the title *string*); and its presence said nothing about ambiguity
+# at all, because retrieval returns its top-k for any message.
+#
+# What replaces it is the script's own `offer:` per node — authored per
+# language, and every item routes to the node that named it.
+
+
+def _capability_sentence(items: str) -> str:
+    return load("agent/replies")["capabilities"]["template"]["masri"].replace(
+        "{items}", items
     )
 
 
-# ─────────── edu-0009: the clarification that offers the options ───────────
-
-
-async def test_the_fallback_clarification_offers_what_was_retrieved(turn_session):
-    """edu-0009. "المواعيد إيه؟" could be branch hours, bus times or an
-    application deadline, and the reply was "ممكن توضّحلي أكتر عايز تعرف إيه
-    بالظبط؟" — asking a customer who had already asked clearly to ask again.
-    The judge scored it helpfulness 1 and said so: "طلب توضيحًا عامًا من غير
-    ما يسمّي الفروع أو المواعيد المحتملة".
-
-    The fallback node has no slots to name, so the "name the missing thing"
-    fix cannot reach it. What it does have is the retrieved set, and in a Q&A
-    corpus each title is one of the meanings the question might have had.
-    Offering those is both a real clarification and a grounded one: an option
-    the KB cannot answer is never offered, because it was never retrieved.
-    """
+async def test_the_fallback_says_what_this_script_covers(turn_session):
     orchestrator, *_ = build(
         intent=None,
-        titles=("ما هي مواعيد عمل الفروع؟", "ما آخر موعد للتقديم؟"),
+        titles=("ماهو عنوان ومواعيد عمل فرع العريش؟", "ماهو عنوان ومواعيد عمل فرع القنطرة؟"),
     )
     result = await orchestrator.handle(
         session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
     )
 
     assert result.action is Action.clarify
-    assert "مواعيد عمل الفروع" in result.reply
-    assert "آخر موعد للتقديم" in result.reply
+    assert "مصاريف الدراسة" in result.reply, "the script's own topics, not the corpus's"
+    assert "الكليات والتخصصات" in result.reply
+    assert "ماهو عنوان" not in result.reply, "a retrieved title is not an option"
     # Against the string itself, not a word from it. The generic reply and this
     # one are both clarifications written in the same voice, so any word worth
     # matching on is a word they might come to share — which is a test that
@@ -848,40 +875,49 @@ async def test_the_fallback_clarification_offers_what_was_retrieved(turn_session
     assert result.reply != load("agent/replies")["replies"]["clarify"]["masri"]
 
 
-async def test_one_retrieved_topic_is_not_a_choice(turn_session):
-    """A list of one is not options, it is a guess with a question mark. If
-    retrieval is that certain the fallback should not be reaching for a menu —
-    the generic clarification is the honest reply."""
-    orchestrator, *_ = build(intent=None, titles=("ما هي مواعيد عمل الفروع؟",))
+async def test_every_offered_topic_can_be_picked(turn_session):
+    """The structural half, and the whole reason this is not the title list
+    with a language filter on it. `فرع العريش` — a customer choosing one of
+    three offered titles — routed back to the fallback and spent its fourth
+    consecutive clarification, so the bot handed them to a human for answering
+    its own question. Every item in this sentence is a node's own topic, and
+    the extractor is offered exactly those."""
+    from moc.agent.script_engine import ScriptEngine
+
+    script = ScriptEngine.from_config(SCRIPT)
+    orchestrator, *_ = build(intent=None, titles=())
     result = await orchestrator.handle(
-        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
+        session=turn_session, state=start_state(), text="؟؟؟", channel=CHANNEL
     )
-    assert result.reply == load("agent/replies")["replies"]["clarify"]["masri"]
+    for name in script.nodes_offering():
+        label = script.offers()[script.nodes_offering().index(name)]["masri"]
+        assert label in result.reply
+        assert script.intents_of(name), f"{name} is offered and routes nowhere"
 
 
-async def test_the_offered_options_are_capped(turn_session):
-    """Retrieval returns `final_k` passages and a wall of them is not a
-    question anyone answers. The cap is config, not a literal here."""
-    from moc.config_store import load as _load
+async def test_the_list_is_not_silently_shortened(turn_session):
+    """Every topic the script offers, not the first few. A shortened list of
+    what an assistant can do reads as the whole list and is not one — and the
+    cap it replaces existed because retrieval returned `final_k` passages, a
+    number with nothing to do with what this script covers."""
+    from moc.agent.script_engine import ScriptEngine
 
-    cap = _load("agent/replies")["clarify_options"]["max"]
-    orchestrator, *_ = build(
-        intent=None, titles=tuple(f"سؤال رقم {n}" for n in range(cap + 3))
-    )
+    offers = ScriptEngine.from_config(SCRIPT).offers()
+    orchestrator, *_ = build(intent=None, titles=())
     result = await orchestrator.handle(
-        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
+        session=turn_session, state=start_state(), text="؟؟؟", channel=CHANNEL
     )
-    assert result.reply.count("سؤال رقم") == cap
+    assert all(offer["masri"] in result.reply for offer in offers)
 
 
-async def test_a_named_missing_slot_still_wins_over_the_options(turn_session):
+async def test_a_named_missing_slot_still_wins_over_the_capability_list(turn_session):
     """Two clarifications compete only in principle: a node with missing slots
-    knows exactly what it needs, and offering a menu instead would replace an
-    answerable question with a browse."""
+    knows exactly what it needs, and listing everything the script covers
+    instead would replace an answerable question with a browse."""
     orchestrator, *_ = build(
         intent="admission_thresholds",
         slots={"faculty": "pharmacy"},
-        titles=("ما هي مواعيد عمل الفروع؟", "ما آخر موعد للتقديم؟"),
+        titles=(),
     )
     result = await orchestrator.handle(
         session=turn_session,
@@ -890,24 +926,27 @@ async def test_a_named_missing_slot_still_wins_over_the_options(turn_session):
         channel=CHANNEL,
     )
     assert "الفرع" in result.reply
-    assert "مواعيد عمل الفروع" not in result.reply
+    assert "مصاريف الدراسة" not in result.reply
 
 
-async def test_an_english_customer_gets_the_english_option_sentence(turn_session):
-    """F6. The options are the corpus's own words and stay as written; the
-    sentence around them mirrors the customer."""
-    orchestrator, *_ = build(
-        intent=None, titles=("Branch working hours?", "Application deadline?")
-    )
+async def test_an_english_customer_gets_english_topics(turn_session):
+    """F6, and it is now structural rather than a filter. The old options were
+    the corpus's own titles in whatever language they were written, and the
+    fixture carries every fact twice — so an Arabic conversation could be
+    offered English titles, which is what the fourth defect of 2026-08-26 was.
+    An `offer:` is authored per language, so there is no wrong one to pick."""
+    orchestrator, *_ = build(intent=None, titles=("عنوان فرع العريش",))
     result = await orchestrator.handle(
         session=turn_session,
         state=start_state(),
-        text="what times do you mean?",
+        text="what can you do?",
         channel=CHANNEL,
     )
-    assert "Branch working hours?" in result.reply
+    assert "tuition fees" in result.reply
+    assert "faculties and programmes" in result.reply
+    assert "عنوان" not in result.reply, "no Arabic in an English reply"
     assert result.reply.startswith(
-        load("agent/replies")["clarify_options"]["template"]["english"].split("{")[0]
+        load("agent/replies")["capabilities"]["template"]["english"].split("{")[0]
     )
 
 
@@ -1622,6 +1661,10 @@ async def test_a_greeting_is_answered_with_a_greeting_not_a_menu(turn_session):
     assert "مواعيد عمل فرع القنطرة" not in result.reply, (
         "a greeting was answered with a menu of whatever retrieval matched"
     )
+    assert "معلش" not in result.reply, (
+        "and not with the did-not-understand sentence either — a greeting was "
+        "understood perfectly"
+    )
     assert result.reply.strip(), "and not with silence either"
 
 
@@ -1640,20 +1683,20 @@ async def test_the_greeting_reply_offers_what_the_bot_can_do(turn_session):
     assert "المصاريف" in result.reply, "greeted, and told what can be asked"
 
 
-async def test_an_ambiguous_question_still_gets_the_option_list(turn_session):
-    """The regression guard, and the reason this is a new node rather than a
-    change to the fallback. edu-0009 asks `المواعيد إيه؟` — a real question
-    with several readings — and the retrieved titles are exactly the right
-    answer to it."""
-    orchestrator, *_ = build(
-        intent=None, slots={}, titles=("مواعيد التقديم", "مواعيد الدراسة", "مواعيد الامتحانات")
+async def test_a_greeting_and_an_unroutable_question_say_different_things(turn_session):
+    """The regression guard, and the reason the greeting is its own node.
+
+    Both reach a scripted clarification and they are not the same reply: a
+    greeting is welcomed and told what is on offer, an unreadable question is
+    told it was not understood and then told the same. Collapsing them would
+    greet somebody who did not say hello."""
+    orchestrator, *_ = build(intent=None, slots={}, titles=())
+    unroutable = await orchestrator.handle(
+        session=turn_session, state=start_state(), text="؟؟؟", channel=CHANNEL
     )
-    result = await orchestrator.handle(
-        session=turn_session, state=start_state(), text="المواعيد إيه؟", channel=CHANNEL
-    )
-    assert "مواعيد التقديم" in result.reply, (
-        "the ambiguous-question path lost its options"
-    )
+    greeted = load(_REPLIES_KEY)["replies"]["clarify_by_node"]["greeting"]["masri"]
+    assert unroutable.reply != greeted
+    assert "مصاريف الدراسة" in unroutable.reply
 
 
 async def test_a_node_with_missing_slots_still_names_them(turn_session):

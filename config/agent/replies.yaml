@@ -198,20 +198,36 @@ ask_for_slots:
 #
 # Titles are quoted as the tenant wrote them, in whatever language they wrote
 # them. Only the sentence around them mirrors the customer.
-clarify_options:
-  # Below two, this does not fire — a list of one is a guess with a question
-  # mark on it, not a choice. Above the cap it is a wall nobody answers;
-  # retrieval returns final_k passages and offering all of them is a browse.
-  min: 2
-  max: 3
+# What this assistant can be asked about, drawn from the script's own nodes.
+#
+# **This replaces a list of retrieved document titles**, which was offered as
+# "which of these did you mean?" and was wrong three ways at once. On both real
+# conversations this system has had, the three titles were the three
+# `locations` chunks — one topic, three branches — offered once to `مساء الخير`
+# and once to a customer asking which faculties exist.
+#
+# - It could not be picked from. A document title is not a thing the extractor
+#   can classify, so choosing one landed back on the fallback and spent a
+#   clarification; the fourth consecutive one hands off to a human.
+# - It could not be trusted to be in the customer's language. The titles were
+#   the corpus's own and the corpus carries every fact twice.
+# - It was not evidence of ambiguity. Retrieval returns its top-k for any
+#   message at all, so the list was equally well-formed for a greeting.
+#
+# The wording comes from each node's `offer:`, so it is authored per language
+# rather than translated at runtime, and every item routes to the node that
+# named it. Nothing is truncated here — the length of the list is the script
+# author's decision, made in the script by omitting an `offer` — because a
+# silently shortened list of what an assistant can do lies about it.
+capabilities:
   template:
-    masri: "تقصد أنهي واحدة فيهم؟ عندي:\n{items}"
-    msa: "ما المقصود تحديدًا؟ المتاح لدينا:\n{items}"
-    english: "Which do you mean? I have:\n{items}"
-  # One per line rather than a joined sentence: these are whole questions, and
-  # "أ و ب و ج" made of three questions is unreadable. No markdown bullet —
-  # WhatsApp renders none of it (§ channel formatting).
-  bullet: "- "
+    masri: "معلش، مش فاهم قصدك بالظبط. أقدر أساعدك في {items}. تحب تعرف إيه؟"
+    msa: "عذرًا، لم أفهم المقصود تحديدًا. يمكنني إفادتك بشأن {items}. عن أي منها تستفسر؟"
+    english: "Sorry, I did not quite follow. I can help with {items}. Which would you like?"
+  join:
+    masri: "، "
+    msa: "، "
+    english: ", "
 
 
 # Slot questions, keyed by the slot the script asked for. Masri by default:

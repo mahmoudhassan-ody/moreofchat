@@ -209,6 +209,71 @@ class ScriptEngine:
             grounding_required=node.get("grounding") == "required",
         )
 
+    def offers(self) -> tuple[dict[str, str], ...]:
+        """What this script can be asked about, in the script's own words.
+
+        One entry per node that declares an `offer`, in script order, each a
+        register-keyed wording the `Voice` picks from. This replaces the
+        fallback's list of retrieved titles, which was wrong in three separate
+        ways at once:
+
+        - **Not pickable.** A document title is not something the extractor can
+          classify, so choosing one fell to the fallback again and spent a
+          clarification. At four consecutive the engine hands off, and a
+          customer who answered the bot's own question was escorted to a human.
+        - **Not in the customer's language.** The titles were the corpus's own,
+          and the fixture carries every fact twice; `titles()` deduped on the
+          title *string*, so the two languages of one document never collapsed.
+        - **Not evidence of anything.** Retrieval returns its top-k for any
+          message, so the list was equally well-formed for a greeting, a clear
+          question and an ambiguous one. On both real conversations it was the
+          same three `locations` chunks — one topic, three branches — offered
+          as three readings of whatever had been asked.
+
+        Order is the script's, and so is length: an author who does not want a
+        topic advertised omits its `offer`. Nothing is truncated at render
+        time, because a silently shortened list of what an assistant can do is
+        a list that lies about it.
+        """
+        return tuple(
+            node["offer"]
+            for node in self._script["nodes"].values()
+            if node.get("offer")
+        )
+
+    def nodes_offering(self) -> tuple[str, ...]:
+        """The names behind `offers()`, for the guards that check them."""
+        return tuple(
+            name
+            for name, node in self._script["nodes"].items()
+            if node.get("offer")
+        )
+
+    def intents_of(self, node_name: str) -> tuple[str, ...]:
+        return tuple(self._script["nodes"][node_name].get("intents") or ())
+
+    def answering_nodes_without_an_offer(self) -> tuple[str, ...]:
+        """Nodes that answer and that the customer is never told about.
+
+        The same decay `programs` demonstrated one layer up: the corpus
+        carried six programme chunks and no node named them, so the extractor
+        could not return the intent and nothing said so. A node that answers
+        and is not offered is reachable only by a customer who already guessed
+        the topic.
+
+        **`offer: null` counts as an offer.** Not every answerable topic
+        belongs on a list a customer reads — instalments are inside fees, and
+        transfer rules are asked by students rather than by prospects — but
+        "not headlined" has to be a decision somebody wrote down next to a
+        reason, not a key nobody added. So the key must be present; its value
+        may be null.
+        """
+        return tuple(
+            name
+            for name, node in self._script["nodes"].items()
+            if node.get("action") == Action.answer and "offer" not in node
+        )
+
     def topic_of(self, node_name: str) -> str:
         """How the script describes a node, in the script's own words.
 

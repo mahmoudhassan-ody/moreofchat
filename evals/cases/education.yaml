@@ -421,30 +421,55 @@
 - id: edu-0009
   vertical: education
   source: synthetic
-  category: ambiguous
+  category: factual_retrieval
   tenant_fixture: sinai_demo
   channel: whatsapp
   input_lang: masri
   turns:
     - user: "المواعيد إيه؟"
-      expected_action: clarify
+      expected_action: answer
       expected_register: masri
       expected_lang: ar
       expected_facts:
         - id: f1
-          claim: "the possible meanings of the question, named — not an open request for more detail"
+          claim: "the working hours of a branch, as the corpus states them"
           required: true
+          source_chunk: sinai_location_arish_ar
       forbidden_claims:
-        - "any specific time, date or deadline"
-  gold_chunks: []
+        - "an application deadline — the corpus states none"
+        - "a bus or transport timetable — the corpus states none"
+        - "a list of document titles offered as readings of the question"
+      expected_slots: {}
+  gold_chunks:
+    - sinai_location_arish_ar
   notes: >
-    Could be branch working hours, transport times, or an application
-    deadline. The clarification must offer the options rather than asking
-    an open question.
+    **This case was written against a premise the corpus does not support, and
+    it spent every run since ratifying the defect it was meant to catch.**
 
-# ─────────────────────────────────────────────────────────────
-# 6. code_switching
-# ─────────────────────────────────────────────────────────────
+    It was the ambiguous-question case: `المواعيد إيه؟` could be branch working
+    hours, transport times or an application deadline, so the right reply was a
+    clarification naming those readings. Two of the three do not exist. There
+    is no deadline content anywhere in the 102 chunks, and the transport pages
+    are booking instructions with no times in them. The one reading the corpus
+    supports is branch opening hours, in `sinai_location_*` — three chunks that
+    no node named.
+
+    So this was never ambiguity. It is the same defect as edu-0020, a clear
+    question about a topic the script had no node for, and because the case
+    pinned `clarify` as correct every run confirmed it.
+
+    The three titles it was offering back are `ماهو عنوان ومواعيد عمل فرع
+    العريش؟` and its two siblings: **the same three office addresses `مساء
+    الخير` came back with on 2026-08-25**, and the same list a customer asking
+    which faculties exist got on 2026-08-26. One topic, three branches, offered
+    three times as three readings of three different questions.
+
+    `expected_action` changes from `clarify` to `answer`, and the forbidden
+    claim that used to rule out "any specific time" now rules out the two
+    readings the corpus cannot support. **This breaks comparison with the
+    2026-08-25 baseline for this case**, which is the correct outcome: the two
+    runs measure different questions.
+
 - id: edu-0010
   vertical: education
   source: synthetic
@@ -821,3 +846,113 @@
     sentence: an English follow-up carries as little intent as an Arabic one,
     and the resume path must not be something that only works in the language
     the fixtures were written in.
+
+- id: edu-0022
+  vertical: education
+  source: synthetic
+  category: ambiguous
+  tenant_fixture: sinai_demo
+  channel: whatsapp
+  input_lang: masri
+  turns:
+    - user: "في أنشطة رياضية في الجامعة؟"
+      expected_action: clarify
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "what the assistant can be asked about, named"
+          required: true
+      forbidden_claims:
+        - "any document title offered as a reading of the question"
+        - "a claim that the university has or does not have sports activities"
+        - "an open request to explain the question again, offering nothing"
+        - "any option written in English"
+      expected_slots: {}
+
+    - user: "الكليات والتخصصات"
+      expected_action: answer
+      expected_register: masri
+      expected_lang: ar
+      expected_facts:
+        - id: f1
+          claim: "the faculties the university offers, named"
+          required: true
+          source_chunk: sinai_faculties_ar
+      forbidden_claims:
+        - "a handoff to a human"
+        - "a request that the customer clarify what they meant"
+        - "any faculty the corpus does not name"
+      expected_slots: {}
+  gold_chunks:
+    - sinai_faculties_ar
+  notes: >
+    **The option list had to be pickable and was not.** Turn 1 asks about
+    something the corpus genuinely does not cover — there is no sports content
+    in the 102 chunks — so a clarification is the right reply, and this case
+    says what it must contain: what the assistant can be asked about, not three
+    of the corpus's nearest neighbours.
+
+    Turn 2 is the defect. On 2026-08-26 a customer picked one of the three
+    titles the fallback had just offered them, `فرع العريش`, and got a handoff.
+    A document title is not something the extractor can classify, so choosing
+    one returned to the fallback and spent another clarification; the fourth
+    consecutive one hands off by design. The bot escorted a customer to a human
+    for answering its own question.
+
+    The offers are the script's own node topics now, so every item in turn 1's
+    reply routes to the node that named it. Turn 2 picks one, and the handoff
+    is a forbidden claim rather than a possibility.
+
+- id: edu-0023
+  vertical: education
+  source: synthetic
+  category: ambiguous
+  tenant_fixture: sinai_demo
+  channel: whatsapp
+  input_lang: english
+  turns:
+    - user: "Do you have any sports clubs?"
+      expected_action: clarify
+      expected_register: english
+      expected_lang: en
+      expected_facts:
+        - id: f1
+          claim: "what the assistant can be asked about, named"
+          required: true
+      forbidden_claims:
+        - "any option written in Arabic"
+        - "any document title offered as a reading of the question"
+        - "a claim that the university has or does not have sports clubs"
+      expected_slots: {}
+
+    - user: "faculties and programmes"
+      expected_action: answer
+      expected_register: english
+      expected_lang: en
+      expected_facts:
+        - id: f1
+          claim: "the faculties the university offers, named"
+          required: true
+          source_chunk: sinai_faculties_en
+      forbidden_claims:
+        - "a handoff to a human"
+        - "any reply written in Arabic"
+      expected_slots: {}
+  gold_chunks:
+    - sinai_faculties_en
+  notes: >
+    edu-0022 in English, and the case for the fourth defect of 2026-08-26:
+    `ليه` in an Arabic conversation came back with **English** document titles.
+
+    That was not a missing language filter so much as a missing dedupe. The
+    options were the corpus's own titles, and this corpus carries every fact in
+    both languages; `titles()` collapsed duplicates on the title *string*, so
+    `ما هي كليات جامعة سيناء؟` and `What are the faculties of Sinai
+    University?` — one document, two rows — never collapsed, and whichever
+    ranked higher was what the customer read. Its own docstring named the
+    bilingual pair as the case it handled.
+
+    An `offer:` is authored per language, so there is no wrong one left to
+    pick. This case pins it from the other side: an English customer gets
+    English topics, and turn 2 picks one of them.

@@ -71,6 +71,10 @@ nodes:
   # Core path. edu-0001, edu-0002, edu-0004.
   fees:
     intents: [fees, tuition, credit_hour_fee]
+    offer:
+      masri: "مصاريف الدراسة"
+      msa: "المصروفات الدراسية"
+      english: "tuition fees"
     describe: >
       tuition and credit-hour cost for a named faculty. المصاريف، مصروفات الساعة.
     action: answer
@@ -84,6 +88,8 @@ nodes:
   # edu-0004 turn 3. Inherits faculty from the fees node rather than asking again.
   instalments:
     intents: [instalments, payment_plan]
+    # Not headlined: inside `fees` for a customer — nobody asks about instalments without asking about the fee.
+    offer: null
     describe: >
       paying tuition in stages. أقساط، تقسيط.
     action: answer
@@ -97,6 +103,8 @@ nodes:
   # edu-0011. No slot needed; the regulation is the same for every faculty.
   transfer_rules:
     intents: [transfer_rules, faculty_transfer]
+    # Not headlined: asked by existing students, and this list is read by prospects.
+    offer: null
     describe: >
       moving between faculties and what happens to a discount. تحويل من كلية لكلية.
     action: answer
@@ -109,6 +117,8 @@ nodes:
   # clarify against a chunk that answers it outright.
   application_fee:
     intents: [application_fee, admission_fee]
+    # Not headlined: inside `fees` in the same way; edu-0002 exists because the *node* must be separate, not the offer.
+    offer: null
     describe: >
       the one-off fee paid when applying, not tuition. رسوم التقديم.
     action: answer
@@ -127,6 +137,10 @@ nodes:
   # inventing a second discount node to satisfy it.
   discounts:
     intents: [discounts, scholarships, financial_aid]
+    offer:
+      masri: "الخصومات والمنح"
+      msa: "الخصومات والمنح"
+      english: "discounts and scholarships"
     describe: >
       any reduction on tuition — discount, scholarship, grant. خصم، منحة، منح. Franco: khasm, khsm, manh, men7a.
     action: answer
@@ -138,6 +152,8 @@ nodes:
   # faculty or a branch.
   accreditation:
     intents: [accreditation, recognition]
+    # Not headlined: asked once a student is choosing between universities, not while browsing.
+    offer: null
     describe: >
       whether the university or a degree is recognised. معتمدة، اعتماد.
     action: answer
@@ -149,6 +165,10 @@ nodes:
   # regulation.
   housing:
     intents: [housing, accommodation, dorms]
+    offer:
+      masri: "السكن الجامعي"
+      msa: "السكن الجامعي"
+      english: "student housing"
     describe: >
       student accommodation, dorms, whether housing exists at a branch. السكن الجامعي. Franco: sakan.
     action: answer
@@ -160,6 +180,10 @@ nodes:
   # change it.
   application_methods:
     intents: [application_methods, how_to_apply]
+    offer:
+      masri: "طرق التقديم"
+      msa: "طرق التقديم"
+      english: "how to apply"
     describe: >
       how to apply and through which channel. طرق التقديم، إزاي أقدم.
     action: answer
@@ -176,6 +200,10 @@ nodes:
   # faculty, and answers on the third turn.
   admission_thresholds:
     intents: [admission_thresholds, minimum_grade, acceptance_score]
+    offer:
+      masri: "شروط القبول والمجاميع"
+      msa: "شروط القبول والحد الأدنى"
+      english: "admission requirements"
     describe: >
       the minimum grade required for a faculty. الحد الأدنى للقبول، مجموع.
     action: answer
@@ -198,6 +226,10 @@ nodes:
   # it.
   documents:
     intents: [documents, required_papers, admission_documents]
+    offer:
+      masri: "الأوراق المطلوبة"
+      msa: "الأوراق المطلوبة"
+      english: "the documents you need"
     describe: >
       which papers are needed to apply. الأوراق المطلوبة، المستندات، الورق اللي محتاجه.
     action: answer
@@ -223,6 +255,35 @@ nodes:
       disability support and accommodations. إعاقة، احتياجات خاصة.
     action: handoff
     register: msa
+
+  # edu-0009 is the same defect as `programs`, and it took two real
+  # conversations to see it. `المواعيد إيه؟` was described as ambiguous —
+  # branch hours, bus times or a deadline — and the fallback's job was to
+  # offer those readings. What it actually retrieves from this corpus is the
+  # three `locations` chunks: `ماهو عنوان ومواعيد عمل فرع العريش؟` and its
+  # two siblings. One topic, three branches, and no node named it.
+  #
+  # Those are the same three office addresses `مساء الخير` came back with.
+  # The option list was never a list of readings; it was an unmapped topic
+  # presented as one, which is why picking from it led nowhere.
+  #
+  # The real ambiguity in `المواعيد إيه؟` is *which branch*, and a branch is a
+  # slot — so it narrows rather than gates, exactly like `programs`. Asking
+  # about opening hours with no branch named is answerable: all three are.
+  locations:
+    intents: [locations, opening_hours, address]
+    offer:
+      masri: "عناوين الفروع ومواعيد العمل"
+      msa: "عناوين الفروع ومواعيد العمل"
+      english: "branch addresses and opening hours"
+    describe: >
+      where a branch is and when it is open. العنوان، مواعيد العمل، الفرع فين.
+      Not how to apply and not what it costs.
+    action: answer
+    register: masri
+    requires_slots: []
+    optional_slots: [branch]
+    grounding: required
 
   # The first message of the second real conversation, on 2026-08-26:
   # `ايه الكليات المتاحة عندكوا` — a clear question with no ambiguity in it,
@@ -251,6 +312,10 @@ nodes:
   # declared somewhere it lands back on the fallback and burns a clarification.
   programs:
     intents: [programs, faculties, majors]
+    offer:
+      masri: "الكليات والتخصصات"
+      msa: "الكليات والتخصصات"
+      english: "faculties and programmes"
     describe: >
       which faculties, programmes or majors exist, at the university or at one
       branch. الكليات، التخصصات، البرامج المتاحة. Not the cost of one and not
