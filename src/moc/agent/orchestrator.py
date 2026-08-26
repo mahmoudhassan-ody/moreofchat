@@ -54,7 +54,12 @@ from moc.agent.extraction import ExtractionFailed
 from moc.agent.figure_audit import FigureAudit, audit_figures
 from moc.agent.guards import GroundingResult, Redaction, check_numeric_grounding, redact
 from moc.agent.provenance import Passage, trace_figures
-from moc.agent.replies import Voice, node_clarification, refusal
+from moc.agent.replies import (
+    Voice,
+    node_clarification,
+    refusal,
+    verification_pending,
+)
 from moc.agent.script_engine import ScriptEngine
 from moc.agent.state import Action, ConversationState, Decision, Register, TurnInput
 from moc.arabic.script import reply_language
@@ -783,6 +788,12 @@ class Orchestrator:
         document = load(_REPLIES)
         if key is _REFUSE:
             return refusal(document["replies"], decision.node, voice)
+        if key == _GROUNDING_FAILED:
+            # Keyed by node like the refusal above, and for the same reason:
+            # §19.3 fires on turns that were never about a number, and the one
+            # sentence it used to send apologised for a figure the customer had
+            # not asked about.
+            return verification_pending(document["replies"], decision.node, voice)
         if key is _CLARIFY:
             # A node that declares its own clarification wins both of the
             # below, because for the node that declares one they are both

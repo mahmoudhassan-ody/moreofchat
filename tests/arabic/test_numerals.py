@@ -73,7 +73,11 @@ def test_normalize_digits_leaves_latin_and_letters_alone():
 
 
 def test_extracts_from_mixed_script():
-    assert extract_numbers("الرسوم ١٢٥٠ جنيه للساعة و 8 سنين") == [1250, 8]
+    # The second figure used to be `8 سنين`, a duration — suppressed since
+    # 2026-08-26, so this needs a number that is still one. A minimum grade is
+    # the bare figure that matters most: `admission_thresholds` states four per
+    # faculty and every one is a claim.
+    assert extract_numbers("الرسوم ١٢٥٠ جنيه للساعة والحد الأدنى 85") == [1250, 85]
 
 
 @pytest.mark.parametrize(
@@ -195,7 +199,9 @@ def test_tags_bedroom_counts_as_count_not_currency():
 
 
 def test_bare_figure_has_no_tag():
-    assert extract_quantities("و 8 سنين")[0].kind is QuantityKind.bare
+    # `و 8 سنين` until 2026-08-26, when a span of time stopped being a figure
+    # at all. A minimum grade carries no marker and must stay one.
+    assert extract_quantities("الحد الأدنى 85")[0].kind is QuantityKind.bare
 
 
 def test_marks_approximated_figures():
@@ -258,3 +264,140 @@ def test_a_year_at_the_end_of_a_sentence_is_still_a_year():
     four-digit number with no currency or unit around it still qualifies a
     fee rather than asserting one."""
     assert extract_quantities("النسب المطلوبة لعام 2026.") == []
+
+
+# ─────────────── a span of time is not an amount (2026-08-26) ───────────────
+#
+# `ايه الكليات المتاحة عندكوا` composed a correct faculty list carrying the
+# study duration beside each one — `مدة الدراسة 5 سنين وبعدها سنة امتياز`,
+# eight times. Every one of those figures traces to the corpus, and the
+# deterministic gate said so: orphans `[]`, reply `[5,5,5,5,4,4,4,4]` against
+# source `[4.0, 5.0]`.
+#
+# But they are figures, so §19.3's claim auditor was called on them, and it
+# returned one of the eight with no span. `_supported` fails closed on a
+# missing span, and the whole reply was discarded for a customer who had asked
+# which faculties exist. The scripted apology they got says
+# `عايز أتأكد من الرقم ده` — about a number nobody asked for.
+#
+# The figure gates exist for money: §3.1 says the LLM never composes a fee, a
+# price or a payment figure. A count of years is none of those, and putting it
+# through a model-backed auditor buys nothing and costs a reply.
+#
+# Suppressed rather than tagged. A new `QuantityKind` would still be a figure
+# to every caller that asks "does this reply state figures?", which is the
+# question the auditor's early return asks.
+
+
+def test_a_study_duration_is_not_a_figure():
+    assert extract_quantities("مدة الدراسة 5 سنين وبعدها سنة امتياز") == []
+    assert extract_numbers("مدة الدراسة: 5 سنوات + سنة امتياز") == []
+
+
+def test_a_term_in_months_is_not_a_figure():
+    assert extract_numbers("التقسيط على 6 شهور") == []
+    assert extract_numbers("خلال 18 شهر") == []
+    assert extract_numbers("مدة 3 أشهر") == []
+
+
+def test_a_fee_charged_per_year_is_still_a_fee():
+    """The marker follows the number it measures. `1500 جنيه في السنة` has a
+    currency word touching the figure and a year word three tokens away, and
+    suppressing on the year would delete the fee this whole system exists to
+    get right."""
+    quantities = extract_quantities("الرسوم 1500 جنيه في السنة")
+    assert [q.value for q in quantities] == [1500]
+    assert quantities[0].kind is QuantityKind.currency
+
+
+def test_a_rate_adverb_is_not_a_duration():
+    """`شهريا` and `سنويا` say how often, not how long. `القسط 5000 شهريا` is a
+    payment figure, and it must stay auditable — the whole list is nouns for a
+    span of time, deliberately, and the adverbs are left out."""
+    assert extract_numbers("القسط 5000 شهريا") == [5000]
+    assert extract_numbers("المصاريف 40000 سنويا") == [40000]
+
+
+def test_the_reply_that_was_discarded_now_states_no_figures():
+    """The production turn, verbatim from `messages` seq 270. The auditor's
+    early return is `if not extract_quantities(reply)`, so this is the
+    assertion that the model call is not made at all."""
+    reply = (
+        "كلية الصيدلة، وفيها Pharm D، مدة الدراسة 5 سنين وبعدها سنة امتياز.\n\n"
+        "كلية العلاج الطبيعي، تخصص العلاج الطبيعي، مدة الدراسة 5 سنين وبعدها سنة امتياز.\n\n"
+        "كلية إدارة الأعمال، وفيها الإدارة، المحاسبة، التسويق، والتمويل والاستثمار. "
+        "مدة الدراسة 4 سنين."
+    )
+    assert extract_quantities(reply) == []
+
+
+# ───────── what else in this corpus is a figure and is not an amount ─────────
+#
+# The sweep asked the question the `سنة` fix could not: over all 102 chunks,
+# every BARE quantity grouped by the word that follows it. `currency_markers`
+# came back clean — all eight entries are money words and nothing else had got
+# in — but three other classes of non-amount are being read as figures.
+
+
+def test_a_form_number_is_not_a_figure():
+    """`نموذج 2 جند`, `استمارة 6 جند`, `Military Form 6` — 29 occurrences across
+    the documents chunks, which is the topic behind a live node. A customer
+    asking which papers they need would have every form number audited as a
+    claim, exactly as the study durations were."""
+    assert extract_numbers("نموذج 2 جند للطلاب الذكور") == []
+    assert extract_numbers("استمارة 6 جند") == []
+    assert extract_numbers("Military Form 6 for male students") == []
+
+
+def test_a_dash_numbered_list_is_structure():
+    """The same failure edu-0010 already produced, in punctuation nobody
+    listed. `list_markers` carried `.` and `)` — the corpus writes
+    `1- تحديد نوع الغرفه`, and the dorm-booking instructions were four
+    ungrounded figures waiting for a customer to ask about them."""
+    assert extract_numbers("1- تحديد نوع الغرفه") == []
+    assert extract_numbers("4- رقم الهاتف") == []
+
+
+def test_a_dash_between_digits_is_still_not_a_marker():
+    """Only at the start of a line and only a short run, exactly as `.` and
+    `)` already are. A range is not an enumeration."""
+    assert extract_numbers("الرسوم 1400- 1500") == [1400, 1500]
+
+
+def test_a_fee_written_the_way_the_english_corpus_writes_it_is_a_figure():
+    """**The sweep's real finding, and it is worse than `سنة`.**
+
+    The corpus states `Yes, 1000 Egyptian Pounds if using the application
+    office.` — the token touching the number is `Egyptian`, and `_classify`
+    reads exactly one token forward, so the figure came back `bare`. Bare is
+    survivable on its own; combined with the year heuristic it is not. A
+    four-digit untagged number inside 1900-2100 is treated as a date, so
+
+        The fee is 2000 Egyptian Pounds
+
+    extracted NO figures at all. Not one. A fee in that range, written the way
+    this corpus writes fees in English, passed the deterministic grounding gate
+    and never reached §19.3's auditor, because neither of them could see it.
+
+    That is the failure mode the whole gate exists to stop, reachable by a
+    model inventing a number in a two-hundred-wide window and phrasing it in
+    the corpus's own English.
+    """
+    quantities = extract_quantities("The fee is 2000 Egyptian Pounds")
+    assert [q.value for q in quantities] == [2000]
+    assert quantities[0].kind is QuantityKind.currency
+
+    stated = extract_quantities("Yes, 1000 Egyptian Pounds if using the application office.")
+    assert [(q.value, q.kind) for q in stated] == [(1000, QuantityKind.currency)]
+
+
+def test_a_single_word_currency_marker_still_binds():
+    assert extract_quantities("The fee is 2000 EGP")[0].kind is QuantityKind.currency
+    assert extract_quantities("الرسوم 2000 جنيه")[0].kind is QuantityKind.currency
+
+
+def test_a_real_year_is_still_not_a_fee():
+    """The control. Widening what counts as a currency marker must not stop the
+    year heuristic doing its job on a number that is a date."""
+    assert extract_numbers("الحد الأدنى للقبول لعام 2025") == []
+    assert extract_numbers("thresholds for 2025") == []

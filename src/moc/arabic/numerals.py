@@ -72,8 +72,12 @@ class _Lexicon:
     ordinals: frozenset[str]
     floors: frozenset[str]
     places: frozenset[str]
+    forms: frozenset[str]
+    durations: frozenset[str]
     approximations: tuple[tuple[str, ...], ...]
-    currencies: frozenset[str]
+    #: Phrases, not words: `egyptian pounds` is two tokens and the one
+    #: touching the figure is the adjective.
+    currencies: frozenset[tuple[str, ...]]
     percents: frozenset[str]
     counts: frozenset[str]
     year_min: int
@@ -129,10 +133,14 @@ def _lexicon() -> _Lexicon:
         ordinals=frozenset(_fold(w) for w in raw["ordinal_markers"]),
         floors=frozenset(_fold(w) for w in raw["floor_markers"]),
         places=frozenset(_fold(w) for w in raw["place_markers"]),
+        forms=frozenset(_fold(w) for w in raw["form_markers"]),
         approximations=tuple(
             tuple(_fold(part) for part in m.split()) for m in raw["approximation_markers"]
         ),
-        currencies=frozenset(_fold(w) for w in raw["currency_markers"]),
+        currencies=frozenset(
+            tuple(_fold(part) for part in w.split()) for w in raw["currency_markers"]
+        ),
+        durations=frozenset(_fold(w) for w in raw["duration_markers"]),
         percents=frozenset(_fold(w) for w in raw["percent_markers"]),
         counts=frozenset(_fold(w) for w in raw["count_markers"]),
         year_min=year["min"],
@@ -328,7 +336,15 @@ def _is_rejected(
     index: int, folded: list[str], body: str, suffix: str, value: float, lex: _Lexicon
 ) -> bool:
     previous = folded[index - 1] if index else ""
-    if previous in lex.floors or previous in lex.places:
+    if previous in lex.floors or previous in lex.places or previous in lex.forms:
+        return True
+    # The measured word FOLLOWS its number, where a floor and a place precede
+    # theirs. Suppressed rather than given a `QuantityKind` of
+    # its own: a new kind is still a figure to every caller asking "does this
+    # reply state figures?", which is the question §19.3's auditor asks before
+    # deciding to spend a model call.
+    following = folded[index + 1] if index + 1 < len(folded) else ""
+    if following in lex.durations:
         return True
     return _is_year(index, folded, body, suffix, value, lex)
 
@@ -360,15 +376,31 @@ def _classify(index: int, folded: list[str], suffix: str, lex: _Lexicon) -> Quan
     if suffix and suffix in lex.percents:
         return QuantityKind.percent
 
+    if _follows(index, folded, lex.currencies):
+        return QuantityKind.currency
+
     following = folded[index + 1] if index + 1 < len(folded) else ""
     for vocabulary, kind in (
         (lex.percents, QuantityKind.percent),
-        (lex.currencies, QuantityKind.currency),
         (lex.counts, QuantityKind.count),
     ):
         if following in vocabulary:
             return kind
     return QuantityKind.bare
+
+
+def _follows(index: int, folded: list[str], phrases: frozenset[tuple[str, ...]]) -> bool:
+    """Whether any phrase begins at the token after `index`.
+
+    Longest first, so a two-word marker is not missed because its first word
+    also stands alone. The mirror of `_is_approximated`, which looks the other
+    way for the same reason.
+    """
+    for phrase in sorted(phrases, key=len, reverse=True):
+        start = index + 1
+        if tuple(folded[start : start + len(phrase)]) == phrase:
+            return True
+    return False
 
 
 def _is_approximated(index: int, folded: list[str], lex: _Lexicon) -> bool:

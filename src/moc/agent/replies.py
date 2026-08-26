@@ -69,8 +69,11 @@ def scripted(entry: dict[str, Any], register: Register, *, lang: str | None) -> 
     return entry.get(str(speaks)) or entry[str(Register.masri)]
 
 
-#: The refusal for a node with no wording of its own.
+#: The wording for a node with no entry of its own.
 _DEFAULT = "default"
+
+#: §19.3's reply key, named once so the config and the reader agree.
+_VERIFICATION = "grounding_failed"
 
 
 def node_clarification(
@@ -95,6 +98,26 @@ def node_clarification(
     entries = replies.get("clarify_by_node") or {}
     entry = entries.get(node)
     return voice.say(entry) if entry else None
+
+
+def verification_pending(
+    replies: dict[str, Any], node: str | None, voice: Voice
+) -> str:
+    """§19.3 discarded this reply. What the customer is told instead.
+
+    Keyed by node for the same reason `refusal` is, and after the same failure.
+    The one sentence said "عايز أتأكد من الرقم ده" — I want to check this
+    number — and §19.3 fires on turns that were never about a number: a faculty
+    list carrying a study duration was discarded on 2026-08-26 and the customer
+    was apologised to about a figure they had not asked for and could not see.
+
+    **The default is the figure-free wording**, inverting `refusal`'s shape on
+    purpose. A node added later should inherit the sentence that is true of any
+    turn; the nodes whose answers are figures opt in to naming one, because
+    there the sharper sentence says exactly what is being verified.
+    """
+    entries = replies[_VERIFICATION]
+    return voice.say(entries.get(node) or entries[_DEFAULT])
 
 
 def refusal(replies: dict[str, Any], node: str | None, voice: Voice) -> str:
@@ -141,4 +164,11 @@ class Voice:
         return scripted(entry, self.register, lang=self.lang)
 
 
-__all__ = ["Voice", "node_clarification", "refusal", "resolve", "scripted"]
+__all__ = [
+    "Voice",
+    "node_clarification",
+    "refusal",
+    "resolve",
+    "scripted",
+    "verification_pending",
+]

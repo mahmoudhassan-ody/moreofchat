@@ -185,7 +185,15 @@ def test_an_instalment_traces_to_the_calculator_inputs_that_produced_it():
             ),
         ),
     )
-    assert {figure.value for figure in traced} == {1_100_000, 137_500, 8}
+    # The term is absent since 2026-08-26, and deliberately: a span of time
+    # stopped being a figure when eight study durations in a faculty list cost
+    # a customer their answer. The pane shows the money and not the term.
+    #
+    # It is not left unchecked. `check_computation` in the inventory runner
+    # reads the reply with a raw digit regex rather than through
+    # `extract_numbers`, so every digit run in a payment-plan reply is still
+    # string-matched against the calculator's own output — the term included.
+    assert {figure.value for figure in traced} == {1_100_000, 137_500}
     assert {figure.source for figure in traced} == {CALCULATOR}
     down = next(f for f in traced if f.value == 1_100_000)
     assert "payment_plan_calculator" in down.excerpt

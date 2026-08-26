@@ -35,6 +35,8 @@ def test_lexicon_has_every_required_section():
         "place_markers",
         "approximation_markers",
         "currency_markers",
+        "duration_markers",
+        "form_markers",
         "percent_markers",
         "count_markers",
         "year",

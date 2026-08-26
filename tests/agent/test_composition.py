@@ -398,3 +398,37 @@ def test_the_prompt_asks_for_a_silent_decline():
     assert "do not mention" in rule, (
         "the rule names the attack without forbidding the reply from naming it"
     )
+
+
+def test_the_prompt_forbids_volunteering_a_figure_nobody_asked_for():
+    """`ايه الكليات المتاحة عندكوا` — which faculties exist — composed a correct
+    list and attached the study duration to every one of the eight. All eight
+    trace to the corpus and the deterministic gate passed; §19.3's auditor was
+    then called on eight figures, returned one of them with no span, and the
+    whole reply was discarded. The customer got an apology about a number they
+    had not asked about.
+
+    The prompt said "Only what the retrieved material states", which permits
+    stating everything the material contains, and "Answer the question", which
+    is about relevance rather than about figures. Neither says that a figure
+    beside the answer is not part of it.
+
+    Every volunteered figure is another claim the gate has to clear, and the
+    gate discards the reply whole.
+    """
+    system = render_composition(
+        message="ايه الكليات المتاحة عندكوا",
+        register=Register.masri,
+        channel="whatsapp",
+    )
+    lines = system.splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if line.startswith("- ") and "did not ask" in line
+    )
+    end = next(
+        (i for i, line in enumerate(lines[start + 1 :], start + 1) if line.startswith("- ")),
+        len(lines),
+    )
+    bullet = " ".join(lines[start:end])
+    assert "figure" in bullet
+    assert "not part of the answer" in bullet

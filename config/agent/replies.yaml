@@ -110,10 +110,35 @@ replies:
   # The model composed a figure that traced to nothing, or hedged one that did
   # (§19.3). The customer is never told this happened — they get a human, which
   # is the correct outcome and the only honest one.
+  #
+  # **Keyed by node, and the default is the one that mentions no number.** On
+  # 2026-08-26 `ايه الكليات المتاحة عندكوا` composed a correct faculty list,
+  # §19.3 discarded it over a study duration, and the customer read "عايز أتأكد
+  # من الرقم ده" — about a number they had not asked for and could not see.
+  # Same defect as the shared `refuse` string that offered a student a price
+  # and a payment plan: text written for one kind of turn, reached by every
+  # kind.
+  #
+  # The default is figure-free so a node added later inherits a sentence that
+  # is true of any turn. The nodes whose answers *are* figures override it,
+  # because "let me check this figure" tells a customer who asked about a fee
+  # exactly what is being verified.
   grounding_failed:
-    masri: "عايز أتأكد من الرقم ده قبل ما أبعتهولك. هحوّلك لزميلي يأكدلك عليه."
-    msa: "يلزم التحقق من هذه البيانات قبل إفادتك بها. سيتم تحويلك إلى أحد الزملاء لتأكيدها."
-    english: "I want to confirm that figure before I give it to you — passing you to a colleague."
+    default:
+      masri: "عايز أتأكد من المعلومة دي قبل ما أبعتهالك. هحوّلك لزميلي يأكدلك عليها."
+      msa: "يلزم التحقق من هذه المعلومة قبل إفادتك بها. سيتم تحويلك إلى أحد الزملاء لتأكيدها."
+      english: "I want to confirm this before I send it to you — passing you to a colleague."
+
+    fees: &pending_figure
+      masri: "عايز أتأكد من الرقم ده قبل ما أبعتهولك. هحوّلك لزميلي يأكدلك عليه."
+      msa: "يلزم التحقق من هذا الرقم قبل إفادتك به. سيتم تحويلك إلى أحد الزملاء لتأكيده."
+      english: "I want to confirm that figure before I give it to you — passing you to a colleague."
+    instalments: *pending_figure
+    application_fee: *pending_figure
+    discounts: *pending_figure
+    admission_thresholds: *pending_figure
+    payment_plan: *pending_figure
+    inventory_lookup: *pending_figure
 
   # Every provider is failing or breaker-open (§2.6). Never an error, never a
   # retry prompt: the customer did nothing wrong and cannot fix it.

@@ -1046,7 +1046,15 @@ async def test_a_relabelled_figure_is_not_sent(turn_session):
     )
 
     assert result.action is Action.handoff
-    assert result.reply == _load("agent/replies")["replies"]["grounding_failed"]["msa"]
+    # The `application_fee` node's own wording, not one string for every node:
+    # a customer who asked about a fee is told a figure is being checked,
+    # because there they did ask about one.
+    from moc.agent.replies import Voice, verification_pending
+    from moc.agent.state import Register
+
+    assert result.reply == verification_pending(
+        _load("agent/replies")["replies"], "application_fee", Voice(Register.msa, "ar")
+    )
     assert "500" not in result.reply
 
 
@@ -1712,3 +1720,64 @@ async def test_a_node_with_missing_slots_still_names_them(turn_session):
     assert result.action is Action.clarify
     assert result.reply.strip()
     assert "أهلا" not in result.reply, "a node that knows what it needs said hello"
+
+
+# ───── §19.3's apology is about a number, and most turns are not ─────
+#
+# `ايه الكليات المتاحة عندكوا` composed a faculty list, §19.3 discarded it over
+# a study duration, and the customer read "عايز أتأكد من الرقم ده قبل ما
+# أبعتهولك" — I want to check this number before I send it — about a number
+# they had not asked for and could not see.
+#
+# The same defect as the shared `refuse` string that offered a student a price
+# and a payment plan: canned text written for one kind of turn, reached by
+# every kind. Keyed by node for the same reason, and the *default* is the
+# figure-free wording, so a node added later inherits the sentence that is true
+# of any turn rather than one that assumes the customer asked about money.
+
+
+def test_a_non_figure_node_is_not_told_about_a_number():
+    from moc.agent.replies import Voice, verification_pending
+    from moc.agent.state import Register
+    from moc.config_store import load as _load
+
+    replies = _load("agent/replies")["replies"]
+    voice = Voice(Register.masri, "ar")
+    assert "الرقم" not in verification_pending(replies, "programs", voice)
+    assert "الرقم" not in verification_pending(replies, None, voice)
+
+
+def test_a_fee_node_still_names_the_number():
+    """The sharper sentence is right where the customer did ask about one:
+    "I want to check this figure" tells them exactly what is being verified."""
+    from moc.agent.replies import Voice, verification_pending
+    from moc.agent.state import Register
+    from moc.config_store import load as _load
+
+    replies = _load("agent/replies")["replies"]
+    voice = Voice(Register.masri, "ar")
+    assert "الرقم" in verification_pending(replies, "fees", voice)
+
+
+def test_the_turn_that_lost_a_faculty_list_gets_the_figure_free_apology(turn_session):
+    """End to end, through the reply path rather than the helper. The wiring is
+    where the `refuse` version of this defect lived for weeks: the branch did
+    not exist, so a refuse node emitted the clarification text."""
+    from types import SimpleNamespace
+
+    from moc.agent.replies import Voice, verification_pending
+    from moc.agent.state import Register
+    from moc.config_store import load as _load
+
+    orchestrator, *_ = build(intent="programs", slots={}, titles=())
+    decision = SimpleNamespace(
+        action=Action.answer, register=Register.masri, node="programs",
+        state=start_state(), gate_closed=False, missing_slots=(), ask_for_slot=None,
+    )
+    text = orchestrator._reply_text(
+        "grounding_failed", decision, "ايه الكليات المتاحة عندكوا", "ar"
+    )
+    assert text == verification_pending(
+        _load("agent/replies")["replies"], "programs", Voice(Register.masri, "ar")
+    )
+    assert "الرقم" not in text

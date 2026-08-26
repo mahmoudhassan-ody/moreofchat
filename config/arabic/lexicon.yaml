@@ -55,10 +55,17 @@ punctuation:
   # apply" as a numbered list and the gate read one, two and three as three
   # ungrounded figures, discarding a correct and fully-grounded reply.
   #
-  # Only at the start of a line, only these two characters, and only a short
+  # Only at the start of a line, only these characters, and only a short
   # run of digits: `1400.` opening a line is a fee, not the one-thousand-four-
   # hundredth item.
-  list_markers: ".)"
+  #
+  # `-` added 2026-08-26, from a sweep of every bare figure in the corpus. The
+  # dorm-booking instructions are written `1- تحديد نوع الغرفه`, four items,
+  # and they were four ungrounded figures waiting for a customer to ask —
+  # edu-0010's failure again, in punctuation nobody had listed. Safe for the
+  # same two reasons the others are: line-initial only, and `list_marker_max_
+  # digits` keeps a range like `1400- 1500` out.
+  list_markers: ".)-"
   list_marker_max_digits: 2
 
   # Leading characters a formatter puts before the marker. Skipped over when
@@ -143,6 +150,22 @@ floor_markers:
   - "الطابق"
   - "طابق"
 
+# A form is identified by a number; it does not state an amount. `نموذج 2 جند`
+# and `Military Form 6` appear 29 times across the documents chunks, which is a
+# topic with a live node — so a customer asking which papers they need would
+# have every form number put to a model-backed auditor as a claim, exactly as
+# the study durations were on 2026-08-26.
+#
+# The marker precedes its number, like a floor and a place.
+form_markers:
+  - "نموذج"
+  - "النموذج"
+  - "استمارة"
+  - "الاستمارة"
+  - "استماره"
+  - form
+  - forms
+
 # Place names that embed a number. "التجمع الخامس" is New Cairo, not five.
 place_markers:
   - "التجمع"
@@ -170,7 +193,18 @@ approximation_markers:
 # ─────────────────────────────────────────────────────────────
 # Tagging vocabulary — what a nearby digit is *about*.
 # ─────────────────────────────────────────────────────────────
+# Multi-word entries are allowed and are matched longest-first. The corpus
+# writes `1000 Egyptian Pounds`, where the token touching the figure is an
+# adjective — so a single-token lookahead read it as bare, and a bare
+# four-digit number inside 1900-2100 is suppressed as a date. `The fee is 2000
+# Egyptian Pounds` extracted no figures at all, which put a fee in a
+# two-hundred-wide window past both zero-tolerance gates. Found 2026-08-26 by
+# sweeping every bare figure in the corpus, not by anyone reading this list.
 currency_markers:
+  - "egyptian pounds"
+  - "egyptian pound"
+  - pounds
+  - pound
   - "جنيه"
   - "جنيها"
   - "جنيهاً"
@@ -199,6 +233,39 @@ count_markers:
   - bedrooms
   - bedroom
   - rooms
+
+# A span of time, not an amount. `مدة الدراسة 5 سنين` is eight figures in a
+# faculty list, and on 2026-08-26 they cost a customer their answer: every one
+# traced to the corpus and the deterministic gate passed, but they are figures,
+# so §19.3's claim auditor was called — and it returned one of the eight with
+# no span. `_supported` fails closed on a missing span and the reply was
+# discarded, with a scripted apology about "الرقم ده" to someone who had asked
+# which faculties exist.
+#
+# The figure gates are for money. §3.1: the LLM never composes a fee, a price
+# or a payment figure. A count of years is none of those.
+#
+# **Nouns for a span only.** `شهريا` and `سنويا` say how often, not how long —
+# `القسط 5000 شهريا` is a payment figure and must stay auditable — so the
+# adverbs are deliberately absent, and a test pins that.
+duration_markers:
+  - "سنة"
+  - "سنه"
+  - "سنوات"
+  - "سنين"
+  - "السنة"
+  - "السنه"
+  - "شهر"
+  - "شهرا"
+  - "شهراً"
+  - "شهور"
+  - "أشهر"
+  - "اشهر"
+  - "الشهر"
+  - year
+  - years
+  - month
+  - months
 
 # ─────────────────────────────────────────────────────────────
 # Year heuristic. A bare 4-digit number in this range is a date, not a fee —
